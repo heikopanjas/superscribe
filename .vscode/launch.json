@@ -1,0 +1,24 @@
+{
+   "configurations": [
+      {
+         "type": "swift",
+         "request": "launch",
+         "args": [],
+         "cwd": "${workspaceFolder:superscribe}",
+         "name": "Debug superscribe",
+         "target": "superscribe",
+         "configuration": "debug",
+         "preLaunchTask": "swift: Build Debug superscribe"
+      },
+      {
+         "type": "swift",
+         "request": "launch",
+         "args": [],
+         "cwd": "${workspaceFolder:superscribe}",
+         "name": "Release superscribe",
+         "target": "superscribe",
+         "configuration": "release",
+         "preLaunchTask": "swift: Build Release superscribe"
+      }
+   ]
+}
