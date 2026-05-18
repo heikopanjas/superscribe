@@ -154,7 +154,54 @@ public enum ModelDownloader {
         await progressActor.flush()
     }
 
-    // MARK: - Single-file download
+    // MARK: - Single-file entry point (for whisper .bin models)
+
+    /// Downloads a single-file model (e.g. a GGML `.bin`) directly to `dest`.
+    /// The file at `dest` is the staging path; the caller is responsible for
+    /// the atomic rename to the final location.
+    public static func downloadFile(
+        model: RemoteModelInfo,
+        into dest: URL,
+        session: URLSession = .shared,
+        onProgress: @Sendable @escaping (DownloadProgress) -> Void
+    ) async throws {
+        // For single-file models subpath is nil and rfilename == model filename.
+        guard
+            let sibling = try await {
+                let info = try await HuggingFaceHub.repoInfo(repoId: model.repoId, session: session)
+                let filename = "ggml-\(model.id).bin"
+                return info.siblings.first { $0.rfilename == filename }
+            }()
+        else {
+            throw ModelInstallationError.downloadFailed(
+                url: model.repoURL,
+                underlying: NSError(
+                    domain: "ModelDownloader", code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: "ggml-\(model.id).bin not found in repo."]
+                )
+            )
+        }
+        let progressActor = ProgressTracker(
+            modelId: model.id,
+            backend: .whisperCpp,
+            filesTotal: 1,
+            bytesTotal: sibling.size,
+            onProgress: onProgress
+        )
+        let rfilename = "ggml-\(model.id).bin"
+        try await downloadOne(
+            model: model,
+            file: rfilename,
+            relPath: dest.lastPathComponent,
+            expectedSize: sibling.size,
+            stagingDir: dest.deletingLastPathComponent(),
+            session: session,
+            progress: progressActor
+        )
+        await progressActor.flush()
+    }
+
+    // MARK: - Single-file download (internal)
 
     private static func downloadOne(
         model: RemoteModelInfo,

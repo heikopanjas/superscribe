@@ -13,15 +13,24 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.2.0"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.3"),
-        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "0.9.0")
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.3")
     ],
     targets: [
+        .binaryTarget(
+            name: "whisper",
+            path: "whisper-build/whisper.xcframework"
+        ),
         .target(
             name: "SuperscribeKit",
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
-                .product(name: "WhisperKit", package: "argmax-oss-swift")
+                "whisper"
+            ],
+            linkerSettings: [
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalKit"),
+                .linkedFramework("Accelerate"),
+                .linkedLibrary("c++")
             ]
         ),
         .executableTarget(

@@ -31,12 +31,13 @@ struct TranscribeOptions: ParsableArguments {
     )
     var track: [TrackSpec] = []
 
-    @Option(name: .long, help: "Transcription backend (parakeet, whisper). Uses configured default if omitted.")
+    @Option(name: .long, help: "Transcription backend (parakeet, whisper.cpp). Uses configured default if omitted.")
     var backend: Backend?
 
     @Option(
         name: .long,
-        help: "Model variant. Parakeet: v2, v3, tdt-ctc-110m, tdt-ja. Whisper: any HuggingFace model name. Uses configured default if omitted."
+        help:
+            "Model variant. Parakeet: v2, v3, tdt-ctc-110m, tdt-ja. Whisper: large-v3-turbo, base, medium-q5_0, etc. (run `model --list --backend whisper.cpp` for all). Uses configured default if omitted."
     )
     var model: String?
 
@@ -46,8 +47,8 @@ struct TranscribeOptions: ParsableArguments {
     @Option(name: .long, help: "Context hint to bias recognition.")
     var prompt: String?
 
-    @Option(name: .long, help: "Intermediate file path.")
-    var output: String = "transcript.superscribe.json"
+    @Option(name: .long, help: "Intermediate file path (default: transcript.superscribe.<backend>.json).")
+    var output: String = ""
 
     @Option(name: .long, help: "Silence threshold in dB.")
     var silenceThreshold: Double = -40.0

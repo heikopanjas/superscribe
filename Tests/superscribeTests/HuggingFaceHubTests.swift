@@ -11,13 +11,13 @@ struct HuggingFaceHubTests {
     @Test func decodesRepoInfoWithUnknownFieldsAndMissingSizes() throws {
         let json = """
             {
-              "id": "argmaxinc/whisperkit-coreml",
+              "id": "ggerganov/whisper.cpp",
               "lastModified": "2025-09-15T08:30:00.000Z",
-              "tags": ["whisper", "coreml"],
+              "tags": ["whisper", "ggml"],
               "downloads": 1234,
               "siblings": [
-                { "rfilename": "openai_whisper-tiny/MelSpectrogram.mlmodelc/coremldata.bin", "size": 1024 },
-                { "rfilename": "openai_whisper-tiny/AudioEncoder.mlmodelc/coremldata.bin" },
+                { "rfilename": "ggml-tiny.bin", "size": 1024 },
+                { "rfilename": "ggml-base.bin" },
                 { "rfilename": "README.md", "size": 200 }
               ]
             }
@@ -26,7 +26,7 @@ struct HuggingFaceHubTests {
         let info = try HuggingFaceHub.decoder()
             .decode(HuggingFaceHub.HFRepoInfo.self, from: json)
 
-        #expect(info.id == "argmaxinc/whisperkit-coreml")
+        #expect(info.id == "ggerganov/whisper.cpp")
         #expect(info.lastModified != nil)
         #expect(info.siblings.count == 3)
         #expect(info.siblings[1].size == nil)

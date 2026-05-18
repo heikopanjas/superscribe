@@ -142,7 +142,7 @@ public struct RemoteModelInfo: Sendable, Codable, Hashable {
     /// `"large-v3_turbo"`). May be a passed-through repo name when no
     /// short alias is known.
     public let id: String
-    /// Hugging Face repo id (e.g. `"argmaxinc/whisperkit-coreml"`).
+    /// Hugging Face repo id (e.g. `"ggerganov/whisper.cpp"`).
     public let repoId: String
     /// Optional sub-folder within the repo that contains this model
     /// (e.g. `"openai_whisper-large-v3_turbo"`). `nil` when the model is
@@ -196,7 +196,9 @@ public struct InstalledModelInfo: Sendable, Codable, Hashable {
 
 /// Selectable transcription backend.
 public enum Backend: String, CaseIterable, Sendable, Codable {
-    case parakeet, whisper, appleSpeech
+    case parakeet
+    case whisperCpp = "whisper.cpp"
+    case appleSpeech
 }
 
 /// Strategy for handling time-overlapping segments from different speakers

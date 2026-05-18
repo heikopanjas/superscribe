@@ -24,20 +24,28 @@ struct ModelInstallerTests {
         let dir = try tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let model = dir.appendingPathComponent("openai_whisper-tiny", isDirectory: true)
-        try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
-        #expect(!ModelInstaller.isInstalled(at: model, backend: .whisper))
-
-        try makeMlmodelc(at: model)
-        #expect(ModelInstaller.isInstalled(at: model, backend: .whisper))
-        #expect(ModelInstaller.isInstalled(at: model, backend: .parakeet))
+        // Parakeet: directory with .mlmodelc bundle.
+        let parakeetModel = dir.appendingPathComponent("parakeet-v3", isDirectory: true)
+        try FileManager.default.createDirectory(at: parakeetModel, withIntermediateDirectories: true)
+        #expect(!ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet))
+        try makeMlmodelc(at: parakeetModel)
+        #expect(ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet))
     }
 
-    @Test func isInstalledRejectsMissingDir() throws {
+    @Test func isInstalledWhisperRequiresBinFile() throws {
         let dir = try tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let missing = dir.appendingPathComponent("not-there", isDirectory: true)
-        #expect(!ModelInstaller.isInstalled(at: missing, backend: .whisper))
+
+        let binPath = dir.appendingPathComponent("large-v3-turbo.bin")
+        // File absent — not installed.
+        #expect(!ModelInstaller.isInstalled(at: binPath, backend: .whisperCpp))
+        // Create the file — now installed.
+        FileManager.default.createFile(atPath: binPath.path, contents: Data("fake".utf8))
+        #expect(ModelInstaller.isInstalled(at: binPath, backend: .whisperCpp))
+        // A directory at that path is not a valid .bin — not installed.
+        let dirPath = dir.appendingPathComponent("model-dir")
+        try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
+        #expect(!ModelInstaller.isInstalled(at: dirPath, backend: .whisperCpp))
     }
 
     @Test func preflightDiskSpacePassesWhenSizeUnknown() throws {
@@ -75,13 +83,10 @@ struct ModelInstallerTests {
 @Suite("Backend installPath conventions", .serialized)
 struct InstallPathTests {
 
-    @Test func whisperInstallPathMatchesWhisperKitConvention() {
-        let path = WhisperBackend.installPath(for: "tiny")
-        #expect(path.lastPathComponent == "openai_whisper-tiny")
-        #expect(
-            path.path.hasSuffix(
-                "Documents/huggingface/models/argmaxinc/whisperkit-coreml/openai_whisper-tiny"
-            ))
+    @Test func whisperInstallPathUsesBinCacheConvention() {
+        let path = WhisperBackend.installPath(for: "large-v3-turbo")
+        #expect(path.lastPathComponent == "large-v3-turbo.bin")
+        #expect(path.path.contains("superscribe/whisper/large-v3-turbo.bin"))
     }
 
     @Test func parakeetInstallPathMatchesFluidAudioConvention() {
@@ -117,7 +122,7 @@ struct InstallPathTests {
 struct ModelInstallationErrorTests {
 
     @Test func modelNotInstalledMessageNamesInstallCommand() {
-        let err = ModelInstallationError.modelNotInstalled(model: "tiny", backend: .whisper)
+        let err = ModelInstallationError.modelNotInstalled(model: "tiny", backend: .whisperCpp)
         let msg = err.description
         #expect(msg.contains("Whisper"))
         #expect(msg.contains("tiny"))

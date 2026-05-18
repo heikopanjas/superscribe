@@ -36,30 +36,41 @@ public enum ModelInstaller {
             )
 
             // 3. Stage.
-            let stagingDir = finalDir.deletingLastPathComponent()
+            // Whisper models are single .bin files; everything else is a folder.
+            let isSingleFile = backend == .whisperCpp
+            let parent = finalDir.deletingLastPathComponent()
+            let stagingPath =
+                parent
                 .appendingPathComponent("\(finalDir.lastPathComponent).staging-\(UUID().uuidString)")
 
             do {
                 try FileManager.default.createDirectory(
-                    at: finalDir.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
+                    at: parent, withIntermediateDirectories: true
                 )
-                try await ModelDownloader.download(
-                    model: model,
-                    backend: backend,
-                    into: stagingDir,
-                    onProgress: onProgress
-                )
+                if isSingleFile {
+                    // Download the single file directly into the staging path.
+                    try await ModelDownloader.downloadFile(
+                        model: model,
+                        into: stagingPath,
+                        onProgress: onProgress
+                    )
+                }
+                else {
+                    try await ModelDownloader.download(
+                        model: model,
+                        backend: backend,
+                        into: stagingPath,
+                        onProgress: onProgress
+                    )
+                }
 
-                // 4. Atomic rename. If something somehow got into finalDir
-                //    between the idempotent check and now, bail.
+                // 4. Atomic rename.
                 if FileManager.default.fileExists(atPath: finalDir.path) {
-                    // Another installer beat us; throw away staging.
-                    try? FileManager.default.removeItem(at: stagingDir)
+                    try? FileManager.default.removeItem(at: stagingPath)
                     return finalDir
                 }
                 do {
-                    try FileManager.default.moveItem(at: stagingDir, to: finalDir)
+                    try FileManager.default.moveItem(at: stagingPath, to: finalDir)
                 }
                 catch {
                     throw ModelInstallationError.installFailed(path: finalDir, underlying: error)
@@ -68,7 +79,7 @@ public enum ModelInstaller {
             }
             catch {
                 // 5. Cleanup staging on any failure.
-                try? FileManager.default.removeItem(at: stagingDir)
+                try? FileManager.default.removeItem(at: stagingPath)
                 throw error
             }
         }
@@ -77,7 +88,7 @@ public enum ModelInstaller {
     /// Per-backend convention for where a model lives on disk.
     public static func installPath(for modelId: String, backend: Backend) throws -> URL {
         switch backend {
-            case .whisper:
+            case .whisperCpp:
                 return WhisperBackend.installPath(for: modelId)
             case .parakeet:
                 return ParakeetBackend.installPath(for: modelId)
@@ -86,20 +97,19 @@ public enum ModelInstaller {
         }
     }
 
-    /// Returns `true` if a model directory looks complete (per-backend heuristic).
+    /// Returns `true` if a model looks completely installed (per-backend heuristic).
     public static func isInstalled(at path: URL, backend: Backend) -> Bool {
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDir),
-            isDir.boolValue
-        else {
-            return false
-        }
         switch backend {
-            case .whisper:
-                let contents =
-                    (try? FileManager.default.contentsOfDirectory(atPath: path.path)) ?? []
-                return contents.contains(where: { $0.hasSuffix(".mlmodelc") })
+            case .whisperCpp:
+                // Single .bin file — just check it exists as a regular file.
+                var isDir: ObjCBool = false
+                return FileManager.default.fileExists(atPath: path.path, isDirectory: &isDir)
+                    && !isDir.boolValue
             case .parakeet:
+                var isDir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDir),
+                    isDir.boolValue
+                else { return false }
                 let contents =
                     (try? FileManager.default.contentsOfDirectory(atPath: path.path)) ?? []
                 return contents.contains(where: { $0.hasSuffix(".mlmodelc") })

@@ -129,13 +129,15 @@ public struct TranscribePipeline: Sendable {
                 }
             )
             overallCompleted += segments.count
-            transcribedTracks.append(
-                IntermediateTranscript.Track(
-                    speaker: track.speaker,
-                    file: track.file.path,
-                    segments: transcribedSegments
+            if !transcribedSegments.isEmpty {
+                transcribedTracks.append(
+                    IntermediateTranscript.Track(
+                        speaker: track.speaker,
+                        file: track.file.path,
+                        segments: transcribedSegments
+                    )
                 )
-            )
+            }
         }
 
         return IntermediateTranscript(
@@ -197,9 +199,10 @@ public struct TranscribePipeline: Sendable {
                 }
             }
 
-            // Sort by original index, map to intermediate format.
-            return results.sorted { $0.0 < $1.0 }.map { _, result in
-                IntermediateTranscript.TranscribedSegment(
+            // Sort by original index, map to intermediate format, drop empty segments.
+            return results.sorted { $0.0 < $1.0 }.compactMap { _, result in
+                guard !result.words.isEmpty else { return nil }
+                return IntermediateTranscript.TranscribedSegment(
                     start: result.segment.start,
                     end: result.segment.end,
                     words: result.words

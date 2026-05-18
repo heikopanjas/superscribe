@@ -90,6 +90,61 @@ public struct ConvertedAudioCache: Sendable {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    // MARK: - Manifest
+
+    /// Records the origin of a cache entry so `superscribe cache --list` can
+    /// display source filenames instead of raw SHA256 digests.
+    public struct ManifestEntry: Codable, Sendable {
+        public let digest: String
+        public let sourcePath: String
+        public let storedAt: Date
+    }
+
+    /// URL of the manifest sidecar file (`manifest.json` in the cache root).
+    public var manifestURL: URL {
+        root.appendingPathComponent("manifest.json", isDirectory: false)
+    }
+
+    /// Load the manifest from disk. Returns an empty dictionary when no manifest exists.
+    public func loadManifest() throws -> [String: ManifestEntry] {
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return [:] }
+        let data = try Data(contentsOf: manifestURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let entries = try decoder.decode([ManifestEntry].self, from: data)
+        return Dictionary(entries.map { ($0.digest, $0) }, uniquingKeysWith: { $1 })
+    }
+
+    /// Upsert an entry in the manifest. Callers treat failures as non-fatal.
+    public func updateManifest(adding entry: ManifestEntry) throws {
+        var current = (try? loadManifest()) ?? [:]
+        current[entry.digest] = entry
+        try writeManifest(Array(current.values))
+    }
+
+    /// Remove an entry from the manifest. No-op if the digest is absent.
+    public func updateManifest(removingDigest digest: String) throws {
+        var current = (try? loadManifest()) ?? [:]
+        guard current[digest] != nil else { return }
+        current.removeValue(forKey: digest)
+        try writeManifest(Array(current.values))
+    }
+
+    private func writeManifest(_ entries: [ManifestEntry]) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(entries)
+        let stagingURL = root.appendingPathComponent(
+            "manifest.json.staging-\(UUID().uuidString)", isDirectory: false
+        )
+        try data.write(to: stagingURL)
+        if FileManager.default.fileExists(atPath: manifestURL.path) {
+            try FileManager.default.removeItem(at: manifestURL)
+        }
+        try FileManager.default.moveItem(at: stagingURL, to: manifestURL)
+    }
+
     /// Atomically write `samples` (in `format`) under `key`. Stages to a
     /// sibling `.staging-<uuid>` file, then renames into place. Returns
     /// the final URL.
@@ -188,6 +243,11 @@ public struct ConvertedAudioCache: Sendable {
             try? FileManager.default.removeItem(at: stagingURL)
             throw error
         }
+
+        // Update manifest so `superscribe cache --list` can show source filenames.
+        try? updateManifest(
+            adding: ManifestEntry(digest: key.digest, sourcePath: key.sourcePath, storedAt: Date())
+        )
 
         return finalURL
     }

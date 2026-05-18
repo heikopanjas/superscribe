@@ -63,12 +63,12 @@ struct CatalogStoreTests {
         try withTempCatalog {
             try CatalogStore.update(sampleEntry(), for: .parakeet)
             try CatalogStore.update(
-                CatalogEntry(fetchedAt: Date(), models: []), for: .whisper
+                CatalogEntry(fetchedAt: Date(), models: []), for: .whisperCpp
             )
             let loaded = try CatalogStore.load()
             #expect(loaded.entries.count == 2)
             #expect(loaded.entry(for: .parakeet) != nil)
-            #expect(loaded.entry(for: .whisper) != nil)
+            #expect(loaded.entry(for: .whisperCpp) != nil)
         }
     }
 

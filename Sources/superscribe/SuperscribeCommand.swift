@@ -1,12 +1,25 @@
 import ArgumentParser
+import Foundation
 import SuperscribeKit
 
 @main
 struct Superscribe: AsyncParsableCommand {
+    static let toolVersion = "0.6.0"
+
     static let configuration = CommandConfiguration(
         commandName: "superscribe",
         abstract: "Transcribe podcasts from isolated speaker tracks.",
-        version: "0.4.0",
-        subcommands: [TranscribeCommand.self, MergeCommand.self, RunCommand.self, ModelsCommand.self, BackendsCommand.self]
+        subcommands: [TranscribeCommand.self, MergeCommand.self, RunCommand.self, ModelCommand.self, BackendCommand.self, CacheCommand.self]
     )
+
+    @Flag(name: .long, help: "Show the version.")
+    var version: Bool = false
+
+    mutating func run() throws {
+        if version {
+            print(Self.toolVersion)
+            return
+        }
+        print(Self.helpMessage())
+    }
 }

@@ -1,21 +1,34 @@
 import Foundation
-@preconcurrency import WhisperKit
+import whisper
 
-/// WhisperKit backend for on-device speech-to-text using OpenAI Whisper
-/// models compiled to CoreML.
+/// Sendable box for a C `OpaquePointer` (whisper_context *).
+/// whisper_context is not thread-safe for writes, but we only read from it
+/// (via per-call whisper_state), so the isolation is safe.
+private final class WhisperContext: @unchecked Sendable {
+    let ptr: OpaquePointer
+    init(_ ptr: OpaquePointer) { self.ptr = ptr }
+    deinit { whisper_free(ptr) }
+}
+
+/// whisper.cpp backend for on-device speech-to-text using OpenAI Whisper GGML
+/// models with Metal GPU acceleration.
 ///
-/// Models are downloaded automatically on first use from HuggingFace and
-/// cached locally. Supports word-level timestamps, language hints, and
-/// prompt tokens for context.
+/// Each instance owns a single `whisper_context` loaded from a `.bin` model
+/// file on disk. A per-call `whisper_state` provides safe concurrent use
+/// across the two-track pipeline without sharing mutable state between tasks.
 public actor WhisperBackend: Transcriber {
-    private var whisperKit: WhisperKit?
-    private let modelName: String
-    private var loadingTask: Task<WhisperKit, any Error>?
+    private var ctx: WhisperContext?
+    private let modelId: String
+    private var loadingTask: Task<WhisperContext, any Error>?
 
-    /// - Parameter model: Whisper model variant (e.g. `"large-v3_turbo"`).
-    ///   Defaults to `"large-v3_turbo"` for the best speed/accuracy tradeoff.
-    public init(model: String = "large-v3_turbo") {
-        self.modelName = model
+    /// - Parameter model: GGML model variant, e.g. `"large-v3-turbo"`, `"base"`,
+    ///   `"medium-q5_0"`. Defaults to `"large-v3-turbo"`.
+    public init(model: String = WhisperBackend.defaultModelId) {
+        self.modelId = model
+    }
+
+    deinit {
+        // whisper_free is handled by WhisperContext deinit
     }
 
     public static var isAvailable: Bool {
@@ -29,7 +42,7 @@ public actor WhisperBackend: Transcriber {
     public nonisolated var capabilities: BackendCapabilities {
         BackendCapabilities(
             requiredAudioFormat: .asr16kMono,
-            displayName: "Whisper (WhisperKit)",
+            displayName: "Whisper (whisper.cpp)",
             defaultModelId: WhisperBackend.defaultModelId
         )
     }
@@ -39,97 +52,171 @@ public actor WhisperBackend: Transcriber {
     public func transcribe(
         samples: [Float],
         segment: SpeechSegment,
-        config: SuperscribeKit.TranscriptionConfig
+        config: TranscriptionConfig
     ) async throws -> SegmentTranscription {
-        let pipe = try await ensureLoaded()
+        let context = try await ensureLoaded()
 
         guard !samples.isEmpty else {
             return SegmentTranscription(segment: segment, words: [])
         }
 
-        var options = DecodingOptions(wordTimestamps: true)
-        if let lang = config.language {
-            options.language = lang
+        // Allocate per-call state so concurrent transcriptions don't share
+        // mutable whisper internals. (Logging is already silenced globally.)
+        guard let state = whisper_init_state(context.ptr) else {
+            throw WhisperError.stateInitFailed
         }
-        if let prompt = config.prompt {
-            options.promptTokens =
-                pipe.tokenizer?.encode(text: prompt).filter {
-                    $0 < (pipe.tokenizer?.specialTokens.specialTokenBegin ?? .max)
-                } ?? []
+        defer { whisper_free_state(state) }
+
+        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        params.print_progress = false
+        params.print_realtime = false
+        params.print_timestamps = false
+        params.token_timestamps = true
+
+        // Language hint: whisper expects a short ISO code like "en", "ja", etc.
+        // We must keep the C string alive for the duration of the call.
+        let languageCStr: [CChar]? = config.language.flatMap { $0.cString(using: .utf8) }
+        if languageCStr != nil {
+            params.language = languageCStr!.withUnsafeBufferPointer { $0.baseAddress }
         }
 
-        let whisperResults = try await pipe.transcribe(
-            audioArray: samples,
-            decodeOptions: options
-        )
-
-        let wkWords = extractWords(from: whisperResults)
-        let timedWords = wkWords.map { w in
-            TimedWord(
-                text: w.text,
-                start: TimeInterval(w.start) + segment.start,
-                end: TimeInterval(w.end) + segment.start
-            )
+        // Initial prompt as a C string.
+        let promptCStr: [CChar]? = config.prompt.flatMap { $0.cString(using: .utf8) }
+        if promptCStr != nil {
+            params.initial_prompt = promptCStr!.withUnsafeBufferPointer { $0.baseAddress }
         }
-        return SegmentTranscription(segment: segment, words: timedWords)
+
+        let rc = samples.withUnsafeBufferPointer { buf in
+            whisper_full_with_state(context.ptr, state, params, buf.baseAddress, Int32(buf.count))
+        }
+        guard rc == 0 else {
+            throw WhisperError.transcriptionFailed(code: rc)
+        }
+
+        let words = extractTimedWords(ctx: context, state: state, segmentOffset: segment.start)
+        return SegmentTranscription(segment: segment, words: words)
     }
 
     // MARK: - Private
 
-    private func ensureLoaded() async throws -> WhisperKit {
-        if let pipe = whisperKit {
-            return pipe
-        }
-        if let task = loadingTask {
-            return try await task.value
-        }
-        let task = Task { [self] () async throws -> WhisperKit in
-            // Load strictly from local disk; the install pipeline is
-            // responsible for placing files there.
-            guard let folder = Self.localModelFolder(for: modelName) else {
+    private func ensureLoaded() async throws -> WhisperContext {
+        if let c = ctx { return c }
+        if let task = loadingTask { return try await task.value }
+
+        let task = Task { [self] () async throws -> WhisperContext in
+            let binPath = WhisperBackend.installPath(for: modelId).path
+            guard FileManager.default.fileExists(atPath: binPath) else {
                 throw ModelInstallationError.modelNotInstalled(
-                    model: modelName, backend: .whisper
+                    model: modelId, backend: .whisperCpp
                 )
             }
             FileHandle.standardError.write(
-                Data("Loading Whisper model \(modelName) from local cache...\n".utf8)
+                Data("Loading Whisper model \(modelId)...\n".utf8)
             )
-            let config = WhisperKitConfig(modelFolder: folder)
-            let pipe = try await WhisperKit(config)
-            self.whisperKit = pipe
-            return pipe
+            var ctxParams = whisper_context_default_params()
+            ctxParams.use_gpu = true
+            // Permanently silence all ggml/whisper C-library log output.
+            // Both sinks must be set: ggml_log_set covers ggml_metal_init and
+            // other ggml-level messages; whisper_log_set covers whisper-level
+            // messages. Neither is restored — we manage all user-facing output
+            // ourselves and never want internal C-library logging on stderr.
+            ggml_log_set({ _, _, _ in }, nil)
+            whisper_log_set({ _, _, _ in }, nil)
+            let ptr = whisper_init_from_file_with_params(binPath, ctxParams)
+            guard let ptr else {
+                throw WhisperError.contextInitFailed(path: binPath)
+            }
+            let c = WhisperContext(ptr)
+            self.ctx = c
+            return c
         }
         loadingTask = task
-        let pipe = try await task.value
+        let c = try await task.value
         loadingTask = nil
-        return pipe
+        return c
     }
 
-    /// Returns the local model folder path if the model is already cached.
-    static func localModelFolder(for model: String) -> String? {
-        let coremlDir = whisperKitCacheDirectory()
-            .appendingPathComponent("openai_whisper-\(model)")
+    /// Walk whisper_state segments/tokens and merge sub-word pieces into
+    /// whole-word `TimedWord`s. whisper.cpp uses a leading space to mark word
+    /// boundaries (same convention as SentencePiece ▁).
+    private nonisolated func extractTimedWords(
+        ctx: WhisperContext,
+        state: OpaquePointer,
+        segmentOffset: TimeInterval
+    ) -> [TimedWord] {
+        var words: [TimedWord] = []
+        let nSegments = Int(whisper_full_n_segments_from_state(state))
 
-        // Check that the directory exists and contains at least one .mlmodelc bundle.
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: coremlDir.path, isDirectory: &isDir),
-            isDir.boolValue
-        else {
-            return nil
+        for s in 0 ..< nSegments {
+            let nTokens = Int(whisper_full_n_tokens_from_state(state, Int32(s)))
+            var currentText = ""
+            var wordStart: TimeInterval = 0
+            var wordEnd: TimeInterval = 0
+
+            for t in 0 ..< nTokens {
+                let data = whisper_full_get_token_data_from_state(state, Int32(s), Int32(t))
+                guard let rawPtr = whisper_full_get_token_text_from_state(ctx.ptr, state, Int32(s), Int32(t)) else {
+                    continue
+                }
+                let token = String(cString: rawPtr)
+
+                // Skip special tokens: negative ids, and whisper's bracket
+                // tokens ([_BEG_], [_TT_N], [_EOT_], etc.) which have
+                // positive ids but must never appear as visible text.
+                guard data.id >= 0, !token.hasPrefix("[_") else { continue }
+
+                // A leading space marks a new word boundary.
+                let isNewWord = token.hasPrefix(" ") || token.hasPrefix("▁")
+
+                if isNewWord && !currentText.isEmpty {
+                    words.append(
+                        TimedWord(
+                            text: currentText,
+                            start: wordStart + segmentOffset,
+                            end: wordEnd + segmentOffset
+                        ))
+                    currentText = ""
+                }
+
+                let cleaned =
+                    token
+                    .replacingOccurrences(of: "▁", with: "")
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " "))
+
+                if !cleaned.isEmpty {
+                    if currentText.isEmpty {
+                        wordStart = TimeInterval(data.t0) / 100.0
+                    }
+                    currentText += cleaned
+                    wordEnd = TimeInterval(data.t1) / 100.0
+                }
+            }
+
+            if !currentText.isEmpty {
+                words.append(
+                    TimedWord(
+                        text: currentText,
+                        start: wordStart + segmentOffset,
+                        end: wordEnd + segmentOffset
+                    ))
+            }
         }
-        let contents = (try? FileManager.default.contentsOfDirectory(atPath: coremlDir.path)) ?? []
-        guard contents.contains(where: { $0.hasSuffix(".mlmodelc") }) else {
-            return nil
-        }
-        return coremlDir.path
+        return words
     }
+}
 
-    /// The directory under `~/Documents/huggingface/...` that WhisperKit uses
-    /// to cache CoreML model folders.
-    static func whisperKitCacheDirectory() -> URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return
-            home
-            .appendingPathComponent("Documents/huggingface/models/argmaxinc/whisperkit-coreml")
+// MARK: - Errors
+
+enum WhisperError: Error, LocalizedError {
+    case contextInitFailed(path: String)
+    case stateInitFailed
+    case transcriptionFailed(code: Int32)
+
+    var errorDescription: String? {
+        switch self {
+            case .contextInitFailed(let p): return "whisper_context init failed for model at \(p)"
+            case .stateInitFailed: return "whisper_init_state returned nil"
+            case .transcriptionFailed(let c): return "whisper_full_with_state failed (code \(c))"
+        }
     }
 }

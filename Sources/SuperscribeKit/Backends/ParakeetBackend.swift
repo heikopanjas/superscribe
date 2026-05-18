@@ -99,6 +99,9 @@ public actor ParakeetBackend: Transcriber {
             FileHandle.standardError.write(
                 Data("Loading Parakeet TDT \(modelVersion) models from local cache...\n".utf8)
             )
+            // Note: FluidAudio's [INFO] log output is only emitted in DEBUG
+            // builds (AppLogger uses #if DEBUG to gate console writes), so no
+            // suppression is needed here.
             let loadedModels = try await AsrModels.load(
                 from: installDir, version: modelVersion
             )

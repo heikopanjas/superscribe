@@ -3,55 +3,72 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("WhisperBackend.groupSiblings")
+@Suite("WhisperBackend.filterGGMLSiblings")
 struct WhisperRegistryTests {
 
-    @Test func groupsSiblingsByOpenAIWhisperFolder() {
+    @Test func extractsGGMLBinFiles() {
         let siblings: [HuggingFaceHub.HFSibling] = [
-            .init(rfilename: "openai_whisper-tiny/MelSpectrogram.mlmodelc/coremldata.bin", size: 100),
-            .init(rfilename: "openai_whisper-tiny/AudioEncoder.mlmodelc/coremldata.bin", size: 200),
-            .init(rfilename: "openai_whisper-large-v3_turbo/AudioEncoder.mlmodelc/coremldata.bin", size: 5_000_000),
-            .init(rfilename: "openai_whisper-large-v3_turbo/TextDecoder.mlmodelc/coremldata.bin", size: 3_000_000),
-            // Top-level files are ignored.
+            .init(rfilename: "ggml-base.bin", size: 100_000_000),
+            .init(rfilename: "ggml-large-v3-turbo.bin", size: 1_500_000_000),
+            // Encoder mlmodelc bundles must be ignored.
+            .init(rfilename: "ggml-base.bin-encoder.mlmodelc/weights/weight.bin", size: 50_000_000),
+            // Top-level non-ggml files must be ignored.
             .init(rfilename: "README.md", size: 42),
-            // Unknown folder pattern is ignored.
-            .init(rfilename: "other_folder/file.bin", size: 99)
+            .init(rfilename: "config.json", size: 256)
         ]
 
-        let result = WhisperBackend.groupSiblings(siblings)
+        let result = WhisperBackend.filterGGMLSiblings(siblings)
         let byId = Dictionary(uniqueKeysWithValues: result.map { ($0.id, $0) })
 
         #expect(result.count == 2)
 
-        let tiny = try! #require(byId["tiny"])
-        #expect(tiny.totalSizeBytes == 300)
-        #expect(tiny.fileCount == 2)
-        #expect(tiny.repoId == WhisperBackend.coreMLRepoId)
-        #expect(tiny.subpath == "openai_whisper-tiny")
+        let base = try! #require(byId["base"])
+        #expect(base.totalSizeBytes == 100_000_000)
+        #expect(base.fileCount == 1)
+        #expect(base.subpath == nil)
+        #expect(base.repoId == WhisperBackend.huggingFaceRepoId)
 
-        let turbo = try! #require(byId["large-v3_turbo"])
-        #expect(turbo.totalSizeBytes == 8_000_000)
-        #expect(turbo.fileCount == 2)
+        let turbo = try! #require(byId["large-v3-turbo"])
+        #expect(turbo.totalSizeBytes == 1_500_000_000)
+        #expect(turbo.fileCount == 1)
     }
 
-    @Test func returnsEmptyWhenNoMatchingFolders() {
-        #expect(WhisperBackend.groupSiblings([]).isEmpty)
+    @Test func returnsEmptyWhenNoMatches() {
+        #expect(WhisperBackend.filterGGMLSiblings([]).isEmpty)
         #expect(
-            WhisperBackend.groupSiblings([
-                .init(rfilename: "config.json", size: 100)
+            WhisperBackend.filterGGMLSiblings([
+                .init(rfilename: "README.md", size: 100)
             ]).isEmpty
         )
     }
 
-    @Test func handlesMissingSizes() {
+    @Test func handlesNilSizes() {
         let siblings: [HuggingFaceHub.HFSibling] = [
-            .init(rfilename: "openai_whisper-tiny/file1.bin", size: nil),
-            .init(rfilename: "openai_whisper-tiny/file2.bin", size: nil)
+            .init(rfilename: "ggml-tiny.bin", size: nil)
         ]
-        let result = WhisperBackend.groupSiblings(siblings)
+        let result = WhisperBackend.filterGGMLSiblings(siblings)
         #expect(result.count == 1)
-        // sizeSum stayed 0, so totalSizeBytes ends up nil.
+        #expect(result[0].id == "tiny")
         #expect(result[0].totalSizeBytes == nil)
-        #expect(result[0].fileCount == 2)
+    }
+
+    @Test func resultsAreSortedById() {
+        let siblings: [HuggingFaceHub.HFSibling] = [
+            .init(rfilename: "ggml-tiny.bin", size: 1),
+            .init(rfilename: "ggml-base.bin", size: 1),
+            .init(rfilename: "ggml-medium.bin", size: 1)
+        ]
+        let result = WhisperBackend.filterGGMLSiblings(siblings)
+        #expect(result.map(\.id) == ["base", "medium", "tiny"])
+    }
+
+    @Test func installPathUsesCacheDirectory() {
+        let path = WhisperBackend.installPath(for: "large-v3-turbo")
+        #expect(path.lastPathComponent == "large-v3-turbo.bin")
+        #expect(path.path.contains("superscribe/whisper/large-v3-turbo.bin"))
+    }
+
+    @Test func defaultModelId() {
+        #expect(WhisperBackend.defaultModelId == "large-v3-turbo")
     }
 }

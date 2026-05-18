@@ -35,7 +35,7 @@ Viable on-device candidates surveyed (April 2026):
 | Backend | Model | License | Min macOS | Notes |
 | --- | --- | --- | --- | --- |
 | **FluidAudio** (FluidInference) | Parakeet TDT v3 (0.6B, 25 EU langs) / v2 (English) on CoreML/ANE | Apache-2.0 | 14 | ~190× RT on M4 Pro; word timestamps; `AsrManager.transcribe([Float])` / `transcribe(AVAudioPCMBuffer)`; ANE-only → cheap parallelism across speaker tracks; bundled `AudioConverter` for resample to 16 kHz mono; very active (v0.14.3, late Apr 2026). |
-| **WhisperKit** (`argmaxinc/argmax-oss-swift`) | OpenAI Whisper large-v3 CoreML | MIT | 14 | Mature; prompt tokens; word timestamps; slower than Parakeet on ANE but often more robust on noisy / accented audio. Same package now also ships SpeakerKit + TTSKit. |
+| **whisper.cpp** (`ggerganov/whisper.cpp`, xcframework) | OpenAI Whisper GGML models | MIT | 14 | Mature C library; prompt tokens; word timestamps; Metal GPU via embedded shaders; slower than Parakeet on ANE but often more robust on noisy / accented audio. |
 | **Apple `SpeechAnalyzer` / `SpeechTranscriber`** | Apple-managed assets via `AssetInventory` | system | **26** | Native, zero-dep, `Sendable` actor, `analyzeSequence(from: AVAudioFile)`, word-level timing via `Result.attributeOptions`. Requires bumping deployment target to macOS 26 — not acceptable for MVP. |
 
 **MVP choice:** **FluidAudio with Parakeet TDT v3** as the default backend.
@@ -45,7 +45,7 @@ Viable on-device candidates surveyed (April 2026):
 - Diarization is irrelevant for us (one track = one speaker), so we use only FluidAudio's ASR slice.
 - macOS 14 deployment target stays.
 
-**Backend enum:** rename `.mlx` → `.parakeet` (default). Keep `.whisper` (WhisperKit) as a planned secondary, `.appleSpeech` reserved for when we accept a macOS 26 floor. `.openai` deferred.
+**Backend enum:** rename `.mlx` → `.parakeet` (default). Keep `.whisper` (whisper.cpp) as a secondary, `.appleSpeech` reserved for when we accept a macOS 26 floor. `.openai` deferred.
 
 ## Open Questions
 

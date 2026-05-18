@@ -34,7 +34,7 @@ func resolveBackendAndModel(
 func builtInDefaultModel(for backend: Backend) -> String {
     switch backend {
         case .parakeet: return ParakeetBackend.defaultModelId
-        case .whisper: return WhisperBackend.defaultModelId
+        case .whisperCpp: return WhisperBackend.defaultModelId
         case .appleSpeech: return ""
     }
 }
@@ -47,7 +47,7 @@ func makeTranscriber(backend: Backend, model: String) throws -> any Transcriber 
                 throw BackendError.unavailable("Parakeet requires Apple Silicon")
             }
             return ParakeetBackend(model: model)
-        case .whisper:
+        case .whisperCpp:
             guard WhisperBackend.isAvailable else {
                 throw BackendError.unavailable("Whisper requires Apple Silicon")
             }
@@ -196,7 +196,49 @@ struct TranscribeCommand: AsyncParsableCommand {
 
     @OptionGroup var options: TranscribeOptions
 
+    @Option(
+        name: .long,
+        help: ArgumentHelp(
+            "Scan a directory for audio files and write tracks.superscribe.json. Cannot be combined with --track or --input.",
+            valueName: "directory"
+        )
+    )
+    var createInput: String?
+
+    @Option(
+        name: .long,
+        help: ArgumentHelp(
+            "Load track mapping from a file created with --create-input. Cannot be combined with --track.",
+            valueName: "file"
+        )
+    )
+    var input: String?
+
+    mutating func validate() throws {
+        let hasTrack = !options.track.isEmpty
+        if let _ = createInput {
+            if hasTrack { throw ValidationError("--create-input may not be combined with --track.") }
+            if input != nil { throw ValidationError("--create-input may not be combined with --input.") }
+        }
+        if input != nil, hasTrack {
+            throw ValidationError("--input may not be combined with --track.")
+        }
+    }
+
     mutating func run() async throws {
+        if let dir = createInput {
+            try runCreateInput(directory: dir)
+            return
+        }
+
+        let resolvedTracks: [TrackInput]
+        if let inputFile = input {
+            resolvedTracks = try loadTrackInputs(from: inputFile)
+        }
+        else {
+            resolvedTracks = options.trackInputs
+        }
+
         let (backend, model) = resolveBackendAndModel(
             cliBackend: options.backend, cliModel: options.model
         )
@@ -207,7 +249,7 @@ struct TranscribeCommand: AsyncParsableCommand {
         let transcriber = try makeTranscriber(backend: backend, model: model)
 
         let pipelineConfig = PipelineConfig(
-            tracks: options.trackInputs,
+            tracks: resolvedTracks,
             transcriptionConfig: options.transcriptionConfig(model: model),
             analyzerConfig: options.analyzerConfig,
             session: nil
@@ -232,7 +274,11 @@ struct TranscribeCommand: AsyncParsableCommand {
         FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
 
         let data = try IntermediateTranscript.jsonEncoder().encode(transcript)
-        let outputURL = URL(fileURLWithPath: options.output)
+        let outputPath =
+            options.output.isEmpty
+            ? "transcript.superscribe.\(backend.rawValue).json"
+            : options.output
+        let outputURL = URL(fileURLWithPath: outputPath)
         try data.write(to: outputURL)
 
         let trackCount = transcript.tracks.count
@@ -241,8 +287,70 @@ struct TranscribeCommand: AsyncParsableCommand {
             Data("Transcribed \(segCount) segments from \(trackCount) track(s) in \(formatDuration(transcribeDuration))\n".utf8)
         )
         FileHandle.standardError.write(
-            Data("Output: \(options.output)\n".utf8)
+            Data("Output: \(outputPath)\n".utf8)
         )
+    }
+
+    // MARK: - --create-input
+
+    private func runCreateInput(directory: String) throws {
+        let dirURL = URL(fileURLWithPath: directory, isDirectory: true)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dirURL.path, isDirectory: &isDir), isDir.boolValue else {
+            throw ValidationError("\(directory): not a directory.")
+        }
+
+        let audioExtensions: Set<String> = ["mp3", "wav", "m4a", "aac", "flac", "ogg", "mp4", "mov", "caf", "opus"]
+        let contents = try FileManager.default.contentsOfDirectory(
+            at: dirURL, includingPropertiesForKeys: [.isRegularFileKey], options: .skipsHiddenFiles
+        )
+        let audioFiles =
+            contents
+            .filter { audioExtensions.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+
+        guard !audioFiles.isEmpty else {
+            throw ValidationError("No audio files found in \(directory).")
+        }
+
+        let cwdURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        var tracks: [String: String] = [:]
+        for (i, url) in audioFiles.enumerated() {
+            let absPath = url.standardizedFileURL.path
+            let cwdPath = cwdURL.standardizedFileURL.path + "/"
+            let relPath =
+                absPath.hasPrefix(cwdPath)
+                ? String(absPath.dropFirst(cwdPath.count))
+                : absPath
+            tracks["speaker-\(i + 1)"] = relPath
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(tracks)
+
+        let outputURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("tracks.superscribe.json")
+        try data.write(to: outputURL)
+        print("Created \(outputURL.path) with \(audioFiles.count) track(s).")
+    }
+
+    // MARK: - --input
+
+    private func loadTrackInputs(from filePath: String) throws -> [TrackInput] {
+        let fileURL = URL(fileURLWithPath: filePath)
+        let cwdURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+
+        let data = try Data(contentsOf: fileURL)
+        let mapping = try JSONDecoder().decode([String: String].self, from: data)
+
+        guard !mapping.isEmpty else {
+            throw ValidationError("\(filePath): track mapping is empty.")
+        }
+
+        return mapping.sorted { $0.key < $1.key }.map { speaker, filename in
+            TrackInput(speaker: speaker, file: cwdURL.appendingPathComponent(filename))
+        }
     }
 }
 
@@ -354,7 +462,11 @@ struct RunCommand: AsyncParsableCommand {
 
         if keepIntermediate {
             let data = try IntermediateTranscript.jsonEncoder().encode(transcript)
-            let outputURL = URL(fileURLWithPath: transcribeOptions.output)
+            let outputPath =
+                transcribeOptions.output.isEmpty
+                ? "transcript.superscribe.\(backend.rawValue).json"
+                : transcribeOptions.output
+            let outputURL = URL(fileURLWithPath: outputPath)
             try data.write(to: outputURL)
         }
 
@@ -412,7 +524,7 @@ func catalog(
 func remoteModels(for backend: Backend) async throws -> [RemoteModelInfo] {
     switch backend {
         case .parakeet: return try await ParakeetBackend.remoteModels()
-        case .whisper: return try await WhisperBackend.remoteModels()
+        case .whisperCpp: return try await WhisperBackend.remoteModels()
         case .appleSpeech: return []
     }
 }
@@ -421,18 +533,18 @@ func remoteModels(for backend: Backend) async throws -> [RemoteModelInfo] {
 func installedModels(for backend: Backend) throws -> [InstalledModelInfo] {
     switch backend {
         case .parakeet: return try ParakeetBackend.installedModels()
-        case .whisper: return try WhisperBackend.installedModels()
+        case .whisperCpp: return try WhisperBackend.installedModels()
         case .appleSpeech: return []
     }
 }
 
-struct ModelsCommand: AsyncParsableCommand {
+struct ModelCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "models",
+        commandName: "model",
         abstract: "List, refresh, or set defaults for transcription models."
     )
 
-    @Option(name: .long, help: "Backend (parakeet, whisper). Defaults to your configured backend.")
+    @Option(name: .long, help: "Backend (parakeet, whisper.cpp). Defaults to your configured backend.")
     var backend: Backend?
 
     @Flag(name: .long, help: "List models. Implicit when no other verb is given.")
@@ -556,7 +668,9 @@ struct ModelsCommand: AsyncParsableCommand {
             print("Already installed at \(installPath.path)")
             return
         }
-        let (entry, _) = try await catalog(for: backend, forceRefresh: false)
+        // Always refresh before downloading to avoid stale repoId / repoURL
+        // from a previously cached catalog entry.
+        let (entry, _) = try await catalog(for: backend, forceRefresh: true)
         guard let info = entry.models.first(where: { $0.id == modelId }) else {
             throw ModelInstallationError.unknownModel(
                 model: modelId,
@@ -617,7 +731,7 @@ struct ModelsCommand: AsyncParsableCommand {
         let builtinDefault = builtInDefaultModel(for: backend)
         if models.isEmpty {
             print("No models installed for backend '\(backend.rawValue)'.")
-            print("Try: superscribe models --list --remote --backend \(backend.rawValue)")
+            print("Try: superscribe model --list --remote --backend \(backend.rawValue)")
             return
         }
         let idWidth = max(8, models.map(\.id.count).max() ?? 0)
@@ -709,11 +823,14 @@ extension String {
 
 // MARK: - backends
 
-struct BackendsCommand: ParsableCommand {
+struct BackendCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "backends",
+        commandName: "backend",
         abstract: "List available backends, set the default, or show capabilities."
     )
+
+    @Flag(name: .long, help: "List available backends. Implicit when no other verb is given.")
+    var list: Bool = false
 
     @Option(name: .long, help: "Set the default backend.")
     var setDefault: Backend?
@@ -732,10 +849,11 @@ struct BackendsCommand: ParsableCommand {
             try printCapabilities()
         }
         else {
+            // Default verb: --list (explicit or implicit).
             let config = UserConfig.load()
             let userDefault = config.resolvedDefaultBackend()
             for backend in Backend.allCases {
-                let marker = (backend == userDefault) ? " (default)" : ""
+                let marker = (backend == userDefault) ? "  (default)" : ""
                 print("  \(backend.rawValue)\(marker)")
             }
         }
@@ -751,6 +869,169 @@ struct BackendsCommand: ParsableCommand {
         print("Audio format:   \(fmt.sampleRate) Hz, \(fmt.channels == 1 ? "mono" : "\(fmt.channels) channels")")
         print("Default model:  \(caps.defaultModelId)")
         print("")
-        print("Use `superscribe models --list --remote --backend \(backend.rawValue)` for the full catalog.")
+        print("Use `superscribe model --list --remote --backend \(backend.rawValue)` for the full catalog.")
     }
+}
+// MARK: - cache
+
+struct CacheCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "cache",
+        abstract: "Inspect and prune the converted-audio cache."
+    )
+
+    @Flag(name: .long, help: "List cache entries with size and age.")
+    var list: Bool = false
+
+    @Flag(name: .long, help: "Delete all cache entries.")
+    var clear: Bool = false
+
+    @Option(name: .long, help: "Delete the cache entry for the source file at <path>.")
+    var rm: String?
+
+    @Flag(name: .long, help: "Skip confirmation prompt (use with --clear).")
+    var yes: Bool = false
+
+    mutating func validate() throws {
+        let verbs: [(String, Bool)] = [
+            ("--list", list),
+            ("--clear", clear),
+            ("--rm", rm != nil)
+        ]
+        let active = verbs.filter(\.1).map(\.0)
+        if active.count > 1 {
+            throw ValidationError(
+                "Only one of \(active.joined(separator: ", ")) may be used at once."
+            )
+        }
+        if yes && !clear {
+            throw ValidationError("--yes applies only to --clear.")
+        }
+    }
+
+    mutating func run() throws {
+        let cache = ConvertedAudioCache()
+        if list {
+            try runList(cache: cache)
+        }
+        else if clear {
+            try runClear(cache: cache)
+        }
+        else if let path = rm {
+            try runRemove(path: path, cache: cache)
+        }
+        else {
+            try runInfo(cache: cache)
+        }
+    }
+
+    // MARK: - Verbs
+
+    private func runInfo(cache: ConvertedAudioCache) throws {
+        let (entries, totalBytes) = try scanEntries(cache: cache)
+        print("Cache location: \(cache.root.path)")
+        print("Entries:        \(entries.count)")
+        print("Total size:     \(formatBytes(totalBytes))")
+    }
+
+    private func runList(cache: ConvertedAudioCache) throws {
+        let (entries, totalBytes) = try scanEntries(cache: cache)
+        if entries.isEmpty {
+            print("Cache is empty (\(cache.root.path))")
+            return
+        }
+        let manifest = (try? cache.loadManifest()) ?? [:]
+        let now = Date()
+        for (url, size, mtime) in entries.sorted(by: { $0.2 > $1.2 }) {
+            let digest = url.deletingPathExtension().lastPathComponent
+            let age = now.timeIntervalSince(mtime)
+            let sizeStr = formatBytes(size).leftPad(toLength: 10)
+            let source =
+                manifest[digest].map {
+                    URL(fileURLWithPath: $0.sourcePath).lastPathComponent
+                } ?? "?"
+            print("  \(sizeStr)  \(formatAge(age))  \(source)")
+        }
+        print("\n\(entries.count) entry(s) — \(formatBytes(totalBytes))")
+    }
+
+    private func runClear(cache: ConvertedAudioCache) throws {
+        let (entries, totalBytes) = try scanEntries(cache: cache)
+        if entries.isEmpty {
+            print("Cache is already empty.")
+            return
+        }
+        if !yes {
+            FileHandle.standardError.write(
+                Data(
+                    "Delete \(entries.count) entry(s) (\(formatBytes(totalBytes))) from \(cache.root.path)? [y/N] "
+                        .utf8
+                )
+            )
+            let answer = readLine(strippingNewline: true)?.lowercased() ?? ""
+            guard answer == "y" || answer == "yes" else {
+                print("Aborted.")
+                return
+            }
+        }
+        try FileManager.default.removeItem(at: cache.root)
+        print("Cleared \(entries.count) entry(s) (\(formatBytes(totalBytes))).")
+    }
+
+    private func runRemove(path: String, cache: ConvertedAudioCache) throws {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard let key = cache.key(for: url, targetFormat: .asr16kMono) else {
+            print("Cannot read file metadata for '\(url.lastPathComponent)' — no entry deleted.")
+            return
+        }
+        guard let entryURL = cache.lookup(key) else {
+            print("No cache entry for '\(url.lastPathComponent)'.")
+            return
+        }
+        let res = try entryURL.resourceValues(forKeys: [.fileSizeKey])
+        let size = Int64(res.fileSize ?? 0)
+        try FileManager.default.removeItem(at: entryURL)
+        try? cache.updateManifest(removingDigest: key.digest)
+        print("Removed cache entry for '\(url.lastPathComponent)' (\(formatBytes(size))).")
+    }
+
+    // MARK: - Helpers
+
+    private func scanEntries(
+        cache: ConvertedAudioCache
+    ) throws -> (entries: [(URL, Int64, Date)], totalBytes: Int64) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: cache.root.path) else { return ([], 0) }
+        let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
+        let contents = try fm.contentsOfDirectory(
+            at: cache.root,
+            includingPropertiesForKeys: Array(keys),
+            options: .skipsHiddenFiles
+        )
+        var entries: [(URL, Int64, Date)] = []
+        var total: Int64 = 0
+        for url in contents where url.pathExtension == "wav" {
+            let res = try url.resourceValues(forKeys: keys)
+            guard res.isRegularFile == true else { continue }
+            let size = Int64(res.fileSize ?? 0)
+            let mtime = res.contentModificationDate ?? Date.distantPast
+            entries.append((url, size, mtime))
+            total += size
+        }
+        return (entries, total)
+    }
+}
+
+private func formatAge(_ seconds: TimeInterval) -> String {
+    let s = Int(seconds)
+    if s < 60 { return "< 1m ago" }
+    if s < 3600 { return "\(s / 60)m ago" }
+    if s < 86400 {
+        let h = s / 3600
+        let m = (s % 3600) / 60
+        return m > 0 ? "\(h)h \(m)m ago" : "\(h)h ago"
+    }
+    let d = s / 86400
+    let h = (s % 86400) / 3600
+    return h > 0 ? "\(d)d \(h)h ago" : "\(d)d ago"
 }

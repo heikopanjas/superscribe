@@ -702,12 +702,12 @@ The original design listed `whisper` (whisper.cpp), `mlx`, `speech` (Apple), and
 - Auto-downloads CoreML model bundles to `~/.cache/fluidaudio/Models/...` on first use.
 - Diarization features are not needed by Superscribe (one track = one speaker) but are available if a future feature ever wants them.
 
-### WhisperKit (`argmaxinc/argmax-oss-swift`) — secondary backend
+### whisper.cpp (`ggerganov/whisper.cpp`) — secondary backend
 
-- MIT, mature, OpenAI Whisper large-v3 on CoreML.
-- Supports prompt tokens, glob model selection, word timestamps.
+- MIT, mature C library, OpenAI Whisper GGML models.
+- Supports prompt tokens, word timestamps, Metal GPU via embedded shaders.
 - Generally slower than Parakeet on ANE but often more robust on noisy / accented audio.
-- Same repo now also ships SpeakerKit (Pyannote diarization, macOS 13+) and TTSKit (Qwen3-TTS, macOS 15+) under an `ArgmaxOSS` umbrella product.
+- Integrated as a static arm64 xcframework built by `_scripts/build-whisper.sh`; models are single `.bin` files from HuggingFace.
 
 ### Apple `SpeechAnalyzer` / `SpeechTranscriber` — deferred (macOS 26)
 
@@ -719,7 +719,7 @@ The original design listed `whisper` (whisper.cpp), `mlx`, `speech` (Apple), and
 ### Updated backend plan
 
 - **MVP:** `.parakeet` (FluidAudio) — default and only fully implemented backend.
-- **Planned:** `.whisper` (WhisperKit) for accuracy comparisons.
+- **Planned:** `.whisper` (whisper.cpp) for accuracy comparisons.
 - **Reserved:** `.appleSpeech` (SpeechAnalyzer) once macOS 26 floor is acceptable.
 - **Deferred:** `.openai` (cloud), `.mlx` (re-evaluate if a Swift MLX Whisper appears).
 

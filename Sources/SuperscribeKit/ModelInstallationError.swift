@@ -49,7 +49,7 @@ extension Backend {
     public var displayLabel: String {
         switch self {
             case .parakeet: return "Parakeet"
-            case .whisper: return "Whisper"
+            case .whisperCpp: return "Whisper"
             case .appleSpeech: return "Apple Speech"
         }
     }
