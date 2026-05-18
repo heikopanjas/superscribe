@@ -21,7 +21,7 @@ public struct VTTFormatter: Sendable {
     }
 
     private func body(for segment: MergedSegment) -> String {
-        guard includeWords, !segment.words.isEmpty else {
+        guard includeWords == true, segment.words.isEmpty == false else {
             return segment.words.map(\.text).joined(separator: " ")
         }
         // Inline word timestamps: `<00:00:01.230>word`.

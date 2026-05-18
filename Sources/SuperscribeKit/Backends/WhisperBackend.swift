@@ -56,7 +56,7 @@ public actor WhisperBackend: Transcriber {
     ) async throws -> SegmentTranscription {
         let context = try await ensureLoaded()
 
-        guard !samples.isEmpty else {
+        guard samples.isEmpty == false else {
             return SegmentTranscription(segment: segment, words: [])
         }
 
@@ -105,7 +105,7 @@ public actor WhisperBackend: Transcriber {
 
         let task = Task { [self] () async throws -> WhisperContext in
             let binPath = WhisperBackend.installPath(for: modelId).path
-            guard FileManager.default.fileExists(atPath: binPath) else {
+            guard FileManager.default.fileExists(atPath: binPath) == true else {
                 throw ModelInstallationError.modelNotInstalled(
                     model: modelId, backend: .whisperCpp
                 )
@@ -163,12 +163,12 @@ public actor WhisperBackend: Transcriber {
                 // Skip special tokens: negative ids, and whisper's bracket
                 // tokens ([_BEG_], [_TT_N], [_EOT_], etc.) which have
                 // positive ids but must never appear as visible text.
-                guard data.id >= 0, !token.hasPrefix("[_") else { continue }
+                guard data.id >= 0, token.hasPrefix("[_") == false else { continue }
 
                 // A leading space marks a new word boundary.
                 let isNewWord = token.hasPrefix(" ") || token.hasPrefix("▁")
 
-                if isNewWord && !currentText.isEmpty {
+                if isNewWord == true && currentText.isEmpty == false {
                     words.append(
                         TimedWord(
                             text: currentText,
@@ -183,8 +183,8 @@ public actor WhisperBackend: Transcriber {
                     .replacingOccurrences(of: "▁", with: "")
                     .trimmingCharacters(in: CharacterSet(charactersIn: " "))
 
-                if !cleaned.isEmpty {
-                    if currentText.isEmpty {
+                if cleaned.isEmpty == false {
+                    if currentText.isEmpty == true {
                         wordStart = TimeInterval(data.t0) / 100.0
                     }
                     currentText += cleaned
@@ -192,7 +192,7 @@ public actor WhisperBackend: Transcriber {
                 }
             }
 
-            if !currentText.isEmpty {
+            if currentText.isEmpty == false {
                 words.append(
                     TimedWord(
                         text: currentText,

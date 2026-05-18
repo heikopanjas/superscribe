@@ -62,7 +62,7 @@ public enum CatalogStore {
     /// missing. Throws if the file exists but cannot be parsed.
     public static func load() throws -> Catalog {
         let url = fileURL
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        guard FileManager.default.fileExists(atPath: url.path) == true else {
             return Catalog()
         }
         let data = try Data(contentsOf: url)

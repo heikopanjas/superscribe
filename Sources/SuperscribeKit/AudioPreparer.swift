@@ -263,7 +263,7 @@ public struct AudioPreparer: Sendable {
         nonisolated(unsafe) var endOfStream = false
 
         let inputBlock: AVAudioConverterInputBlock = { _, statusOut in
-            if endOfStream {
+            if endOfStream == true {
                 statusOut.pointee = .endOfStream
                 return nil
             }
@@ -322,7 +322,7 @@ public struct AudioPreparer: Sendable {
                 )
             }
 
-            if status == .endOfStream || (endOfStream && outputBuffer.frameLength == 0) {
+            if status == .endOfStream || (endOfStream == true && outputBuffer.frameLength == 0) {
                 break
             }
         }

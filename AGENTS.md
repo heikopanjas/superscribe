@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-05-18 (v0.6.0 release)
+**Last updated:** 2026-05-18 (v0.6.1 CLI refactor)
 
 <!-- {mission} -->
 
@@ -157,6 +157,13 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-05-18 (v0.6.1 — CLI refactor + style sweep)
+
+- **Flat CLI source layout.** Split `Sources/superscribe/Commands/Subcommands.swift` (1037 lines) into one file per command directly under `Sources/superscribe/`: `Superscribe.swift`, `Options.swift`, `TranscribeCommand.swift`, `MergeCommand.swift`, `RunCommand.swift`, `ModelCommand.swift`, `BackendCommand.swift`, `CacheCommand.swift`. The `Commands/` subdirectory is removed.
+- **Backend/Model managers.** Extracted backend resolution and transcriber construction into `BackendManager` (with `resolveBackendAndModel`, `builtInDefaultModel`, `makeTranscriber`); extracted catalog fetch, install-state queries, and `ensureModelInstalled` into `ModelManager`. Both are `final class` with `private init()` and `static` methods. Shared CLI helpers (progress reporter, byte/date formatting, `String.leftPad`) live in `Utilities.swift`.
+- **Explicit Bool comparisons.** Per project preference, all `if`/`guard`/`while`/`else if` boolean conditions across `Sources/` now compare explicitly: `!x` → `x == false`, bare `x` → `x == true`. Pattern bindings (`if let`, `if case`), `==`/`!=` comparisons, and ternaries are unchanged.
+- **swift-format pass** over `Sources/` and `Package.swift` with the repo `.swift-format` config (Xcode 6.2.3 toolchain).
 
 ### 2026-05-18 (v0.6.0 polish + README/LICENSE)
 

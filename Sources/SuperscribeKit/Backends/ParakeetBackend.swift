@@ -55,7 +55,7 @@ public actor ParakeetBackend: Transcriber {
     ) async throws -> SegmentTranscription {
         let manager = try await ensureLoaded()
 
-        guard !samples.isEmpty else {
+        guard samples.isEmpty == false else {
             return SegmentTranscription(segment: segment, words: [])
         }
 
@@ -91,7 +91,7 @@ public actor ParakeetBackend: Transcriber {
             // Install pipeline is responsible for downloads.
             let modelId = ParakeetBackend.shortIdForVersion(modelVersion)
             let installDir = ParakeetBackend.installPath(for: modelId)
-            guard FileManager.default.fileExists(atPath: installDir.path) else {
+            guard FileManager.default.fileExists(atPath: installDir.path) == true else {
                 throw ModelInstallationError.modelNotInstalled(
                     model: modelId, backend: .parakeet
                 )
@@ -134,7 +134,7 @@ public actor ParakeetBackend: Transcriber {
     ) -> SegmentTranscription {
         let words: [TimedWord]
 
-        if let timings = asr.tokenTimings, !timings.isEmpty {
+        if let timings = asr.tokenTimings, timings.isEmpty == false {
             // Merge sub-word tokens into word-level timings.
             words = mergeTokensIntoWords(timings, segmentOffset: segment.start)
         }
@@ -142,7 +142,7 @@ public actor ParakeetBackend: Transcriber {
             // No token-level timings — emit entire text as a single word
             // spanning the segment.
             let text = asr.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.isEmpty {
+            if text.isEmpty == true {
                 words = []
             }
             else {
@@ -170,7 +170,7 @@ public actor ParakeetBackend: Transcriber {
             // SentencePiece word boundary: leading ▁ means new word.
             let isNewWord = token.hasPrefix("▁") || token.hasPrefix(" ")
 
-            if isNewWord && !currentText.isEmpty {
+            if isNewWord == true && currentText.isEmpty == false {
                 words.append(
                     TimedWord(
                         text: currentText,
@@ -185,7 +185,7 @@ public actor ParakeetBackend: Transcriber {
                 .replacingOccurrences(of: "▁", with: "")
                 .replacingOccurrences(of: " ", with: "")
 
-            if currentText.isEmpty {
+            if currentText.isEmpty == true {
                 wordStart = timing.startTime
             }
             currentText += cleaned
@@ -193,7 +193,7 @@ public actor ParakeetBackend: Transcriber {
         }
 
         // Flush last word.
-        if !currentText.isEmpty {
+        if currentText.isEmpty == false {
             words.append(
                 TimedWord(
                     text: currentText,

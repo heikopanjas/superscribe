@@ -16,7 +16,7 @@ struct TrackSpec: ExpressibleByArgument {
         let speaker = String(argument[..<separator]).trimmingCharacters(in: .whitespaces)
         let path = String(argument[argument.index(after: separator)...]).trimmingCharacters(
             in: .whitespaces)
-        guard !speaker.isEmpty, !path.isEmpty else { return nil }
+        guard speaker.isEmpty == false, path.isEmpty == false else { return nil }
         self.speaker = speaker
         self.path = path
     }
@@ -88,4 +88,24 @@ struct MergeOptions: ParsableArguments {
 
     @Flag(name: .long, help: "Keep word-level timestamps in the output.")
     var includeWords: Bool = false
+}
+
+// MARK: - Convenience bridges from CLI options to library types
+
+extension TranscribeOptions {
+    var trackInputs: [TrackInput] {
+        track.map { TrackInput(speaker: $0.speaker, file: URL(fileURLWithPath: $0.path)) }
+    }
+
+    func transcriptionConfig(model: String) -> TranscriptionConfig {
+        TranscriptionConfig(language: language, model: model, prompt: prompt)
+    }
+
+    var analyzerConfig: AnalyzerConfig {
+        AnalyzerConfig(
+            silenceThresholdDB: silenceThreshold,
+            minSilenceDuration: minSilence,
+            padding: padding
+        )
+    }
 }

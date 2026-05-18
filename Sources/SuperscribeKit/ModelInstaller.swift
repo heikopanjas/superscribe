@@ -25,7 +25,7 @@ public enum ModelInstaller {
 
         return try await InstallLocks.shared.withLock(for: finalDir) {
             // 1. Idempotent fast path.
-            if isInstalled(at: finalDir, backend: backend) {
+            if isInstalled(at: finalDir, backend: backend) == true {
                 return finalDir
             }
 
@@ -47,7 +47,7 @@ public enum ModelInstaller {
                 try FileManager.default.createDirectory(
                     at: parent, withIntermediateDirectories: true
                 )
-                if isSingleFile {
+                if isSingleFile == true {
                     // Download the single file directly into the staging path.
                     try await ModelDownloader.downloadFile(
                         model: model,
@@ -65,7 +65,7 @@ public enum ModelInstaller {
                 }
 
                 // 4. Atomic rename.
-                if FileManager.default.fileExists(atPath: finalDir.path) {
+                if FileManager.default.fileExists(atPath: finalDir.path) == true {
                     try? FileManager.default.removeItem(at: stagingPath)
                     return finalDir
                 }
@@ -103,12 +103,12 @@ public enum ModelInstaller {
             case .whisperCpp:
                 // Single .bin file — just check it exists as a regular file.
                 var isDir: ObjCBool = false
-                return FileManager.default.fileExists(atPath: path.path, isDirectory: &isDir)
-                    && !isDir.boolValue
+                return FileManager.default.fileExists(atPath: path.path, isDirectory: &isDir) == true
+                    && isDir.boolValue == false
             case .parakeet:
                 var isDir: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDir),
-                    isDir.boolValue
+                guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDir) == true,
+                    isDir.boolValue == true
                 else { return false }
                 let contents =
                     (try? FileManager.default.contentsOfDirectory(atPath: path.path)) ?? []
@@ -134,11 +134,11 @@ public enum ModelInstaller {
 
         // Use the parent directory if installPath doesn't exist yet.
         var probe = installPath
-        if !FileManager.default.fileExists(atPath: probe.path) {
+        if FileManager.default.fileExists(atPath: probe.path) == false {
             probe = probe.deletingLastPathComponent()
         }
         // Walk up until we find an existing ancestor.
-        while !FileManager.default.fileExists(atPath: probe.path),
+        while FileManager.default.fileExists(atPath: probe.path) == false,
             probe.pathComponents.count > 1
         {
             probe = probe.deletingLastPathComponent()
@@ -202,7 +202,7 @@ private actor LockSignal {
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func wait() async {
-        if fired { return }
+        if fired == true { return }
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             waiters.append(cont)
         }

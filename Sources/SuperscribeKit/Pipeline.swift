@@ -129,7 +129,7 @@ public struct TranscribePipeline: Sendable {
                 }
             )
             overallCompleted += segments.count
-            if !transcribedSegments.isEmpty {
+            if transcribedSegments.isEmpty == false {
                 transcribedTracks.append(
                     IntermediateTranscript.Track(
                         speaker: track.speaker,
@@ -171,7 +171,7 @@ public struct TranscribePipeline: Sendable {
             var nextIndex = 0
             var results: [(Int, SegmentTranscription)] = []
 
-            while nextIndex < segments.count || !group.isEmpty {
+            while nextIndex < segments.count || group.isEmpty == false {
                 // Fill up to the concurrency limit.
                 while inFlight < config.maxConcurrentTranscriptions,
                     nextIndex < segments.count
@@ -201,7 +201,7 @@ public struct TranscribePipeline: Sendable {
 
             // Sort by original index, map to intermediate format, drop empty segments.
             return results.sorted { $0.0 < $1.0 }.compactMap { _, result in
-                guard !result.words.isEmpty else { return nil }
+                guard result.words.isEmpty == false else { return nil }
                 return IntermediateTranscript.TranscribedSegment(
                     start: result.segment.start,
                     end: result.segment.end,

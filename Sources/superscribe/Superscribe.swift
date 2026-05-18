@@ -4,7 +4,7 @@ import SuperscribeKit
 
 @main
 struct Superscribe: AsyncParsableCommand {
-    static let toolVersion = "0.6.0"
+    static let toolVersion = "0.6.1"
 
     static let configuration = CommandConfiguration(
         commandName: "superscribe",
@@ -16,7 +16,7 @@ struct Superscribe: AsyncParsableCommand {
     var version: Bool = false
 
     mutating func run() throws {
-        if version {
+        if version == true {
             print(Self.toolVersion)
             return
         }

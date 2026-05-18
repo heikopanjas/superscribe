@@ -84,8 +84,8 @@ extension ParakeetBackend: ModelRegistry {
     public static func installedModels() throws -> [InstalledModelInfo] {
         let dir = fluidAudioCacheDirectory()
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir),
-            isDir.boolValue
+        guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) == true,
+            isDir.boolValue == true
         else {
             return []
         }
@@ -93,14 +93,14 @@ extension ParakeetBackend: ModelRegistry {
         return entries.compactMap { entry -> InstalledModelInfo? in
             let path = dir.appendingPathComponent(entry, isDirectory: true)
             var subIsDir: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path.path, isDirectory: &subIsDir),
-                subIsDir.boolValue
+            guard FileManager.default.fileExists(atPath: path.path, isDirectory: &subIsDir) == true,
+                subIsDir.boolValue == true
             else {
                 return nil
             }
             // Only count it as installed if a compiled CoreML bundle is present.
             let contents = (try? FileManager.default.contentsOfDirectory(atPath: path.path)) ?? []
-            guard contents.contains(where: { $0.hasSuffix(".mlmodelc") }) else { return nil }
+            guard contents.contains(where: { $0.hasSuffix(".mlmodelc") }) == true else { return nil }
             let id = knownFolderAliases[entry] ?? entry
             let size = parakeetDirectorySize(at: path)
             return InstalledModelInfo(id: id, path: path, sizeBytes: size)

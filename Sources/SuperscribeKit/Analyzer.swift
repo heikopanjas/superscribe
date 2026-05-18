@@ -66,7 +66,7 @@ public struct Analyzer: Sendable {
 
     /// Detect speech in pre-decoded mono float samples. Public for testability.
     public func detectSpeech(samples: [Float], sampleRate: Double) -> [SpeechSegment] {
-        guard !samples.isEmpty, sampleRate > 0 else { return [] }
+        guard samples.isEmpty == false, sampleRate > 0 else { return [] }
 
         let window = max(1, config.windowSize)
         let totalDuration = TimeInterval(samples.count) / sampleRate
@@ -83,17 +83,17 @@ public struct Analyzer: Sendable {
         while index < samples.count {
             let windowEnd = min(index + window, samples.count)
             let isSpeech = Self.rms(samples, from: index, to: windowEnd) >= Float(thresholdLinear)
-            if isSpeech, !inSpeech {
+            if isSpeech == true, inSpeech == false {
                 segmentStart = index
                 inSpeech = true
             }
-            else if !isSpeech, inSpeech {
+            else if isSpeech == false, inSpeech == true {
                 rawSegments.append((segmentStart, index))
                 inSpeech = false
             }
             index = windowEnd
         }
-        if inSpeech {
+        if inSpeech == true {
             rawSegments.append((segmentStart, samples.count))
         }
 
@@ -202,7 +202,7 @@ public struct Analyzer: Sendable {
         var sourceConsumed = false
         var conversionError: NSError?
         let status = converter.convert(to: monoBuffer, error: &conversionError) { _, statusOut in
-            if sourceConsumed {
+            if sourceConsumed == true {
                 statusOut.pointee = .endOfStream
                 return nil
             }

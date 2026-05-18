@@ -107,7 +107,7 @@ public struct ConvertedAudioCache: Sendable {
 
     /// Load the manifest from disk. Returns an empty dictionary when no manifest exists.
     public func loadManifest() throws -> [String: ManifestEntry] {
-        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return [:] }
+        guard FileManager.default.fileExists(atPath: manifestURL.path) == true else { return [:] }
         let data = try Data(contentsOf: manifestURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -139,7 +139,7 @@ public struct ConvertedAudioCache: Sendable {
             "manifest.json.staging-\(UUID().uuidString)", isDirectory: false
         )
         try data.write(to: stagingURL)
-        if FileManager.default.fileExists(atPath: manifestURL.path) {
+        if FileManager.default.fileExists(atPath: manifestURL.path) == true {
             try FileManager.default.removeItem(at: manifestURL)
         }
         try FileManager.default.moveItem(at: stagingURL, to: manifestURL)
@@ -234,7 +234,7 @@ public struct ConvertedAudioCache: Sendable {
 
         do {
             // Replace any existing file (defensive; lookup avoids this normally).
-            if FileManager.default.fileExists(atPath: finalURL.path) {
+            if FileManager.default.fileExists(atPath: finalURL.path) == true {
                 try FileManager.default.removeItem(at: finalURL)
             }
             try FileManager.default.moveItem(at: stagingURL, to: finalURL)

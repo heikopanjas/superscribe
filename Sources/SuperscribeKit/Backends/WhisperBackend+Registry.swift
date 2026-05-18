@@ -19,7 +19,7 @@ extension WhisperBackend: ModelRegistry {
 
     public static func installedModels() throws -> [InstalledModelInfo] {
         let dir = whisperCacheDirectory()
-        guard FileManager.default.fileExists(atPath: dir.path) else { return [] }
+        guard FileManager.default.fileExists(atPath: dir.path) == true else { return [] }
         let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         return
             entries
@@ -44,16 +44,16 @@ extension WhisperBackend: ModelRegistry {
         let repoURL = URL(string: "https://huggingface.co/\(huggingFaceRepoId)")!
         return siblings.compactMap { sibling in
             // Match exactly: "ggml-<id>.bin" with no path separator.
-            guard !sibling.rfilename.contains("/"),
-                sibling.rfilename.hasPrefix("ggml-"),
-                sibling.rfilename.hasSuffix(".bin")
+            guard sibling.rfilename.contains("/") == false,
+                sibling.rfilename.hasPrefix("ggml-") == true,
+                sibling.rfilename.hasSuffix(".bin") == true
             else { return nil }
             let id = String(
                 sibling.rfilename
                     .dropFirst("ggml-".count)
                     .dropLast(".bin".count)
             )
-            guard !id.isEmpty else { return nil }
+            guard id.isEmpty == false else { return nil }
             return RemoteModelInfo(
                 id: id,
                 repoId: huggingFaceRepoId,

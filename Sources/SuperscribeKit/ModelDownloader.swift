@@ -72,9 +72,9 @@ public enum ModelDownloader {
             .compactMap { sibling in
                 if let subpath = model.subpath {
                     let prefix = subpath.hasSuffix("/") ? subpath : subpath + "/"
-                    guard sibling.rfilename.hasPrefix(prefix) else { return nil }
+                    guard sibling.rfilename.hasPrefix(prefix) == true else { return nil }
                     let rel = String(sibling.rfilename.dropFirst(prefix.count))
-                    guard !rel.isEmpty else { return nil }
+                    guard rel.isEmpty == false else { return nil }
                     return (sibling.rfilename, rel, sibling.size)
                 }
                 else {
@@ -82,7 +82,7 @@ public enum ModelDownloader {
                 }
             }
 
-        guard !files.isEmpty else {
+        guard files.isEmpty == false else {
             throw ModelInstallationError.downloadFailed(
                 url: model.repoURL,
                 underlying: NSError(
@@ -265,7 +265,7 @@ public enum ModelDownloader {
                     buffer.removeAll(keepingCapacity: true)
                 }
             }
-            if !buffer.isEmpty {
+            if buffer.isEmpty == false {
                 try handle.write(contentsOf: buffer)
                 fileBytes += Int64(buffer.count)
                 await progress.add(bytes: Int64(buffer.count))
@@ -346,7 +346,7 @@ private actor ProgressTracker {
     private func emit(force: Bool) {
         let now = Date()
         // Throttle to ~10 Hz unless forced.
-        if !force && now.timeIntervalSince(lastEmitAt) < 0.1 { return }
+        if force == false && now.timeIntervalSince(lastEmitAt) < 0.1 { return }
         let elapsed = now.timeIntervalSince(emitWindowStart)
         let throughput: Double?
         if elapsed >= 0.5 {
