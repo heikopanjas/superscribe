@@ -1,20 +1,67 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-05-18 (cache subcommand)
+**Last updated:** 2026-05-18 (v0.6.0 release)
 
 <!-- {mission} -->
 
 ## Mission Statement
 
-[Describe your project here - what it does, its purpose, and key features]
+**superscribe** is a macOS command-line tool and Swift library that transcribes multi-track podcast recordings into a single time-aligned subtitle file (VTT today; SRT/JSON/TXT planned). Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a publish-ready output.
+
+Two on-device ASR backends are supported, both Apple Silicon only:
+
+- **Parakeet** (default) — FluidAudio CoreML / Apple Neural Engine. Fast, low power.
+- **whisper.cpp** — GGML models with Metal GPU acceleration. Higher accuracy, broader language coverage.
 
 ## Technology Stack
 
-- **Language:** [e.g., Python, TypeScript, JavaScript]
-- **Framework:** [e.g., React, Next.js, Django, FastAPI]
+- **Language:** Swift 6.2 (strict concurrency)
+- **Platform:** macOS 14+, Apple Silicon (arm64) only
+- **Package Manager:** Swift Package Manager
+- **Build dependencies (one-time):** `cmake`, `ninja` (for the whisper.cpp xcframework build script)
+- **Runtime dependencies:** swift-argument-parser, FluidAudio, whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/build-whisper.sh`)
 - **Version Control:** Git
-- **Package Manager:** [e.g., npm, pip, poetry, yarn]
-- **License:** [e.g., MIT, Apache 2.0]
+- **License:** MIT
+
+## Repository Layout
+
+```
+Sources/
+  SuperscribeKit/          Core library (importable by Swift apps)
+    Backends/              ParakeetBackend, WhisperBackend (+Registry)
+    Format/                VTTFormatter
+    Analyzer.swift         Silence detection
+    AudioPreparer.swift    Audio conversion + slicing (16 kHz mono f32 PCM)
+    ConvertedAudioCache.swift  On-disk PCM cache with manifest sidecar
+    HuggingFaceHub.swift   Remote model catalog client
+    CatalogStore.swift     ~/.cache/superscribe/catalog.json
+    ModelDownloader.swift  Bounded-parallel byte-stream downloader
+    ModelInstaller.swift   Atomic stage-then-rename installer
+    ModelRegistry.swift    Per-backend model id registry protocol
+    Merger.swift           Timeline alignment + overlap resolution
+    Pipeline.swift         Orchestrates conversion + transcription
+    Transcriber.swift      Transcriber protocol
+    Types.swift            Core value types
+    UserConfig.swift       Persistent default backend / model
+  superscribe/             CLI executable (thin wrapper over SuperscribeKit)
+    Commands/Options.swift, Subcommands.swift
+    SuperscribeCommand.swift
+Tests/superscribeTests/    Swift Testing (50 tests)
+_scripts/build-whisper.sh  One-time xcframework build (cmake + ninja)
+_docs/                     Design documents
+whisper-build/             Generated xcframework (gitignored)
+```
+
+## Subcommand Surface (v0.6.0)
+
+| Subcommand | Purpose |
+|---|---|
+| `transcribe` | Detect speech + run ASR; writes `transcript.superscribe.<backend>.json`. Also: `--create-input <dir>` (scan dir → template), `--input <file>` (load template) |
+| `merge` | Read intermediate JSON → render formatted output (VTT) |
+| `run` | `transcribe` + `merge` in one pass |
+| `model` | `--list`, `--remote`, `--download`, `--rm`, `--set-default`, `--refresh` |
+| `backends` | List backends and capabilities |
+| `cache` | Audio-conversion cache: info, `--list`, `--clear`, `--rm` |
 
 ## Session Protocol
 
@@ -110,6 +157,17 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-05-18 (v0.6.0 polish + README/LICENSE)
+
+- **README.md added.** Full user-facing docs: requirements, quick start, backends, model management, every subcommand with option tables, `--create-input`/`--input` workflow, intermediate JSON format, xcframework build instructions, project structure. No emojis per user preference.
+- **LICENSE added.** MIT, copyright 2026 Heiko Panjas.
+- **Special-token leak fix (WhisperBackend).** `extractTimedWords` previously only filtered tokens with negative ids, which let whisper's `[_BEG_]` (50363) and `[_TT_N]` (50364–50563) bracket tokens leak into transcribed word text. Now also skips any token whose text starts with `"[_"`.
+- **Default transcript filename includes backend.** `--output` default changed from `transcript.superscribe.json` to `transcript.superscribe.<backend>.json` so parakeet and whisper.cpp results don't overwrite each other. User-supplied `--output` still wins.
+- **`transcribe --create-input <dir>`.** Stand-alone option that scans a directory for audio files (`mp3 wav m4a aac flac ogg mp4 mov caf opus`), sorts with `localizedStandardCompare`, and writes `tracks.superscribe.json` to the *current working directory* with `speaker-<n>` → cwd-relative path mappings. Mutually exclusive with `--track` and `--input`.
+- **`transcribe --input <file>`.** Loads a `[String: String]` track-mapping JSON (as produced by `--create-input`) and resolves filenames relative to cwd. Mutually exclusive with `--track`.
+- **Pipeline trims empties.** `IntermediateTranscript` now drops segments where `words.isEmpty` (silence-analyzer false positives — breath, FX, music above dB threshold) and drops tracks where `segments.isEmpty` (FX/noise tracks).
+- **Committed as `f6b76fd`.** 24 files, 943 insertions, 388 deletions.
 
 ### 2026-05-18 (cache subcommand)
 
