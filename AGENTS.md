@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-05-01
+**Last updated:** 2026-05-02 (audio cache)
 
 <!-- {mission} -->
 
@@ -110,6 +110,24 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-05-02 (audio cache)
+
+- **Audio converter: live progress + persistent cache (v0.4.0).** `AudioPreparer` now reports streaming `ConversionProgress` (source frames consumed, fraction 0–1) via an optional `(@Sendable) -> Void` callback; the converter loop reads the source in ~1 s chunks and feeds them to `AVAudioConverter` instead of the previous one-shot whole-file convert. New `ConvertedAudioCache` (`Sources/SuperscribeKit/ConvertedAudioCache.swift`) persists already-converted PCM as WAV under `~/.cache/superscribe/audio/<sha256>.wav`. Cache key = `sha256(absPath │ size │ mtime_ns │ formatKey)` where `formatKey` = `"f32-<rate>-<channels>"` derived from `BackendCapabilities.requiredAudioFormat` — future backends with different requirements get separate entries automatically. Writes are atomic (sibling `.staging-<uuid>` then `moveItem`). On a cache hit, the WAV reads back through the existing fast path with zero re-conversion. CLI: `transcribe`/`run` enable the cache by default and now print a throttled (~10 Hz) `Converting <name> [N%]` line per track on stderr; new `--no-cache` flag opts out. Verified end-to-end on a 30-min mp4: cold run writes a 321 MB WAV; warm run skips conversion entirely.
+
+### 2026-05-02 (even later)
+
+- **Model installer + lifecycle (v0.3.0).** Superscribe now owns all model downloads end-to-end. New `ModelDownloader` (URLSession byte-stream, ≤4 parallel files, 64 KiB write batches, ~10 Hz throttled progress) and `ModelInstaller` (atomic stage-then-rename via `<finalDir>.staging-<uuid>`, quota-aware preflight via `URLResourceKey.volumeAvailableCapacityForImportantUsageKey`, single global serial install lock). Backends now load-from-disk only — `WhisperBackend` uses `WhisperKitConfig(modelFolder:)`, `ParakeetBackend` uses `AsrModels.load(from:)`; both throw `ModelInstallationError.modelNotInstalled` if the local folder is missing. `transcribe` and `run` auto-install the resolved model with a live stderr progress line before transcribing. `models` gains `--download <id>` (idempotent, prints `Already installed at …` or installs with progress) and `--rm <id>` (interactive `[y/N]` confirmation, `--yes` to bypass).
+- **Parakeet on-disk path corrected.** `ParakeetBackend.fluidAudioCacheDirectory()` was scanning `~/.cache/fluidaudio/Models` (FluidAudio's TTS path) — the actual ASR cache is `~/Library/Application Support/FluidAudio/Models/<folderName>`. Also: FluidAudio's `Repo.folderName` strips the `-coreml` suffix (e.g. HF repo `parakeet-tdt-0.6b-v3-coreml` → folder `parakeet-tdt-0.6b-v3`) and `parakeet-ja` differs from its HF repo name `parakeet-0.6b-ja-coreml`. Introduced a single `ParakeetBackend.ModelDescriptor` table linking short id ↔ HF repo bare name ↔ on-disk folder name; `installPath` and `installFolderName` now match FluidAudio's convention exactly so previously-downloaded models are detected without migration. `installedModels` requires a `.mlmodelc` bundle to count as installed.
+
+### 2026-05-02 (later)
+
+- **Models command rework (v0.2.0).** Hugging Face Hub is now the authoritative model catalog. New `ModelRegistry` protocol replaces per-backend `availableModels` enums; each backend exposes `defaultModelId`, `remoteModels()`, and `installedModels()`. Added `HuggingFaceHub` URLSession client (tolerates fractional-second ISO 8601 dates) and `CatalogStore` persisting to `~/.cache/superscribe/catalog.json` with schema `{ version, entries: { backend → { fetchedAt, models } } }`. `models` rewritten as `AsyncParsableCommand` with flags `--list` (implicit), `--remote`, `--refresh`, `--set-default <id>`, `--backend`, `--json`. `backends --capabilities` trimmed to a one-screen summary that points at `models --list --remote`. Decisions locked in for future work: no partial downloads (atomic stage-then-rename), and download commands must show live progress.
+
+### 2026-05-02
+
+- **Library extraction.** Split single `superscribe` executable into `SuperscribeKit` library target + thin `superscribe` CLI executable. Core logic (types, analyzer, merger, formatters, pipeline, backends) lives in `SuperscribeKit`; CLI imports it plus `ArgumentParser`. Tests depend on `SuperscribeKit`. Reasoning: enables framework-based consumption beyond CLI (Swift apps, third-party integrations).
+- **Backend enum cleanup.** Renamed `Backend.mlx` → `.parakeet`, dropped `.auto` and `.openai`. Remaining cases: `.parakeet` (default, FluidAudio), `.whisper` (planned, WhisperKit), `.appleSpeech` (reserved, macOS 26).
 
 ### 2026-05-01
 

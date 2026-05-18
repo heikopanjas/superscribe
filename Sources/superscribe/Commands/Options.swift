@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import SuperscribeKit
 
 extension Backend: ExpressibleByArgument {}
 extension OverlapPolicy: ExpressibleByArgument {}
@@ -30,11 +31,14 @@ struct TranscribeOptions: ParsableArguments {
     )
     var track: [TrackSpec] = []
 
-    @Option(name: .long, help: "Transcription backend.")
-    var backend: Backend = .auto
+    @Option(name: .long, help: "Transcription backend (parakeet, whisper). Uses configured default if omitted.")
+    var backend: Backend?
 
-    @Option(name: .long, help: "Whisper model size.")
-    var model: String = "large-v3-turbo"
+    @Option(
+        name: .long,
+        help: "Model variant. Parakeet: v2, v3, tdt-ctc-110m, tdt-ja. Whisper: any HuggingFace model name. Uses configured default if omitted."
+    )
+    var model: String?
 
     @Option(name: .long, help: "Language code (e.g. en, de). Auto-detect if omitted.")
     var language: String?
@@ -56,6 +60,9 @@ struct TranscribeOptions: ParsableArguments {
 
     @Flag(name: .long, help: "Show progress and segment details.")
     var verbose: Bool = false
+
+    @Flag(name: .long, help: "Skip the converted-audio cache (always re-convert from the source file).")
+    var noCache: Bool = false
 }
 
 /// Options shared by the `merge` and `run` subcommands.

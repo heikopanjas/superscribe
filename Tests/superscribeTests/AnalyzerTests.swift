@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import superscribe
+@testable import SuperscribeKit
 
 @Suite("Analyzer")
 struct AnalyzerTests {

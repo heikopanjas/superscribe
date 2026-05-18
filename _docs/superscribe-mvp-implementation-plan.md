@@ -24,7 +24,7 @@ Smallest vertical slice that turns N isolated speaker tracks into one chronologi
 - **Format:** VTT only — formatter interface ready for SRT/JSON/TXT later.
 - **Naming:** `superscribe` everywhere; renaming the design doc is a follow-up cleanup.
 - **Concurrency:** Tracks analysed in parallel; per-backend fan-out for transcription, bounded by a configurable in-flight limit.
-- **Module layout:** Single `superscribe` executable target. Code organised into subdirectories (`Commands/`, `Backends/`, `Format/`) for readability — SwiftPM treats them as one module. Revisit splitting into a library target only if a second front-end appears or compile times become a problem.
+- **Module layout:** Two targets — `SuperscribeKit` (library) and `superscribe` (thin CLI executable). The library contains all core logic (types, analyzer, merger, formatters, backends, pipeline) and is independently consumable. The CLI imports `SuperscribeKit` + `ArgumentParser` for command-line parsing only. Tests depend on `SuperscribeKit`.
 
 ## Backend Decision (2026-05-01)
 
@@ -72,8 +72,8 @@ Viable on-device candidates surveyed (April 2026):
 
 **Depends on:** Phase 0.
 
-- [ ] `Sources/superscribe/Types.swift` — `TimedWord`, `SpeechSegment`, `TranscriptionResult`, `TranscriptionConfig`, `AttributedSegment`, `MergedSegment`, enums `Backend`, `OverlapPolicy`, `OutputFormat`. All `Sendable`; persisted ones `Codable`.
-- [ ] `Sources/superscribe/IntermediateTranscript.swift` — Codable model for `.superscribe.json` (`version`, `session`, `created`, `tracks`, `metadata`).
+- [ ] `Sources/SuperscribeKit/Types.swift` — `TimedWord`, `SpeechSegment`, `TranscriptionResult`, `TranscriptionConfig`, `AttributedSegment`, `MergedSegment`, enums `Backend`, `OverlapPolicy`, `OutputFormat`. All `Sendable`; persisted ones `Codable`.
+- [ ] `Sources/SuperscribeKit/IntermediateTranscript.swift` — Codable model for `.superscribe.json` (`version`, `session`, `created`, `tracks`, `metadata`).
 - [ ] `Sources/superscribe/SuperscribeCommand.swift` — `@main AsyncParsableCommand` with `transcribe` / `merge` / `run` subcommands stubbed (print "not implemented").
 - [ ] `Sources/superscribe/Commands/Options.swift` — shared option groups `TranscribeOptions` and `MergeOptions` per design doc.
 
@@ -85,7 +85,7 @@ Viable on-device candidates surveyed (April 2026):
 
 **Depends on:** Phase 1. *Can run in parallel with Phase 3.*
 
-- [ ] `Sources/superscribe/Analyzer.swift`:
+- [ ] `Sources/SuperscribeKit/Analyzer.swift`:
   - [ ] `AnalyzerConfig` struct with defaults (−40 dB, 0.5 s min silence, 0.15 s padding, 1024-sample window).
   - [ ] `Analyzer.detectSpeech(in: URL) throws -> [SpeechSegment]`.
   - [ ] PCM read via `AVAudioFile`; convert to mono Float32 if needed.
@@ -106,8 +106,8 @@ Viable on-device candidates surveyed (April 2026):
 
 **Depends on:** Phase 1. *Can run in parallel with Phase 2.*
 
-- [ ] `Sources/superscribe/Transcriber.swift` — `Transcriber` protocol + `selectBackend(preferred:)` returning the Parakeet backend; other cases `fatalError` with TODO.
-- [ ] `Sources/superscribe/Backends/ParakeetBackend.swift`:
+- [ ] `Sources/SuperscribeKit/Transcriber.swift` — `Transcriber` protocol + `selectBackend(preferred:)` returning the Parakeet backend; other cases `fatalError` with TODO.
+- [ ] `Sources/SuperscribeKit/Backends/ParakeetBackend.swift`:
   - [ ] Conform to `Transcriber`; `static var isAvailable` checks Apple Silicon at runtime.
   - [ ] Lazy load `AsrModels.downloadAndLoad(version: .v3)` once per process; cache `AsrManager` behind an actor.
   - [ ] Models cached to FluidAudio's default location (`~/.cache/fluidaudio/Models/...`); progress surfaced on stderr.
@@ -125,10 +125,10 @@ Viable on-device candidates surveyed (April 2026):
 
 **Depends on:** Phase 2 + Phase 3.
 
-- [ ] `Sources/superscribe/Pipeline.swift` — `TranscribePipeline.run(session:) async throws -> IntermediateTranscript`:
+- [ ] `Sources/SuperscribeKit/Pipeline.swift` — `TranscribePipeline.run(session:) async throws -> IntermediateTranscript`:
   - [ ] Phase 1: `withThrowingTaskGroup` over tracks → `[(speaker, [SpeechSegment])]`.
   - [ ] Phase 2: bounded fan-out over segments calling the backend; collect into `IntermediateTranscript`.
-  - [ ] Concurrency limit configurable (default 1 for MLX).
+  - [ ] Concurrency limit configurable (default 2 for ANE).
 - [ ] `Sources/superscribe/Commands/TranscribeCommand.swift`:
   - [ ] Parse `--track name=path` flags into a session.
   - [ ] Run pipeline, write `.superscribe.json` to `--output`.
@@ -144,10 +144,10 @@ Viable on-device candidates surveyed (April 2026):
 
 **Depends on:** Phase 1. *Can run in parallel with Phases 2–4.*
 
-- [ ] `Sources/superscribe/Merger.swift`:
+- [ ] `Sources/SuperscribeKit/Merger.swift`:
   - [ ] `flatten` → `resolveOverlaps(policy: .preserve)` (no-op for MVP) → `insertBreaks` → `coalesce` → `[MergedSegment]`.
   - [ ] `trim` and `interleave` policies stubbed with `fatalError("not implemented")` and TODO note.
-- [ ] `Sources/superscribe/Format/VTTFormatter.swift`:
+- [ ] `Sources/SuperscribeKit/Format/VTTFormatter.swift`:
   - [ ] Emit `WEBVTT` header + cues with `<v Speaker>` voice tags.
   - [ ] Timestamps `MM:SS.mmm` (or `HH:MM:SS.mmm` if ≥ 1 h).
   - [ ] Optional inline word-level timestamps via `--include-words`.
@@ -184,4 +184,4 @@ Viable on-device candidates surveyed (April 2026):
 - [Package.swift](../Package.swift) — add MLX deps, set macOS 14 platform, add test target.
 - [Sources/superscribe/superscribe.swift](../Sources/superscribe/superscribe.swift) — current SPM stub; replaced by `SuperscribeCommand.swift` in Phase 1.
 - [_docs/podscribe-design.md](podscribe-design.md) — source of truth for types, algorithms, CLI flags. Rename `podscribe` → `superscribe` once MVP lands.
-- New: `Sources/superscribe/{Types,IntermediateTranscript,Analyzer,Transcriber,ModelManager,Pipeline,Merger,SuperscribeCommand}.swift`, `Sources/superscribe/Commands/**`, `Sources/superscribe/Backends/**`, `Sources/superscribe/Format/**`, `Tests/superscribeTests/**`.
+- New: `Sources/superscribe/{Types,IntermediateTranscript,Analyzer,Transcriber,ModelManager,Pipeline,Merger,SuperscribeCommand}.swift`, `Sources/superscribe/Commands/**`, `Sources/SuperscribeKit/Backends/**`, `Sources/superscribe/Format/**`, `Tests/superscribeTests/**`.

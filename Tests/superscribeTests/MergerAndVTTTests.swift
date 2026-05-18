@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import superscribe
+@testable import SuperscribeKit
 
 @Suite("Merger")
 struct MergerTests {
@@ -23,7 +23,7 @@ struct MergerTests {
             session: nil,
             tracks: tracks,
             metadata: .init(
-                backend: .mlx,
+                backend: .parakeet,
                 model: "test",
                 language: nil,
                 analyzer: .init(silenceThresholdDB: -40, minSilence: 0.5, padding: 0.15)
