@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-05-19 (v0.7.9 — whisper tests without disk models)
+**Last updated:** 2026-05-19 (v0.7.9 — DRY + 100% coverage policy)
 
 <!-- {mission} -->
 
@@ -77,7 +77,9 @@ confirmed your understanding.
 - Avoid making assumptions. If you need additional context to accurately answer the user, ask the user for the missing information. Be specific about which context you need.
 - Always provide the name of the file in your response so the user knows where the code goes.
 - Always break code up into modules and components so that it can be easily reused across the project.
-- All code you write MUST be fully optimized. ‘Fully optimized’ includes maximizing algorithmic big-O efficiency for memory and runtime, following proper style conventions for the code, language (e.g. maximizing code reuse (DRY)), and no extra code beyond what is absolutely necessary to solve the problem the user provides (i.e. no technical debt). If the code is not fully optimized, you will be fined $100.
+- **DRY (Don't Repeat Yourself).** Every piece of logic must have a single authoritative implementation. Before adding code, search for an existing helper, protocol, or module to extend; extract shared behavior when the same pattern appears twice. Duplicated logic is a defect — refactor it, don't copy it.
+- All code you write MUST be fully optimized. ‘Fully optimized’ includes maximizing algorithmic big-O efficiency for memory and runtime, following proper style conventions for the code and language, and no extra code beyond what is absolutely necessary to solve the problem the user provides (i.e. no technical debt). If the code is not fully optimized, you will be fined $100.
+- **SuperscribeKit line coverage must stay at 100%.** Any change under `Sources/SuperscribeKit/` that drops below 100% line coverage is incomplete. Run `_scripts/coverage.sh --run-tests` before finishing work; fix gaps or add tests — do not lower the threshold.
 
 ### Working Together
 
@@ -119,10 +121,48 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 
 1. **Maintain Consistency**: Keep code style consistent across the codebase
 2. **Test First**: Write tests before implementing features when applicable
-3. **Document Changes**: Update documentation when changing functionality
-4. **Code Review**: [Describe your code review process]
-5. **Date Changes**: Update the "Last updated" timestamp in this file when making changes
-6. **Log Updates**: Add entries to "Recent Updates & Decisions" section below
+3. **Verify Coverage**: After any `SuperscribeKit` change, run `_scripts/coverage.sh --run-tests` and confirm **100% line coverage** before committing
+4. **Document Changes**: Update documentation when changing functionality
+5. **Code Review**: [Describe your code review process]
+6. **Date Changes**: Update the "Last updated" timestamp in this file when making changes
+7. **Log Updates**: Add entries to "Recent Updates & Decisions" section below
+
+### Test Coverage (mandatory)
+
+**Goal: 100% SuperscribeKit line coverage — never regress below this.**
+
+| Item | Detail |
+|---|---|
+| Gate | `_scripts/coverage.sh --run-tests` (or `_scripts/test.sh` then `_scripts/coverage.sh`) |
+| Minimum | `COVERAGE_MIN=100` (default; do not lower) |
+| Scope | `Sources/SuperscribeKit/` line coverage via `llvm-cov` |
+| CLI | `Sources/superscribe/` is not part of the gate |
+| Tests | Use `_scripts/test.sh` or `swift test --no-parallel -Xswiftc -strict-concurrency=complete` |
+
+**Rules:**
+
+- Every new or changed line in `SuperscribeKit` must be covered by a test, or the change is not done.
+- Tests must be **CI-safe**: no downloaded whisper GGML models, no Hugging Face model fetches, no reliance on machine-local cache contents. Use test hooks and stubs (see v0.7.8–v0.7.9 entries).
+- **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusion: `WhisperBackend+LiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk).
+- If coverage drops, add tests or refactor untestable code into an excluded shim — never weaken the gate.
+
+### DRY (Don't Repeat Yourself)
+
+**Every piece of knowledge must have a single, unambiguous, authoritative representation in the codebase.**
+
+| Apply DRY to | Examples in this repo |
+|---|---|
+| Library logic | `SuperscribeFS`, `SuperscribePaths`, `BackendManager`, `ModelManager`, `DownloadProgressTracker`, `ConcurrencyHelpers.withBoundedThrowingTaskGroup` |
+| CLI | `Utilities.swift` (`assertMutuallyExclusive`, `confirm`, `printErr`, formatting helpers) |
+| Tests | `TestHelpers`, `MockURLSessionHelpers`, `ResetSharedStateTrait`, shared stub factories |
+
+**Rules:**
+
+- **Search before you write.** Grep for existing helpers, protocols, and patterns; extend them instead of adding parallel implementations.
+- **Two is one too many.** If the same logic appears in two places, extract a shared function, type, or module in the same change (or immediately after).
+- **DRY includes tests.** Shared setup, temp directories, mock sessions, and assertion helpers belong in test utilities — not copied across test files.
+- **DRY ≠ over-abstraction.** Extract when duplication is real and stable; don't invent one-off wrappers or premature generic layers. Prefer a small shared helper over a framework.
+- **Refactor on touch.** When changing duplicated code, consolidate it as part of the change rather than leaving a third copy for later.
 
 ### Security & Safety
 
@@ -139,6 +179,8 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 Load the `swift-coding-conventions` skill before writing, reviewing, or refactoring Swift code.
 Load the `swift-build-commands` skill when building or running the project.
 Load the `swift-testing-pro` skill when writing, reviewing, or refactoring tests (Swift Testing or XCTest).
+Follow the **DRY** principle: reuse and extend existing modules; extract shared logic instead of duplicating it.
+After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm 100% line coverage before committing.
 
 <!-- {integration} -->
 
@@ -157,6 +199,11 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-05-19 (v0.7.9 — DRY + 100% SuperscribeKit coverage policy)
+
+- **DRY principle documented.** Primary instructions, a dedicated **DRY (Don't Repeat Yourself)** section under Best Practices, and Swift Coding Standards now require single authoritative implementations — search before writing, extract on the second duplication, and apply DRY to tests as well.
+- **Mandatory 100% line coverage.** Primary instructions, Best Practices, and **Test Coverage (mandatory)** require `_scripts/coverage.sh --run-tests` to pass at 100% after every `SuperscribeKit` change. The gate must not be lowered; fix gaps with tests or documented exclusions only.
 
 ### 2026-05-19 (v0.7.9 — whisper tests without disk models)
 
