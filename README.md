@@ -89,7 +89,7 @@ Detection is **energy-based**, not ML-based: fast, deterministic, and tunable fr
 
 **Step 5 — Drop noise bursts.** Regions shorter than **0.1 s** (`minSegmentDuration` in code, not exposed on the CLI) are discarded as clicks or glitches.
 
-The result is an ordered list of `SpeechSegment` values `{ start, end }` in seconds. These settings are stored in the intermediate JSON under `metadata.analyzer` so you can see exactly what was used when you merge later.
+The result is an ordered list of `SpeechSegment` values `{ start, end }` in seconds. When you transcribe, superscribe writes an **intermediate transcript** (default `transcript.superscribe.<backend>.json`). Its `metadata` block includes an `analyzer` object with `silence_threshold_db`, `min_silence`, and `padding` so you can see exactly which detection settings were used when you merge later.
 
 ### Time slicing and timestamp alignment
 
@@ -108,7 +108,7 @@ After transcription, the pipeline drops:
 - **Segments with no words** — e.g. breath, FX, or music that crossed the RMS threshold but produced no ASR output.
 - **Entire tracks with no surviving segments** — typical for FX or noise-only stems.
 
-Those tracks do not appear in the intermediate JSON. This keeps merge output clean but means very quiet speech or heavily compressed audio may need a lower `--silence-threshold` (less negative, e.g. `−35`) or more `--padding`.
+Those tracks do not appear in the intermediate transcript. This keeps merge output clean but means very quiet speech or heavily compressed audio may need a lower `--silence-threshold` (less negative, e.g. `−35`) or more `--padding`.
 
 ### Tuning flags (`transcribe` / `run`)
 
@@ -177,7 +177,7 @@ User defaults (backend, model) persist to `~/.config/superscribe/config.json`.
 
 ### `transcribe`
 
-Detects speech, runs ASR on each track, and writes an intermediate `.superscribe.<backend>.json` file. See [Speech detection and time-sliced transcription](#speech-detection-and-time-sliced-transcription) for how detection, slicing, and timestamps work.
+Detects speech, runs ASR on each track, and writes an intermediate `transcript.superscribe.<backend>.json` file. See [Speech detection and time-sliced transcription](#speech-detection-and-time-sliced-transcription) for how detection, slicing, and timestamps work.
 
 ```sh
 superscribe transcribe \
@@ -257,7 +257,7 @@ superscribe run \
   > transcript.vtt
 ```
 
-Add `--keep-intermediate` to also save the `.superscribe.json` file.
+Add `--keep-intermediate` to also save the `transcript.superscribe.<backend>.json` file.
 
 ### `model`
 
@@ -319,7 +319,7 @@ superscribe cache --clear --yes
 
 ## Intermediate format
 
-`transcribe` writes a `.superscribe.<backend>.json` file with raw per-track results. Tracks with no speech and segments with no words are omitted.
+`transcribe` writes a `transcript.superscribe.<backend>.json` file with raw per-track results. Tracks with no speech and segments with no words are omitted.
 
 ```json
 {
