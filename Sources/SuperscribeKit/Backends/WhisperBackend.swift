@@ -72,6 +72,11 @@ public actor WhisperBackend: Transcriber {
         params.print_realtime = false
         params.print_timestamps = false
         params.token_timestamps = true
+        // Disable temperature fallbacks: when the decoder's confidence drops,
+        // whisper re-runs the segment at increasing temperatures, which can
+        // cost 5-10x on hard segments. Setting temperature_inc to 0 keeps the
+        // greedy first pass and skips the fallback loop entirely.
+        params.temperature_inc = 0.0
 
         // Language hint: whisper expects a short ISO code like "en", "ja", etc.
         // We must keep the C string alive for the duration of the call.
@@ -115,6 +120,9 @@ public actor WhisperBackend: Transcriber {
             )
             var ctxParams = whisper_context_default_params()
             ctxParams.use_gpu = true
+            // Fused flash-attention kernels on Metal: 20-40% faster encode +
+            // decode with no quality loss for f16/quantized GGML models.
+            ctxParams.flash_attn = true
             // Permanently silence all ggml/whisper C-library log output.
             // Both sinks must be set: ggml_log_set covers ggml_metal_init and
             // other ggml-level messages; whisper_log_set covers whisper-level

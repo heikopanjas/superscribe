@@ -86,7 +86,12 @@ func formatDate(_ date: Date) -> String {
 
 extension String {
     func leftPad(toLength length: Int) -> String {
-        if count >= length { return self }
+        if count >= length { return String(suffix(length)) }
         return String(repeating: " ", count: length - count) + self
+    }
+
+    func rightPad(toLength length: Int) -> String {
+        if count >= length { return String(prefix(length)) }
+        return self + String(repeating: " ", count: length - count)
     }
 }

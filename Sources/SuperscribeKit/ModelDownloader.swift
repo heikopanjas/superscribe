@@ -250,7 +250,7 @@ public enum ModelDownloader {
         }
         defer { try? handle.close() }
 
-        await progress.startFile(name: relPath)
+        await progress.startFile(name: rfilename)
 
         var buffer = Data()
         buffer.reserveCapacity(64 * 1024)
@@ -306,8 +306,10 @@ private actor ProgressTracker {
     private var filesCompleted: Int = 0
     private var currentFile: String = ""
     private var lastEmitAt: Date = .distantPast
-    private var emitWindowStart: Date = .distantPast
-    private var emitWindowStartBytes: Int64 = 0
+    private var startedAt: Date = .distantPast
+    private var windowStart: Date = .distantPast
+    private var windowStartBytes: Int64 = 0
+    private var lastThroughput: Double?
 
     init(
         modelId: String,
@@ -321,12 +323,16 @@ private actor ProgressTracker {
         self.filesTotal = filesTotal
         self.bytesTotal = bytesTotal
         self.onProgress = onProgress
-        self.emitWindowStart = Date()
+        let now = Date()
+        self.startedAt = now
+        self.windowStart = now
     }
 
     func startFile(name: String) {
         currentFile = name
-        emit(force: true)
+        // Don't emit yet: at this point bytesCompleted is 0 for this file,
+        // so the rate column would render "--/s". The first `add(bytes:)`
+        // will produce a populated line a moment later.
     }
 
     func add(bytes: Int64) {
@@ -347,16 +353,26 @@ private actor ProgressTracker {
         let now = Date()
         // Throttle to ~10 Hz unless forced.
         if force == false && now.timeIntervalSince(lastEmitAt) < 0.1 { return }
-        let elapsed = now.timeIntervalSince(emitWindowStart)
-        let throughput: Double?
-        if elapsed >= 0.5 {
-            throughput = Double(bytesCompleted - emitWindowStartBytes) / elapsed
-            emitWindowStart = now
-            emitWindowStartBytes = bytesCompleted
+        // Refresh sliding-window throughput every ~1s with new data.
+        let windowElapsed = now.timeIntervalSince(windowStart)
+        if windowElapsed >= 1.0 {
+            let delta = bytesCompleted - windowStartBytes
+            if delta > 0 {
+                lastThroughput = Double(delta) / windowElapsed
+            }
+            windowStart = now
+            windowStartBytes = bytesCompleted
         }
-        else {
-            throughput = nil
-        }
+        // If the sliding window hasn't produced a value yet (e.g. a small
+        // file finished in well under 1 s), fall back to overall throughput
+        // since the tracker started. This keeps the rate column populated
+        // from the very first tick.
+        let reported: Double? = {
+            if let t = lastThroughput { return t }
+            let total = now.timeIntervalSince(startedAt)
+            guard total > 0, bytesCompleted > 0 else { return nil }
+            return Double(bytesCompleted) / total
+        }()
         lastEmitAt = now
         onProgress(
             DownloadProgress(
@@ -367,7 +383,7 @@ private actor ProgressTracker {
                 filesTotal: filesTotal,
                 bytesCompleted: bytesCompleted,
                 bytesTotal: bytesTotal,
-                bytesPerSecond: throughput
+                bytesPerSecond: reported
             )
         )
     }

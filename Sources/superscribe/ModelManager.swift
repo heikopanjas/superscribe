@@ -76,25 +76,65 @@ final class ModelManager {
     }
 
     /// Returns a throttled stderr progress handler for `ModelInstaller`/`ModelDownloader`.
+    ///
+    /// Every column has a fixed character width so the line never reflows as
+    /// values grow or shrink. The line is cleared with `ESC[2K` before each
+    /// write to wipe any leftover characters from a previous, longer render.
     static func makeDownloadProgressHandler() -> @Sendable (DownloadProgress) -> Void {
         { p in
-            var line = "\rDownloading \(p.modelId) [\(p.filesCompleted)/\(p.filesTotal)]"
-            if let total = p.bytesTotal {
-                let pct = Int(Double(p.bytesCompleted) / Double(max(1, total)) * 100)
-                line += "  \(formatBytes(p.bytesCompleted))/\(formatBytes(total)) (\(pct)%)"
-            }
-            else {
-                line += "  \(formatBytes(p.bytesCompleted))"
-            }
-            if let bps = p.bytesPerSecond, bps > 0 {
-                line += "  \(formatBytes(Int64(bps)))/s"
-            }
-            if p.currentFile.isEmpty == false {
+            let rate: String = {
+                if let bps = p.bytesPerSecond, bps > 0 {
+                    return "\(formatBytes(Int64(bps)))/s"
+                }
+                return "--/s"
+            }()
+            let bytes: String = {
+                if let total = p.bytesTotal {
+                    return "\(formatBytes(p.bytesCompleted))/\(formatBytes(total))"
+                }
+                return formatBytes(p.bytesCompleted)
+            }()
+            let pct: String = {
+                if let total = p.bytesTotal {
+                    let v = Int(Double(p.bytesCompleted) / Double(max(1, total)) * 100)
+                    return "(\(v)%)"
+                }
+                return ""
+            }()
+            let counter = "[\(p.filesCompleted)/\(p.filesTotal)]"
+            let file: String = {
+                if p.currentFile.isEmpty == true { return "" }
                 let short = (p.currentFile as NSString).lastPathComponent
-                line += "  \(short)"
-            }
-            let data = Data((line + "  \u{1B}[K").utf8)
-            FileHandle.standardError.write(data)
+                return truncateMiddle(short, max: 32)
+            }()
+
+            // Fixed slot widths (chosen for the largest realistic value).
+            //   rate     12  e.g. "1023.0 MiB/s"
+            //   bytes    23  e.g. "1023.0 MiB/1023.0 MiB"
+            //   pct       6  e.g. "(100%)"
+            //   counter   7  e.g. "[99/99]"
+            //   modelId  24
+            //   file     32
+            var line = "\r\u{1B}[2KDownloading"
+            line += "  " + rate.leftPad(toLength: 12)
+            line += "  " + bytes.leftPad(toLength: 23)
+            line += "  " + pct.leftPad(toLength: 6)
+            line += "  " + counter.leftPad(toLength: 7)
+            line += "  " + p.modelId.rightPad(toLength: 24)
+            line += "  " + file.rightPad(toLength: 32)
+            FileHandle.standardError.write(Data(line.utf8))
         }
+    }
+
+    /// Truncates `s` to at most `max` characters by replacing the middle
+    /// with `…`. Preserves a useful prefix and the file extension.
+    private static func truncateMiddle(_ s: String, max: Int) -> String {
+        guard s.count > max, max > 3 else { return s }
+        let keep = max - 1  // for the ellipsis
+        let head = keep / 2
+        let tail = keep - head
+        let prefix = s.prefix(head)
+        let suffix = s.suffix(tail)
+        return "\(prefix)…\(suffix)"
     }
 }

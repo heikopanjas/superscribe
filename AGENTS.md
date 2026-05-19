@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-05-18 (v0.6.1 CLI refactor)
+**Last updated:** 2026-05-19 (v0.6.2 whisper perf + download progress)
 
 <!-- {mission} -->
 
@@ -157,6 +157,12 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-05-19 (v0.6.2 — whisper perf + download progress)
+
+- **Whisper decode speed.** `WhisperBackend` sets `ctxParams.flash_attn = true` (Metal fused attention) and `params.temperature_inc = 0.0` (skip temperature fallback re-runs on low-confidence segments).
+- **Model download progress.** `ModelDownloader` reports the HF `rfilename` in progress ticks; throughput uses a 1 s sliding window with overall-average fallback so the rate column populates from the first byte. `ModelManager.makeDownloadProgressHandler` renders fixed-width columns with `ESC[2K` line clear; `String.rightPad` added in `Utilities.swift`.
+- **Agent skills.** Duplicate `swift-testing-pro` under `.github/skills/` removed; `init-session` prompt moved to `.cursor/commands/init-session.md`. Skill frontmatter added for `git-workflow` and `semantic-versioning`.
 
 ### 2026-05-18 (v0.6.1 — CLI refactor + style sweep)
 
