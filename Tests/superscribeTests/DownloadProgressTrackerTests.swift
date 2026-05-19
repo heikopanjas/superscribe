@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("DownloadProgressTracker")
+@Suite("DownloadProgressTracker", .serialized, ResetSharedStateTrait())
 struct DownloadProgressTrackerTests {
 
     private final class TickSink: @unchecked Sendable {

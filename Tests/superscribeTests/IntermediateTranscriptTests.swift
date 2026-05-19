@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("IntermediateTranscript JSON")
+@Suite("IntermediateTranscript JSON", .serialized, ResetSharedStateTrait())
 struct IntermediateTranscriptTests {
 
     @Test func encodesVersionSessionCreatedAndAnalyzerKeys() throws {

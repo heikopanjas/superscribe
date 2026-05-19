@@ -5,7 +5,7 @@ import Testing
 @testable import SuperscribeKit
 @testable import superscribe
 
-@Suite("CLI helpers")
+@Suite("CLI helpers", .serialized, ResetSharedStateTrait())
 struct CLIHelpersTests {
     @Test func defaultIntermediateOutputPathUsesBackendWhenEmpty() {
         let path = defaultIntermediateOutputPath(backend: .whisperCpp, explicitOutput: "")
@@ -49,7 +49,7 @@ struct CLIHelpersTests {
     }
 }
 
-@Suite("PipelineRunner")
+@Suite("PipelineRunner", .serialized, ResetSharedStateTrait())
 struct PipelineRunnerTests {
     private func makeTempAudio() throws -> URL {
         let sampleRate: Double = 48_000

@@ -4,7 +4,7 @@ import Testing
 
 @testable import superscribe
 
-@Suite("CLI utilities")
+@Suite("CLI utilities", .serialized, ResetSharedStateTrait())
 struct CLIUtilitiesTests {
     @Test func assertMutuallyExclusiveAllowsOneVerb() throws {
         try assertMutuallyExclusive([

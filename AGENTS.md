@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-05-19 (v0.7.6 — 100% SuperscribeKit line coverage)
+**Last updated:** 2026-05-19 (v0.7.9 — whisper tests without disk models)
 
 <!-- {mission} -->
 
@@ -157,6 +157,25 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-05-19 (v0.7.9 — whisper tests without disk models)
+
+- **No on-disk whisper.cpp models in tests.** Removed `transcribeMediumIntegrationWhenInstalled` and `transcribeSpeechExtractsWordsWhenMediumInstalled` (required `medium.bin` in the real cache). `WhisperBackend` gains `testUseStubLoad`, `testWhisperAPISegments`, and injected context/state pointers (`stub-*` model ids only) so failure paths and word extraction run without GGML downloads or inference.
+- **`WhisperContext.testStub()`.** Placeholder context that skips `whisper_free` in deinit; enabled via `testUseStubLoad` and a `stub-*` model id so disk-load tests cannot accidentally pick up leaked hook state.
+- **`WhisperBackend+LiveAPI.swift`.** whisper.cpp C API calls and stub/live branching live here; excluded from `_scripts/coverage.sh` via `-ignore-filename-regex` because live paths require a real GGML model. Unit tests exercise stub hooks in `WhisperBackend.swift` only.
+
+### 2026-05-19 (v0.7.8 — Parakeet disk-load test stubs)
+
+- **No HF downloads in Parakeet disk-load tests.** Removed tests that called real `AsrModels.load(from:)` on stub install dirs. Disk-load coverage uses `parakeetMaterializeFromDiskStub`, `parakeetAsrModelsLoad`, and `parakeetAsrManagerLoadModels` instead.
+- **`TestHelpers.makeStubAsrModels()`.** Builds `AsrModels` from a macOS system Core ML bundle (`MapsSuggestionsTransportModePrediction.mlmodelc`); `AsrManager.loadModels` only stores references, so no inference or Hugging Face fetch is needed.
+- **`parakeetAsrManagerLoadModels` moved.** Hook now applies inside `loadParakeetModelsIntoManager` (not early-return in `materializeFromDiskUsingFluidAudio`), so the load-assemble path stays covered without skipping `loadAsrModels`.
+
+### 2026-05-19 (v0.7.7 — parallel-safe test harness)
+
+- **Swift Testing parallelizes by default.** Shared hooks, path overrides, and mock URL handlers race when suites run concurrently. Use **`_scripts/test.sh`** or **`swift test --no-parallel -Xswiftc -strict-concurrency=complete`**. Plain `swift test` may flake.
+- **`ResetSharedStateTrait`.** Every `@Suite` resets shared overrides before/after each test; all suites also use `.serialized`.
+- **`MockURLSessionHelpers`.** Per-session handler map; `withMockHandler` passes `URLSession` into the body closure. Fast-path install tests use `URLSession.shared` when no mock is needed.
+- **TaskLocal path/config overrides.** `SuperscribePaths.task*Directory` and `UserConfig.taskOverrideConfigFileURL` for per-task isolation in tests.
 
 ### 2026-05-19 (v0.7.6 — 100% SuperscribeKit line coverage gate)
 

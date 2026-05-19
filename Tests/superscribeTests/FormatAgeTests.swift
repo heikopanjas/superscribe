@@ -3,7 +3,7 @@ import Testing
 
 @testable import superscribe
 
-@Suite("formatAge")
+@Suite("formatAge", .serialized, ResetSharedStateTrait())
 struct FormatAgeTests {
     @Test func underOneMinute() {
         #expect(formatAge(0) == "< 1m ago")

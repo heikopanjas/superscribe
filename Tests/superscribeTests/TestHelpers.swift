@@ -1,4 +1,6 @@
 import AVFoundation
+import CoreML
+import FluidAudio
 import Foundation
 
 @testable import SuperscribeKit
@@ -89,6 +91,25 @@ enum TestHelpers {
         )
     }
 
+    /// Builds `AsrModels` with a bundled macOS Core ML model (no Hugging Face download).
+    /// `AsrManager.loadModels` only stores references; weights are not executed in these tests.
+    static func makeStubAsrModels(version: AsrModelVersion = .v3) throws -> AsrModels {
+        let modelURL = URL(
+            fileURLWithPath: "/System/Library/CoreServices/MapsSuggestionsTransportModePrediction.mlmodelc"
+        )
+        let stubModel = try MLModel(contentsOf: modelURL)
+        let config = MLModelConfiguration()
+        return AsrModels(
+            encoder: stubModel,
+            preprocessor: stubModel,
+            decoder: stubModel,
+            joint: stubModel,
+            configuration: config,
+            vocabulary: [0: "▁a"],
+            version: version
+        )
+    }
+
     /// Runs `body` with isolated Parakeet and Whisper cache directory overrides.
     static func withIsolatedModelCaches<T>(
         _ body: (URL, URL) async throws -> T
@@ -97,15 +118,19 @@ enum TestHelpers {
         let whisperRoot = try makeTempDir(prefix: "wh-cache")
         let priorParakeet = SuperscribePaths.overrideFluidAudioModelsDirectory
         let priorWhisper = SuperscribePaths.overrideWhisperModelCacheDirectory
-        SuperscribePaths.overrideFluidAudioModelsDirectory = parakeetRoot
-        SuperscribePaths.overrideWhisperModelCacheDirectory = whisperRoot
+        SuperscribePaths.overrideFluidAudioModelsDirectory = nil
+        SuperscribePaths.overrideWhisperModelCacheDirectory = nil
         defer {
             SuperscribePaths.overrideFluidAudioModelsDirectory = priorParakeet
             SuperscribePaths.overrideWhisperModelCacheDirectory = priorWhisper
             try? FileManager.default.removeItem(at: parakeetRoot)
             try? FileManager.default.removeItem(at: whisperRoot)
         }
-        return try await body(parakeetRoot, whisperRoot)
+        return try await SuperscribePaths.$taskWhisperModelCacheDirectory.withValue(whisperRoot) {
+            try await SuperscribePaths.$taskFluidAudioModelsDirectory.withValue(parakeetRoot) {
+                try await body(parakeetRoot, whisperRoot)
+            }
+        }
     }
 
     // MARK: - Mock pipeline

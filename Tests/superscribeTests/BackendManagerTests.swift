@@ -4,7 +4,7 @@ import Testing
 @testable import SuperscribeKit
 @testable import superscribe
 
-@Suite("BackendManager")
+@Suite("BackendManager", .serialized, ResetSharedStateTrait())
 struct BackendManagerTests {
     @Test func cliBackendOverridesConfig() {
         let config = UserConfig(defaultBackend: Backend.whisperCpp.rawValue)

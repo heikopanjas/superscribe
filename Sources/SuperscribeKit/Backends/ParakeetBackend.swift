@@ -109,8 +109,8 @@ public actor ParakeetBackend: Transcriber {
         }
     }
 
-    /// Loads FluidAudio ASR models from `installDir`. Separated for coverage of the
-    /// disk-load path in unit tests (expects failure when bundles are absent).
+    /// Loads FluidAudio ASR models from `installDir`. Unit tests should set
+    /// `SuperscribeKitTestHooks.parakeetMaterializeFromDiskStub` to avoid HF downloads.
     internal static func materializeFromDisk(
         installDir: URL,
         modelVersion: AsrModelVersion
@@ -118,12 +118,60 @@ public actor ParakeetBackend: Transcriber {
         FileHandle.standardError.write(
             Data("Loading Parakeet TDT \(modelVersion) models from local cache...\n".utf8)
         )
-        let loadedModels = try await AsrModels.load(
-            from: installDir, version: modelVersion
+        if let stub = SuperscribeKitTestHooks.parakeetMaterializeFromDiskStub {
+            return try await stub(installDir, modelVersion)
+        }
+        return try await materializeFromDiskUsingFluidAudio(
+            installDir: installDir,
+            modelVersion: modelVersion
         )
+    }
+
+    /// Real FluidAudio disk load; covered by integration tests or hook tests without downloads.
+    internal static func materializeFromDiskUsingFluidAudio(
+        installDir: URL,
+        modelVersion: AsrModelVersion
+    ) async throws -> any ParakeetASRSession {
         let mgr = AsrManager()
-        try await mgr.loadModels(loadedModels)
+        let loadedModels = try await loadAsrModels(
+            installDir: installDir,
+            modelVersion: modelVersion
+        )
+        try await loadParakeetModelsIntoManager(mgr, models: loadedModels)
         return mgr as any ParakeetASRSession
+    }
+
+    /// FluidAudio `AsrModels.load` wrapper (integration + fast-fail unit tests).
+    internal static func loadAsrModelsFromFluidAudio(
+        from installDir: URL,
+        version: AsrModelVersion
+    ) async throws -> AsrModels {
+        return try await AsrModels.load(from: installDir, version: version)
+    }
+
+    /// FluidAudio `AsrManager.loadModels` wrapper (integration + stub unit tests).
+    internal static func loadParakeetModelsIntoManager(
+        _ mgr: AsrManager,
+        models: AsrModels
+    ) async throws {
+        if let mgrLoad = SuperscribeKitTestHooks.parakeetAsrManagerLoadModels {
+            try await mgrLoad(mgr)
+            return
+        }
+        try await mgr.loadModels(models)
+    }
+
+    private static func loadAsrModels(
+        installDir: URL,
+        modelVersion: AsrModelVersion
+    ) async throws -> AsrModels {
+        if let load = SuperscribeKitTestHooks.parakeetAsrModelsLoad {
+            return try await load(installDir, modelVersion)
+        }
+        return try await loadAsrModelsFromFluidAudio(
+            from: installDir,
+            version: modelVersion
+        )
     }
 
     private static func shortIdForVersion(_ v: AsrModelVersion) -> String {

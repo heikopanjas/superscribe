@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("WhisperBackend.filterGGMLSiblings")
+@Suite("WhisperBackend.filterGGMLSiblings", .serialized, ResetSharedStateTrait())
 struct WhisperRegistryTests {
 
     @Test func extractsGGMLBinFiles() throws {

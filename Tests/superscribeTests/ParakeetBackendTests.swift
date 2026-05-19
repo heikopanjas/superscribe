@@ -4,7 +4,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("ParakeetBackend")
+@Suite("ParakeetBackend", .serialized, ResetSharedStateTrait())
 struct ParakeetBackendTests {
 
     private func displayName(for model: String) async -> String {

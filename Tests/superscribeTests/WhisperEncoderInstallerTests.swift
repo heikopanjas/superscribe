@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("WhisperEncoderInstaller")
+@Suite("WhisperEncoderInstaller", .serialized, ResetSharedStateTrait())
 struct WhisperEncoderInstallerTests {
     @Test func skipsWhenEncoderAlreadyInstalled() async throws {
         let modelId = "base"

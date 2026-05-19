@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("ConcurrencyHelpers")
+@Suite("ConcurrencyHelpers", .serialized, ResetSharedStateTrait())
 struct ConcurrencyHelpersTests {
     @Test func respectsConcurrencyLimit() async throws {
         let limit = 2

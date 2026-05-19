@@ -4,7 +4,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("ConvertedAudioCache")
+@Suite("ConvertedAudioCache", .serialized, ResetSharedStateTrait())
 struct ConvertedAudioCacheTests {
 
     /// Writes a short 48 kHz mono WAV (sine) to a temp file.
@@ -132,7 +132,7 @@ struct ConvertedAudioCacheTests {
     }
 }
 
-@Suite("AudioPreparer.ConversionProgress")
+@Suite("AudioPreparer.ConversionProgress", .serialized, ResetSharedStateTrait())
 struct AudioPreparerProgressTests {
 
     private func makeTempSource(durationSeconds: Double = 1.0) throws -> URL {

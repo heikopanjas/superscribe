@@ -3,6 +3,10 @@ import Foundation
 /// Named on-disk roots used across superscribe. Paths are intentionally
 /// different per subsystem — do not collapse to a single cache root.
 public enum SuperscribePaths {
+    /// Task-local override (parallel-safe); checked before the static override.
+    @TaskLocal static var taskFluidAudioModelsDirectory: URL?
+    @TaskLocal static var taskWhisperModelCacheDirectory: URL?
+
     /// Override for unit tests; nil uses the real FluidAudio models directory.
     nonisolated(unsafe) static var overrideFluidAudioModelsDirectory: URL?
     /// Override for unit tests; nil uses the real whisper model cache directory.
@@ -27,6 +31,9 @@ public enum SuperscribePaths {
 
     /// `~/Library/Caches/superscribe/whisper`
     public static func whisperModelCacheDirectory() -> URL {
+        if let taskWhisperModelCacheDirectory {
+            return taskWhisperModelCacheDirectory
+        }
         if let overrideWhisperModelCacheDirectory {
             return overrideWhisperModelCacheDirectory
         }
@@ -36,6 +43,9 @@ public enum SuperscribePaths {
 
     /// `~/Library/Application Support/FluidAudio/Models`
     public static func fluidAudioModelsDirectory() -> URL {
+        if let taskFluidAudioModelsDirectory {
+            return taskFluidAudioModelsDirectory
+        }
         if let overrideFluidAudioModelsDirectory {
             return overrideFluidAudioModelsDirectory
         }

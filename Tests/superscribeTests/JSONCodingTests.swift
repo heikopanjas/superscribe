@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("JSONCoding")
+@Suite("JSONCoding", .serialized, ResetSharedStateTrait())
 struct JSONCodingTests {
     @Test func catalogRoundTripPreservesISO8601Dates() throws {
         let fetchedAt = Date(timeIntervalSince1970: 1_700_000_000)

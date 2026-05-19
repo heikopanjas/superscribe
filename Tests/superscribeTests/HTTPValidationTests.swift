@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("HTTPValidation")
+@Suite("HTTPValidation", .serialized, ResetSharedStateTrait())
 struct HTTPValidationTests {
     @Test func isSuccessFor2xx() {
         let ok = HTTPURLResponse(

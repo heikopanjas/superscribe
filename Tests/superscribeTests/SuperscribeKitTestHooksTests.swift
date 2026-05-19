@@ -5,7 +5,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("SuperscribeKit test hooks", .serialized)
+@Suite("SuperscribeKit test hooks", .serialized, ResetSharedStateTrait())
 struct SuperscribeKitTestHooksTests {
 
     private func resetHooks() {
@@ -49,12 +49,20 @@ struct SuperscribeKitTestHooksTests {
         SuperscribeKitTestHooks.forceParakeetDirectorySizeEnumeratorFailure = false
         SuperscribeKitTestHooks.forceParakeetDirectorySizeNilEnumerator = false
         SuperscribeKitTestHooks.parakeetMaterializeSession = nil
+        SuperscribeKitTestHooks.parakeetMaterializeFromDiskStub = nil
+        SuperscribeKitTestHooks.parakeetAsrModelsLoad = nil
+        SuperscribeKitTestHooks.parakeetAsrManagerLoadModels = nil
         SuperscribeKitTestHooks.parakeetLoadAfterInstalledCheck = nil
         ParakeetBackend.testLoadHook = nil
         WhisperBackend.testForceStateInitFailed = false
         WhisperBackend.testForceTranscriptionFailed = false
         WhisperBackend.testForceNilTokenText = false
         WhisperBackend.testNilTokenTextSkipsRemaining = 0
+        WhisperBackend.testUseStubLoad = false
+        WhisperBackend.testWhisperAPISegments = nil
+        WhisperBackend.testWhisperInitPointer = nil
+        WhisperBackend.testWhisperStatePointer = nil
+        WhisperLiveAPI.testSkipContextRelease = false
     }
 
     @Test func audioPreparerHookPaths() throws {
@@ -288,7 +296,7 @@ struct SuperscribeKitTestHooksTests {
                     }
                     throw URLError(.unsupportedURL)
                 },
-                {
+                { session in
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: WhisperBackend.huggingFaceRepoId,
@@ -298,7 +306,7 @@ struct SuperscribeKitTestHooksTests {
                         _ = try await ModelInstaller.install(
                             model: model,
                             backend: .whisperCpp,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: { _ in }
                         )
                     }
@@ -347,7 +355,7 @@ struct SuperscribeKitTestHooksTests {
         }
     }
 
-    @Test func ensureLoadedUsesMaterializeFromDisk() async throws {
+    @Test func ensureLoadedCallsMaterializeFromDiskStub() async throws {
         defer { resetHooks() }
         try await TestHelpers.withIsolatedModelCaches { _, _ in
             let dir = ParakeetBackend.installPath(for: "v3")
@@ -356,17 +364,27 @@ struct SuperscribeKitTestHooksTests {
                 at: dir.appendingPathComponent("Enc.mlmodelc", isDirectory: true),
                 withIntermediateDirectories: true
             )
-            let backend = ParakeetBackend(model: "v3")
-            do {
-                _ = try await backend.transcribe(
-                    samples: [0, 0.1, 0, -0.1],
-                    segment: SpeechSegment(start: 0, end: 0.001),
-                    config: TranscriptionConfig(language: "en", model: "v3", prompt: nil)
+            SuperscribeKitTestHooks.parakeetMaterializeFromDiskStub = { installDir, version in
+                #expect(installDir.path == dir.path)
+                #expect(version == .v3)
+                return MockHookSession(
+                    result: ASRResult(
+                        text: "stub",
+                        confidence: 1,
+                        duration: 0.1,
+                        processingTime: 0.01,
+                        tokenTimings: nil
+                    )
                 )
             }
-            catch {
-                // FluidAudio load may fail on stub bundles; path 109-112 still runs.
-            }
+            let backend = ParakeetBackend(model: "v3", injectedSession: nil)
+            let out = try await backend.transcribe(
+                samples: [0.1],
+                segment: SpeechSegment(start: 0, end: 1),
+                config: TranscriptionConfig(language: nil, model: "v3", prompt: nil)
+            )
+            #expect(out.words.count == 1)
+            #expect(out.words[0].text == "stub")
         }
     }
 
@@ -432,64 +450,49 @@ struct SuperscribeKitTestHooksTests {
 
     @Test func whisperForcedFailureHooks() async throws {
         defer { resetHooks() }
-        guard FileManager.default.fileExists(atPath: WhisperBackend.installPath(for: "medium").path) == true else {
-            return
-        }
-        let backend = WhisperBackend(model: "medium")
-        let wav = try TestHelpers.makeTemp16kMonoFloatWAV(name: "wh-hooks")
-        defer { try? FileManager.default.removeItem(at: wav) }
-        let samples = try AudioPreparer(for: backend.capabilities).loadAndConvert(url: wav)
+        WhisperBackend.testUseStubLoad = true
+        let backend = WhisperBackend(model: "stub-hooks")
+        let samples = [Float](repeating: 0, count: 16_000)
 
         WhisperBackend.testForceStateInitFailed = true
         await #expect(throws: WhisperError.self) {
             _ = try await backend.transcribe(
                 samples: samples,
                 segment: SpeechSegment(start: 0, end: 0.5),
-                config: TranscriptionConfig(language: "en", model: "medium", prompt: nil)
+                config: TranscriptionConfig(language: "en", model: "stub-hooks", prompt: nil)
             )
         }
 
         WhisperBackend.testForceStateInitFailed = false
+        WhisperBackend.testWhisperAPISegments = [
+            [
+                WhisperTestToken(token: " x", id: 1, t0: 0, t1: 10)
+            ]
+        ]
         WhisperBackend.testForceTranscriptionFailed = true
         await #expect(throws: WhisperError.self) {
             _ = try await backend.transcribe(
                 samples: samples,
                 segment: SpeechSegment(start: 0, end: 0.5),
-                config: TranscriptionConfig(language: "en", model: "medium", prompt: nil)
+                config: TranscriptionConfig(language: "en", model: "stub-hooks", prompt: nil)
             )
         }
 
         WhisperBackend.testForceTranscriptionFailed = false
+        WhisperBackend.testWhisperAPISegments = [
+            [
+                WhisperTestToken(token: " hello", id: 1, t0: 0, t1: 50),
+                WhisperTestToken(token: " world", id: 2, t0: 50, t1: 100)
+            ]
+        ]
         WhisperBackend.testForceNilTokenText = true
         WhisperBackend.testNilTokenTextSkipsRemaining = 1
-        let speech = try makeSpeechWAV()
-        defer { try? FileManager.default.removeItem(at: speech) }
-        let speechSamples = try AudioPreparer(for: backend.capabilities).loadAndConvert(url: speech)
         let out = try await backend.transcribe(
-            samples: speechSamples,
-            segment: SpeechSegment(start: 0, end: min(3.0, Double(speechSamples.count) / 16_000)),
-            config: TranscriptionConfig(language: "en", model: "medium", prompt: nil)
+            samples: samples,
+            segment: SpeechSegment(start: 0, end: 1.0),
+            config: TranscriptionConfig(language: "en", model: "stub-hooks", prompt: nil)
         )
         #expect(out.words.isEmpty == false)
-    }
-
-    private func makeSpeechWAV() throws -> URL {
-        let dir = try TestHelpers.makeTempDir(prefix: "hooks-speech")
-        let aiff = dir.appendingPathComponent("speech.aiff")
-        let wav = dir.appendingPathComponent("speech.wav")
-        let say = Process()
-        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        say.arguments = ["-o", aiff.path, "Hello world, this is a speech recognition test."]
-        try say.run()
-        say.waitUntilExit()
-        #expect(say.terminationStatus == 0)
-        let convert = Process()
-        convert.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
-        convert.arguments = [aiff.path, wav.path, "-f", "WAVE", "-d", "LEI16@16000"]
-        try convert.run()
-        convert.waitUntilExit()
-        #expect(convert.terminationStatus == 0)
-        return wav
     }
 
     @Test func modelDownloaderFileHandleHook() async throws {
@@ -508,23 +511,107 @@ struct SuperscribeKitTestHooksTests {
         }
     }
 
-    @Test func materializeFromDiskExecutesLoadPath() async throws {
-        try await TestHelpers.withIsolatedModelCaches { _, _ in
-            let dir = ParakeetBackend.installPath(for: "v3")
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(
-                at: dir.appendingPathComponent("Enc.mlmodelc", isDirectory: true),
-                withIntermediateDirectories: true
+    @Test func loadAsrModelsFromFluidAudioRejectsCtcOnlyModel() async {
+        defer { resetHooks() }
+        await #expect(throws: Error.self) {
+            _ = try await ParakeetBackend.loadAsrModelsFromFluidAudio(
+                from: URL(fileURLWithPath: "/tmp/parakeet-ctc-\(UUID().uuidString)"),
+                version: .ctcZhCn
             )
-            do {
-                _ = try await ParakeetBackend.materializeFromDisk(
-                    installDir: dir,
-                    modelVersion: .v3
+        }
+    }
+
+    @Test func materializeFromDiskFallsThroughToFluidAudioHooks() async throws {
+        defer { resetHooks() }
+        SuperscribeKitTestHooks.parakeetAsrModelsLoad = { _, _ in
+            try TestHelpers.makeStubAsrModels()
+        }
+        SuperscribeKitTestHooks.parakeetAsrManagerLoadModels = { _ in }
+        _ = try await ParakeetBackend.materializeFromDisk(
+            installDir: URL(fileURLWithPath: "/tmp/parakeet-fallthrough-\(UUID().uuidString)"),
+            modelVersion: .v3
+        )
+    }
+
+    @Test func materializeFromDiskStubSkipsFluidAudioDownload() async throws {
+        defer { resetHooks() }
+        let installDir = URL(fileURLWithPath: "/tmp/parakeet-stub-\(UUID().uuidString)")
+        SuperscribeKitTestHooks.parakeetMaterializeFromDiskStub = { dir, version in
+            #expect(dir.path == installDir.path)
+            #expect(version == .v3)
+            return MockHookSession(
+                result: ASRResult(
+                    text: "disk-stub",
+                    confidence: 1,
+                    duration: 0.1,
+                    processingTime: 0.01,
+                    tokenTimings: nil
                 )
-            }
-            catch {
-                // Incomplete bundles typically fail FluidAudio load.
-            }
+            )
+        }
+        let session = try await ParakeetBackend.materializeFromDisk(
+            installDir: installDir,
+            modelVersion: .v3
+        )
+        var decoderState = TdtDecoderState.make(decoderLayers: await session.decoderLayerCount)
+        let out = try await session.transcribe(
+            [0.1],
+            decoderState: &decoderState,
+            language: nil
+        )
+        #expect(out.text == "disk-stub")
+    }
+
+    @Test func materializeFromDiskUsingFluidAudioManagerLoadHook() async throws {
+        defer { resetHooks() }
+        SuperscribeKitTestHooks.parakeetAsrModelsLoad = { _, _ in
+            try TestHelpers.makeStubAsrModels()
+        }
+        SuperscribeKitTestHooks.parakeetAsrManagerLoadModels = { _ in }
+        _ = try await ParakeetBackend.materializeFromDiskUsingFluidAudio(
+            installDir: URL(fileURLWithPath: "/tmp/parakeet-mgr-\(UUID().uuidString)"),
+            modelVersion: .v3
+        )
+    }
+
+    @Test func materializeFromDiskUsingFluidAudioCompletesWithoutManagerHook() async throws {
+        defer { resetHooks() }
+        SuperscribeKitTestHooks.parakeetAsrModelsLoad = { _, _ in
+            try TestHelpers.makeStubAsrModels()
+        }
+        _ = try await ParakeetBackend.materializeFromDiskUsingFluidAudio(
+            installDir: URL(fileURLWithPath: "/tmp/parakeet-full-\(UUID().uuidString)"),
+            modelVersion: .v3
+        )
+    }
+
+    @Test func loadParakeetModelsIntoManagerInvokesFluidAudioLoadModels() async throws {
+        defer { resetHooks() }
+        let models = try TestHelpers.makeStubAsrModels()
+        try await ParakeetBackend.loadParakeetModelsIntoManager(AsrManager(), models: models)
+    }
+
+    @Test func loadAsrModelsUsesFluidAudioFallbackForCtcOnly() async {
+        defer { resetHooks() }
+        await #expect(throws: Error.self) {
+            _ = try await ParakeetBackend.materializeFromDiskUsingFluidAudio(
+                installDir: URL(fileURLWithPath: "/tmp/parakeet-ctc-fallback-\(UUID().uuidString)"),
+                modelVersion: .ctcZhCn
+            )
+        }
+    }
+
+    @Test func materializeFromDiskUsingFluidAudioLoadHookThrows() async throws {
+        defer { resetHooks() }
+        struct StubLoadError: Error {}
+        SuperscribeKitTestHooks.parakeetAsrModelsLoad = { _, _ in
+            throw StubLoadError()
+        }
+        await #expect(throws: StubLoadError.self) {
+            _ = try await ParakeetBackend.materializeFromDiskUsingFluidAudio(
+                installDir: URL(fileURLWithPath: "/tmp/parakeet-throw-\(UUID().uuidString)"),
+                modelVersion: .v3
+            )
         }
     }
 
@@ -577,7 +664,7 @@ struct SuperscribeKitTestHooksTests {
             return 42
         }
 
-        try await Task.sleep(for: .milliseconds(50))
+        await gate.waitUntilFirstEntered()
         async let second: Int = loader.get { 7 }
         await gate.release()
 
@@ -603,7 +690,7 @@ struct SuperscribeKitTestHooksTests {
                 }
                 throw URLError(.networkConnectionLost)
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "dl-net-one") { staging in
                     let model = RemoteModelInfo(
                         id: "m",
@@ -615,7 +702,7 @@ struct SuperscribeKitTestHooksTests {
                             model: model,
                             backend: .parakeet,
                             into: staging,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: { _ in }
                         )
                     }
@@ -627,10 +714,21 @@ struct SuperscribeKitTestHooksTests {
 
 private actor LoadOnceGate {
     private var entered = false
+    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
     func markFirstEntered() {
         entered = true
+        let pending = enteredWaiters
+        enteredWaiters.removeAll()
+        for cont in pending { cont.resume() }
+    }
+
+    func waitUntilFirstEntered() async {
+        if entered == true { return }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            enteredWaiters.append(cont)
+        }
     }
 
     func waitForRelease() async {

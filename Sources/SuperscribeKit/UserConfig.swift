@@ -20,9 +20,17 @@ public struct UserConfig: Codable, Sendable {
 
     /// Override for unit tests (nil = default `~/.config/superscribe/config.json`).
     nonisolated(unsafe) static var overrideConfigFileURL: URL?
+    /// Task-local override (parallel-safe); checked before the static override.
+    @TaskLocal static var taskOverrideConfigFileURL: URL?
 
     public static var configFileURL: URL {
-        overrideConfigFileURL ?? configDirectory.appendingPathComponent("config.json")
+        if let taskOverrideConfigFileURL {
+            return taskOverrideConfigFileURL
+        }
+        if let overrideConfigFileURL {
+            return overrideConfigFileURL
+        }
+        return configDirectory.appendingPathComponent("config.json")
     }
 
     public static func load() -> UserConfig {

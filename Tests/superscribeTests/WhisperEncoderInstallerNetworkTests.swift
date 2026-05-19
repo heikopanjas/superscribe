@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("WhisperEncoderInstaller networking", .serialized)
+@Suite("WhisperEncoderInstaller networking", .serialized, ResetSharedStateTrait())
 struct WhisperEncoderInstallerNetworkTests {
 
     private func writeZip(bundleParent: URL, bundleName: String, zipURL: URL) throws {
@@ -37,8 +37,8 @@ struct WhisperEncoderInstallerNetworkTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
-                let model = RemoteModelInfo(
+            { session in
+let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
                     subpath: nil,
@@ -50,7 +50,7 @@ struct WhisperEncoderInstallerNetworkTests {
 
                 let total = try await WhisperEncoderInstaller.totalInstallBytes(
                     model: model,
-                    session: URLSession.mocked()
+                    session: session
                 )
                 #expect(total == 140)
             }
@@ -70,8 +70,8 @@ struct WhisperEncoderInstallerNetworkTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
-                let model = RemoteModelInfo(
+            { session in
+let model = RemoteModelInfo(
                     id: "missing-bin-case",
                     repoId: repoId,
                     subpath: nil,
@@ -83,7 +83,7 @@ struct WhisperEncoderInstallerNetworkTests {
 
                 let total = try await WhisperEncoderInstaller.totalInstallBytes(
                     model: model,
-                    session: URLSession.mocked()
+                    session: session
                 )
                 #expect(total == 999)
             }
@@ -104,8 +104,8 @@ struct WhisperEncoderInstallerNetworkTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
-                let model = RemoteModelInfo(
+            { session in
+let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
                     subpath: nil,
@@ -117,7 +117,7 @@ struct WhisperEncoderInstallerNetworkTests {
 
                 try await WhisperEncoderInstaller.installIfNeeded(
                     model: model,
-                    session: URLSession.mocked(),
+                    session: session,
                     onProgress: { _ in }
                 )
                 #expect(WhisperBackend.isEncoderInstalled(modelId: tag) == false)
@@ -160,8 +160,8 @@ struct WhisperEncoderInstallerNetworkTests {
                     }
                     throw URLError(.unsupportedURL)
                 },
-                {
-                    let model = RemoteModelInfo(
+                { session in
+let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
                         subpath: nil,
@@ -173,7 +173,7 @@ struct WhisperEncoderInstallerNetworkTests {
 
                     try await WhisperEncoderInstaller.installIfNeeded(
                         model: model,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                     #expect(WhisperBackend.isEncoderInstalled(modelId: tag) == true)
@@ -214,8 +214,8 @@ struct WhisperEncoderInstallerNetworkTests {
                     }
                     throw URLError(.unsupportedURL)
                 },
-                {
-                    let model = RemoteModelInfo(
+                { session in
+let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
                         subpath: nil,
@@ -228,7 +228,7 @@ struct WhisperEncoderInstallerNetworkTests {
                     await #expect(throws: ModelInstallationError.self) {
                         try await WhisperEncoderInstaller.installIfNeeded(
                             model: model,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: { _ in }
                         )
                     }
@@ -272,8 +272,8 @@ struct WhisperEncoderInstallerNetworkTests {
                     }
                     throw URLError(.unsupportedURL)
                 },
-                {
-                    let model = RemoteModelInfo(
+                { session in
+let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
                         subpath: nil,
@@ -285,7 +285,7 @@ struct WhisperEncoderInstallerNetworkTests {
 
                     try await WhisperEncoderInstaller.installIfNeeded(
                         model: model,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                     #expect(WhisperBackend.isEncoderInstalled(modelId: tag) == true)
@@ -320,8 +320,8 @@ struct WhisperEncoderInstallerNetworkTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
-                let model = RemoteModelInfo(
+            { session in
+let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
                     subpath: nil,
@@ -334,7 +334,7 @@ struct WhisperEncoderInstallerNetworkTests {
                 await #expect(throws: ModelInstallationError.self) {
                     try await WhisperEncoderInstaller.installIfNeeded(
                         model: model,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                 }
@@ -377,8 +377,8 @@ struct WhisperEncoderInstallerNetworkTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
-                let model = RemoteModelInfo(
+            { session in
+let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
                     subpath: nil,
@@ -391,7 +391,7 @@ struct WhisperEncoderInstallerNetworkTests {
                 await #expect(throws: ModelInstallationError.self) {
                     try await WhisperEncoderInstaller.installIfNeeded(
                         model: model,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                 }
@@ -433,8 +433,8 @@ struct WhisperEncoderInstallerNetworkTests {
                     }
                     throw URLError(.unsupportedURL)
                 },
-                {
-                    let model = RemoteModelInfo(
+                { session in
+let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
                         subpath: nil,
@@ -447,7 +447,7 @@ struct WhisperEncoderInstallerNetworkTests {
                     await #expect(throws: ModelInstallationError.self) {
                         try await WhisperEncoderInstaller.installIfNeeded(
                             model: model,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: { _ in }
                         )
                     }

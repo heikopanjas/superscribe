@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("Analyzer")
+@Suite("Analyzer", .serialized, ResetSharedStateTrait())
 struct AnalyzerTests {
     private let sampleRate: Double = 48_000
 

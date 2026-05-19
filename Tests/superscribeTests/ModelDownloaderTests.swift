@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("ModelDownloader.streamBytes")
+@Suite("ModelDownloader.streamBytes", .serialized, ResetSharedStateTrait())
 struct ModelDownloaderTests {
     private func tempDest() -> URL {
         FileManager.default.temporaryDirectory

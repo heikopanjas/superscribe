@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("LoadOnce")
+@Suite("LoadOnce", .serialized, ResetSharedStateTrait())
 struct LoadOnceTests {
     @Test func coalescesConcurrentLoads() async throws {
         let loader = LoadOnce<Int>()

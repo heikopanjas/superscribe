@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("CatalogStore", .serialized)
+@Suite("CatalogStore", .serialized, ResetSharedStateTrait())
 struct CatalogStoreTests {
 
     /// Sets up a temp catalog file path for the duration of the test.

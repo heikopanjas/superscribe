@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("HuggingFaceHub")
+@Suite("HuggingFaceHub", .serialized, ResetSharedStateTrait())
 struct HuggingFaceHubTests {
 
     // MARK: - HFRepoInfo / HFSibling

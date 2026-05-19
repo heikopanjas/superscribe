@@ -266,9 +266,15 @@ _scripts/
 
 ## Running tests
 
+Swift Testing runs test **suites** in parallel by default. This project uses shared test hooks and path overrides, so run tests **serially**:
+
 ```sh
-swift test
+_scripts/test.sh
+# or:
+swift test --no-parallel -Xswiftc -strict-concurrency=complete
 ```
+
+Plain `swift test` (parallel) can flake on hook/network mock tests.
 
 ## License
 

@@ -4,7 +4,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("WhisperBackend")
+@Suite("WhisperBackend", .serialized, ResetSharedStateTrait())
 struct WhisperBackendTests {
 
     @Test func whisperErrorDescriptions() {
@@ -33,25 +33,61 @@ struct WhisperBackendTests {
         }
     }
 
-    @Test func transcribeMediumIntegrationWhenInstalled() async throws {
-        let bin = WhisperBackend.installPath(for: "medium")
-        guard FileManager.default.fileExists(atPath: bin.path) == true else {
-            return
-        }
+    @Test func transcribeExtractsWordsFromSyntheticAPI() async throws {
+        WhisperBackend.testUseStubLoad = true
+        WhisperBackend.testWhisperAPISegments = [
+            [
+                WhisperTestToken(token: " hello", id: 1, t0: 0, t1: 50),
+                WhisperTestToken(token: " world", id: 2, t0: 50, t1: 100)
+            ]
+        ]
 
-        let wav = try TestHelpers.makeTempSineWAV(name: "whisper-medium-it", durationSeconds: 1.0)
-        defer { try? FileManager.default.removeItem(at: wav) }
-
-        let whisper = WhisperBackend(model: "medium")
-        let caps = whisper.capabilities
-        let samples = try AudioPreparer(for: caps).loadAndConvert(url: wav)
-        let backend = WhisperBackend(model: "medium")
-        let cfg = TranscriptionConfig(language: "en", model: "medium", prompt: "Testing.")
-        _ = try await backend.transcribe(
-            samples: samples,
+        let backend = WhisperBackend(model: "stub-words")
+        let out = try await backend.transcribe(
+            samples: [Float](repeating: 0, count: 16_000),
             segment: SpeechSegment(start: 0, end: 1.0),
-            config: cfg
+            config: TranscriptionConfig(language: "en", model: "stub-words", prompt: "Testing.")
         )
+        #expect(out.words.isEmpty == false)
+    }
+
+    @Test func diskLoadSuccessUsesInjectedContextPointer() async throws {
+        try await TestHelpers.withIsolatedModelCaches { _, _ in
+            WhisperBackend.testUseStubLoad = false
+            let modelId = "stub-disk-load"
+            let binURL = WhisperBackend.installPath(for: modelId)
+            try FileManager.default.createDirectory(
+                at: binURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("not-a-real-ggml-model".utf8).write(to: binURL)
+            defer { try? FileManager.default.removeItem(at: binURL) }
+
+            WhisperBackend.testWhisperInitPointer = OpaquePointer(bitPattern: 0x4)!
+            WhisperBackend.testWhisperStatePointer = OpaquePointer(bitPattern: 0x8)!
+            WhisperBackend.testWhisperAPISegments = [
+                [
+                    WhisperTestToken(token: " ok", id: 1, t0: 0, t1: 10)
+                ]
+            ]
+            defer {
+                WhisperBackend.testWhisperInitPointer = nil
+                WhisperBackend.testWhisperStatePointer = nil
+                WhisperBackend.testWhisperAPISegments = nil
+            }
+
+            let backend = WhisperBackend(model: modelId)
+            let out = try await backend.transcribe(
+                samples: [Float](repeating: 0, count: 16_000),
+                segment: SpeechSegment(start: 0, end: 0.5),
+                config: TranscriptionConfig(language: "en", model: modelId, prompt: nil)
+            )
+            #expect(out.words.isEmpty == false)
+        }
+    }
+
+    @Test func exerciseManagedContextReleaseForTesting() {
+        WhisperBackend.exerciseManagedContextReleaseForTesting()
     }
 
     @Test func invalidBinThrowsContextInitFailed() async throws {
@@ -73,23 +109,6 @@ struct WhisperBackendTests {
         }
     }
 
-    @Test func transcribeSpeechExtractsWordsWhenMediumInstalled() async throws {
-        let bin = WhisperBackend.installPath(for: "medium")
-        guard FileManager.default.fileExists(atPath: bin.path) == true else { return }
-
-        let wav = try makeSpeechWAV()
-        defer { try? FileManager.default.removeItem(at: wav) }
-
-        let backend = WhisperBackend(model: "medium")
-        let samples = try AudioPreparer(for: backend.capabilities).loadAndConvert(url: wav)
-        let out = try await backend.transcribe(
-            samples: samples,
-            segment: SpeechSegment(start: 0, end: min(3.0, Double(samples.count) / 16_000)),
-            config: TranscriptionConfig(language: "en", model: "medium", prompt: nil)
-        )
-        #expect(out.words.isEmpty == false)
-    }
-
     @Test func publicRemoteModelsUsesSessionOverride() async throws {
         let info = """
             {"id":"ggerganov/whisper.cpp","lastModified":"2024-01-01T00:00:00Z","siblings":[
@@ -104,30 +123,11 @@ struct WhisperBackendTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(info.utf8))
             },
-            {
-                WhisperBackend.overrideRemoteModelsSession = URLSession.mocked()
+            { session in
+                WhisperBackend.overrideRemoteModelsSession = session
                 let models = try await WhisperBackend.remoteModels()
                 #expect(models.contains(where: { $0.id == "tiny" }) == true)
             }
         )
-    }
-
-    private func makeSpeechWAV() throws -> URL {
-        let dir = try TestHelpers.makeTempDir(prefix: "whisper-speech")
-        let aiff = dir.appendingPathComponent("speech.aiff")
-        let wav = dir.appendingPathComponent("speech.wav")
-        let say = Process()
-        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        say.arguments = ["-o", aiff.path, "Hello world, this is a speech recognition test."]
-        try say.run()
-        say.waitUntilExit()
-        #expect(say.terminationStatus == 0)
-        let convert = Process()
-        convert.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
-        convert.arguments = [aiff.path, wav.path, "-f", "WAVE", "-d", "LEI16@16000"]
-        try convert.run()
-        convert.waitUntilExit()
-        #expect(convert.terminationStatus == 0)
-        return wav
     }
 }

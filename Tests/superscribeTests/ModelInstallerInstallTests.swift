@@ -4,7 +4,7 @@ import Testing
 @testable import SuperscribeKit
 
 /// End-to-end installer exercises with mocked HuggingFace responses.
-@Suite("ModelInstaller network installs", .serialized)
+@Suite("ModelInstaller network installs", .serialized, ResetSharedStateTrait())
 struct ModelInstallerInstallTests {
 
     private func tearDownMocks() {
@@ -54,7 +54,7 @@ struct ModelInstallerInstallTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
@@ -68,7 +68,7 @@ struct ModelInstallerInstallTests {
                 let url = try await ModelInstaller.install(
                     model: model,
                     backend: .parakeet,
-                    session: URLSession.mocked(),
+                    session: session,
                     onProgress: { _ in }
                 )
                 #expect(url.path == finalDir.path)
@@ -105,7 +105,7 @@ struct ModelInstallerInstallTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
@@ -119,7 +119,7 @@ struct ModelInstallerInstallTests {
                 _ = try await ModelInstaller.install(
                     model: model,
                     backend: .whisperCpp,
-                    session: URLSession.mocked(),
+                    session: session,
                     onProgress: { _ in }
                 )
                 #expect(ModelInstaller.isInstalled(at: binURL, backend: .whisperCpp) == true)
@@ -176,7 +176,7 @@ struct ModelInstallerInstallTests {
                     }
                     throw URLError(.unsupportedURL)
                 },
-                {
+                { session in
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
@@ -190,7 +190,7 @@ struct ModelInstallerInstallTests {
                     _ = try await ModelInstaller.install(
                         model: model,
                         backend: .whisperCpp,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                     #expect(WhisperBackend.isEncoderInstalled(modelId: tag) == true)
@@ -227,7 +227,7 @@ struct ModelInstallerInstallTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
@@ -238,7 +238,7 @@ struct ModelInstallerInstallTests {
                     repoURL: URL(string: "https://huggingface.co/\(repoId)")!
                 )
 
-                let session = URLSession.mocked()
+                let session = session
                 async let first = try ModelInstaller.install(
                     model: model,
                     backend: .whisperCpp,
@@ -294,7 +294,7 @@ struct ModelInstallerInstallTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
@@ -309,7 +309,7 @@ struct ModelInstallerInstallTests {
                     _ = try await ModelInstaller.install(
                         model: model,
                         backend: .whisperCpp,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                 }

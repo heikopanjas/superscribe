@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("ByteFormatting")
+@Suite("ByteFormatting", .serialized, ResetSharedStateTrait())
 struct ByteFormattingTests {
     @Test func formatsBytes() {
         #expect(ByteFormatting.format(512) == "512 B")

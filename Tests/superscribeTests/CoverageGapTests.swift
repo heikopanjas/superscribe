@@ -7,7 +7,7 @@ import Testing
 
 // MARK: - Analyzer
 
-@Suite("Analyzer URL I/O")
+@Suite("Analyzer URL I/O", .serialized, ResetSharedStateTrait())
 struct AnalyzerURLTests {
     @Test func errorDescriptions() {
         let url = URL(fileURLWithPath: "/tmp/missing.wav")
@@ -56,7 +56,7 @@ struct AnalyzerURLTests {
 
 // MARK: - AudioPreparer
 
-@Suite("AudioPreparer edge cases")
+@Suite("AudioPreparer edge cases", .serialized, ResetSharedStateTrait())
 struct AudioPreparerEdgeTests {
     @Test func errorDescriptions() {
         let url = URL(fileURLWithPath: "/tmp/x.wav")
@@ -113,7 +113,7 @@ struct AudioPreparerEdgeTests {
 
 // MARK: - ConvertedAudioCache
 
-@Suite("ConvertedAudioCache manifest")
+@Suite("ConvertedAudioCache manifest", .serialized, ResetSharedStateTrait())
 struct ConvertedAudioCacheManifestTests {
     @Test func defaultRootUsesSuperscribePaths() {
         let cache = ConvertedAudioCache()
@@ -146,7 +146,7 @@ struct ConvertedAudioCacheManifestTests {
 
 // MARK: - Backend dispatch
 
-@Suite("Backend dispatch extended")
+@Suite("Backend dispatch extended", .serialized, ResetSharedStateTrait())
 struct BackendDispatchExtendedTests {
     @Test func makeTranscriberWhisperOnArm64() throws {
         #if arch(arm64)
@@ -202,8 +202,8 @@ struct BackendDispatchExtendedTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
-                let session = URLSession.mocked()
+            { session in
+                let session = session
                 let models = try await ParakeetBackend.remoteModels(session: session)
                 #expect(models.isEmpty == false)
                 #expect(models.contains(where: { $0.id == "v3" }) == true)
@@ -224,8 +224,8 @@ struct BackendDispatchExtendedTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(info.utf8))
             },
-            {
-                let models = try await WhisperBackend.remoteModels(session: URLSession.mocked())
+            { session in
+                let models = try await WhisperBackend.remoteModels(session: session)
                 #expect(models.contains(where: { $0.id == "tiny" }) == true)
             }
         )
@@ -234,7 +234,7 @@ struct BackendDispatchExtendedTests {
 
 // MARK: - Parakeet registry
 
-@Suite("ParakeetBackend registry extended")
+@Suite("ParakeetBackend registry extended", .serialized, ResetSharedStateTrait())
 struct ParakeetRegistryExtendedTests {
     @Test func unknownIdHuggingFaceRepoId() {
         #expect(
@@ -256,8 +256,10 @@ struct ParakeetRegistryExtendedTests {
             try Data("weights".utf8).write(to: bundle.appendingPathComponent("w.bin"))
             let models = try ParakeetBackend.installedModels()
             #expect(models.count == 1)
-            #expect(models[0].id == "v3")
-            #expect((models[0].sizeBytes ?? 0) > 0)
+            if models.count == 1 {
+                #expect(models[0].id == "v3")
+                #expect((models[0].sizeBytes ?? 0) > 0)
+            }
         }
     }
 
@@ -317,8 +319,8 @@ struct ParakeetRegistryExtendedTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(info.utf8))
             },
-            {
-                ParakeetBackend.overrideRemoteModelsSession = URLSession.mocked()
+            { session in
+                ParakeetBackend.overrideRemoteModelsSession = session
                 let models = try await ParakeetBackend.remoteModels()
                 #expect(models.isEmpty == false)
             }
@@ -338,10 +340,10 @@ struct ParakeetRegistryExtendedTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(info.utf8))
             },
-            {
+            { session in
                 let sizes = try await ParakeetBackend.fetchRepoSizes(
                     for: repos,
-                    session: URLSession.mocked()
+                    session: session
                 )
                 #expect(sizes.count == 1)
             }
@@ -364,6 +366,14 @@ struct ParakeetRegistryExtendedTests {
             config: TranscriptionConfig(language: "en", model: "v3", prompt: nil)
         )
     }
+
+    @Test func loadParakeetModelsIntoManagerWhenInstalled() async throws {
+        let path = ParakeetBackend.installPath(for: "v3")
+        guard SuperscribeFS.containsCompiledCoreMLBundle(at: path) == true else { return }
+        let models = try await ParakeetBackend.loadAsrModelsFromFluidAudio(from: path, version: .v3)
+        let mgr = AsrManager()
+        try await ParakeetBackend.loadParakeetModelsIntoManager(mgr, models: models)
+    }
 }
 
 private struct MockParakeetSessionForHook: ParakeetASRSession {
@@ -380,7 +390,7 @@ private struct MockParakeetSessionForHook: ParakeetASRSession {
 
 // MARK: - ModelDownloader
 
-@Suite("ModelDownloader extended")
+@Suite("ModelDownloader extended", .serialized, ResetSharedStateTrait())
 struct ModelDownloaderExtendedTests {
     @Test func downloadProgressFractionNilWhenTotalUnknown() {
         let p = DownloadProgress(
@@ -420,7 +430,7 @@ struct ModelDownloaderExtendedTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(repoPayload.utf8))
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "dl-missing-bin") { dir in
                     let model = RemoteModelInfo(
                         id: "missing",
@@ -431,7 +441,7 @@ struct ModelDownloaderExtendedTests {
                         try await ModelDownloader.downloadFile(
                             model: model,
                             into: dir.appendingPathComponent("x.bin"),
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: { _ in }
                         )
                     }
@@ -441,13 +451,13 @@ struct ModelDownloaderExtendedTests {
     }
 
     @Test func downloadRepoFileHttpError() async throws {
-        try await MockURLSessionHelpers.withMockHandler(
+        _ = try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
                 let resp = HTTPURLResponse(url: url, statusCode: 503, httpVersion: nil, headerFields: nil)!
                 return (resp, Data())
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "dl-http") { dir in
                     await #expect(throws: ModelInstallationError.self) {
                         try await ModelDownloader.downloadRepoFile(
@@ -455,7 +465,7 @@ struct ModelDownloaderExtendedTests {
                             rfilename: "file.bin",
                             into: dir.appendingPathComponent("file.bin"),
                             expectedSize: 1,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: nil
                         )
                     }
@@ -503,9 +513,9 @@ struct ModelDownloaderExtendedTests {
     }
 
     @Test func downloadRepoFileNetworkError() async throws {
-        try await MockURLSessionHelpers.withMockHandler(
+        _ = try await MockURLSessionHelpers.withMockHandler(
             { _ in throw URLError(.notConnectedToInternet) },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "dl-net") { dir in
                     await #expect(throws: ModelInstallationError.self) {
                         try await ModelDownloader.downloadRepoFile(
@@ -513,7 +523,7 @@ struct ModelDownloaderExtendedTests {
                             rfilename: "file.bin",
                             into: dir.appendingPathComponent("file.bin"),
                             expectedSize: 1,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: nil
                         )
                     }
@@ -540,7 +550,7 @@ struct ModelDownloaderExtendedTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 502, httpVersion: nil, headerFields: nil)!
                 return (resp, Data())
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "dl-one-http") { staging in
                     let model = RemoteModelInfo(
                         id: "m",
@@ -552,7 +562,7 @@ struct ModelDownloaderExtendedTests {
                             model: model,
                             backend: .parakeet,
                             into: staging,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: { _ in }
                         )
                     }
@@ -621,7 +631,7 @@ struct ModelDownloaderExtendedTests {
 
 // MARK: - ModelInstaller
 
-@Suite("ModelInstaller extended")
+@Suite("ModelInstaller extended", .serialized, ResetSharedStateTrait())
 struct ModelInstallerExtendedTests {
     @Test func parakeetAlreadyInstalledFastPath() async throws {
         try await TestHelpers.withIsolatedModelCaches { parakeetRoot, _ in
@@ -641,7 +651,7 @@ struct ModelInstallerExtendedTests {
             let url = try await ModelInstaller.install(
                 model: model,
                 backend: .parakeet,
-                session: URLSession.mocked(),
+                session: URLSession.shared,
                 onProgress: { _ in }
             )
             #expect(url.path == finalDir.path)
@@ -664,7 +674,7 @@ struct ModelInstallerExtendedTests {
             _ = try await ModelInstaller.install(
                 model: model,
                 backend: .whisperCpp,
-                session: URLSession.mocked(),
+                session: URLSession.shared,
                 onProgress: { _ in }
             )
         }
@@ -714,13 +724,13 @@ struct ModelInstallerExtendedTests {
                     }
                     throw URLError(.unsupportedURL)
                 },
-                {
+                { session in
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: WhisperBackend.huggingFaceRepoId,
                         repoURL: URL(string: "https://huggingface.co/\(WhisperBackend.huggingFaceRepoId)")!
                     )
-                    _ = try await ModelInstaller.install(model: model, backend: .whisperCpp, session: URLSession.mocked())
+                    _ = try await ModelInstaller.install(model: model, backend: .whisperCpp, session: session)
                 }
             )
         }
@@ -750,7 +760,7 @@ struct ModelInstallerExtendedTests {
                     }
                     throw URLError(.unsupportedURL)
                 },
-                {
+                { session in
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: WhisperBackend.huggingFaceRepoId,
@@ -759,7 +769,7 @@ struct ModelInstallerExtendedTests {
                     _ = try await ModelInstaller.install(
                         model: model,
                         backend: .whisperCpp,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                     #expect(SuperscribeFS.isExistingDirectory(at: bin) == true)
@@ -774,7 +784,7 @@ struct ModelInstallerExtendedTests {
             let bin = WhisperBackend.installPath(for: tag)
             try await MockURLSessionHelpers.withMockHandler(
                 { _ in throw URLError(.notConnectedToInternet) },
-                {
+                { session in
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: WhisperBackend.huggingFaceRepoId,
@@ -784,7 +794,7 @@ struct ModelInstallerExtendedTests {
                         _ = try await ModelInstaller.install(
                             model: model,
                             backend: .whisperCpp,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: { _ in }
                         )
                     }
@@ -820,7 +830,7 @@ struct ModelInstallerExtendedTests {
 
 // MARK: - Merger / FS / Catalog / LoadOnce / HuggingFace
 
-@Suite("Merger overlap policies")
+@Suite("Merger overlap policies", .serialized, ResetSharedStateTrait())
 struct MergerOverlapTests {
     @Test func trimAndInterleavePreserveSegments() {
         let mergerTrim = Merger(config: .init(overlapPolicy: .trim))
@@ -871,7 +881,7 @@ struct MergerOverlapTests {
     }
 }
 
-@Suite("SuperscribeFS extended")
+@Suite("SuperscribeFS extended", .serialized, ResetSharedStateTrait())
 struct FilesystemExtendedTests {
     @Test func discardStagingPromotesWhenFinalAbsent() throws {
         let parent = try TestHelpers.makeTempDir(prefix: "atomic-promote")
@@ -884,7 +894,7 @@ struct FilesystemExtendedTests {
     }
 }
 
-@Suite("CatalogStore default path")
+@Suite("CatalogStore default path", .serialized, ResetSharedStateTrait())
 struct CatalogStoreDefaultPathTests {
     @Test func fileURLWithoutOverride() {
         let prior = CatalogStore.overrideURL
@@ -894,7 +904,7 @@ struct CatalogStoreDefaultPathTests {
     }
 }
 
-@Suite("LoadOnce cache hit")
+@Suite("LoadOnce cache hit", .serialized, ResetSharedStateTrait())
 struct LoadOnceCacheHitTests {
     @Test func secondGetReturnsCachedValue() async throws {
         let loader = LoadOnce<String>()
@@ -918,7 +928,7 @@ private actor SequentialCounter {
     func increment() { value += 1 }
 }
 
-@Suite("Final line coverage gaps", .serialized)
+@Suite("Final line coverage gaps", .serialized, ResetSharedStateTrait())
 struct FinalLineCoverageGapTests {
 
     @Test func downloadProgressFractionWhenTotalKnown() {
@@ -982,7 +992,7 @@ struct FinalLineCoverageGapTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
+            { session in
                 let model = RemoteModelInfo(
                     id: "zero",
                     repoId: repoId,
@@ -993,7 +1003,7 @@ struct FinalLineCoverageGapTests {
                 )
                 let total = try await WhisperEncoderInstaller.totalInstallBytes(
                     model: model,
-                    session: URLSession.mocked()
+                    session: session
                 )
                 #expect(total == nil)
             }
@@ -1023,7 +1033,7 @@ struct FinalLineCoverageGapTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
@@ -1035,7 +1045,7 @@ struct FinalLineCoverageGapTests {
                 await #expect(throws: ModelInstallationError.self) {
                     try await WhisperEncoderInstaller.installIfNeeded(
                         model: model,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                 }
@@ -1138,7 +1148,7 @@ struct FinalLineCoverageGapTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "dl-root") { staging in
                     let model = RemoteModelInfo(
                         id: "m",
@@ -1150,7 +1160,7 @@ struct FinalLineCoverageGapTests {
                         model: model,
                         backend: .parakeet,
                         into: staging,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                     #expect(FileManager.default.fileExists(atPath: staging.appendingPathComponent("model.bin").path) == true)
@@ -1172,10 +1182,10 @@ struct FinalLineCoverageGapTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(info.utf8))
             },
-            {
+            { session in
                 let sizes = try await ParakeetBackend.fetchRepoSizes(
                     for: repos,
-                    session: URLSession.mocked()
+                    session: session
                 )
                 #expect(sizes["FluidInference/empty-sizes"]?.totalBytes == nil)
             }
@@ -1267,8 +1277,8 @@ struct FinalLineCoverageGapTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
-                WhisperBackend.defaultRemoteModelsSession = URLSession.mocked()
+            { session in
+                WhisperBackend.defaultRemoteModelsSession = session
                 let models = try await WhisperBackend.remoteModels()
                 #expect(models.contains(where: { $0.id == "tiny" }) == true)
             }
@@ -1300,8 +1310,8 @@ struct FinalLineCoverageGapTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(info.utf8))
             },
-            {
-                ParakeetBackend.defaultRemoteModelsSession = URLSession.mocked()
+            { session in
+                ParakeetBackend.defaultRemoteModelsSession = session
                 let models = try await ParakeetBackend.remoteModels()
                 #expect(models.isEmpty == false)
             }
@@ -1324,7 +1334,7 @@ struct FinalLineCoverageGapTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
+            { session in
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
@@ -1335,7 +1345,7 @@ struct FinalLineCoverageGapTests {
                 )
                 let total = try await WhisperEncoderInstaller.totalInstallBytes(
                     model: model,
-                    session: URLSession.mocked()
+                    session: session
                 )
                 #expect(total == 140)
             }
@@ -1358,7 +1368,7 @@ struct FinalLineCoverageGapTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
+            { session in
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
@@ -1369,7 +1379,7 @@ struct FinalLineCoverageGapTests {
                 )
                 let total = try await WhisperEncoderInstaller.totalInstallBytes(
                     model: model,
-                    session: URLSession.mocked()
+                    session: session
                 )
                 #expect(total == 100)
             }
@@ -1416,7 +1426,7 @@ struct FinalLineCoverageGapTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "dl-sub") { staging in
                     let model = RemoteModelInfo(
                         id: "m",
@@ -1428,7 +1438,7 @@ struct FinalLineCoverageGapTests {
                         model: model,
                         backend: .parakeet,
                         into: staging,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                     #expect(FileManager.default.fileExists(atPath: staging.appendingPathComponent("a.bin").path) == true)
@@ -1523,7 +1533,7 @@ struct FinalLineCoverageGapTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "dl-unknown-size") { staging in
                     let model = RemoteModelInfo(
                         id: "m",
@@ -1536,7 +1546,7 @@ struct FinalLineCoverageGapTests {
                         model: model,
                         backend: .parakeet,
                         into: staging,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { lastProgress = $0 }
                     )
                     #expect(lastProgress?.bytesTotal == 99)
@@ -1559,7 +1569,7 @@ struct FinalLineCoverageGapTests {
                 )!
                 return (resp, Data("12345".utf8))
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "repo-file-len") { dir in
                     let dest = dir.appendingPathComponent(name)
                     nonisolated(unsafe) var lastTotal: Int64?
@@ -1568,7 +1578,7 @@ struct FinalLineCoverageGapTests {
                         rfilename: name,
                         into: dest,
                         expectedSize: 99,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _, total in lastTotal = total }
                     )
                     #expect(lastTotal == 5)
@@ -1633,7 +1643,7 @@ struct FinalLineCoverageGapTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "dl-empty-rel") { staging in
                     let model = RemoteModelInfo(
                         id: "m",
@@ -1645,7 +1655,7 @@ struct FinalLineCoverageGapTests {
                         model: model,
                         backend: .parakeet,
                         into: staging,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { _ in }
                     )
                     #expect(FileManager.default.fileExists(atPath: staging.appendingPathComponent("a.bin").path) == true)
@@ -1655,7 +1665,7 @@ struct FinalLineCoverageGapTests {
     }
 }
 
-@Suite("HuggingFaceHub date decode")
+@Suite("HuggingFaceHub date decode", .serialized, ResetSharedStateTrait())
 struct HuggingFaceHubDateDecodeTests {
     @Test func badDateStringThrowsDecodingError() async throws {
         let payload = """
@@ -1667,12 +1677,12 @@ struct HuggingFaceHubDateDecodeTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
+            { session in
                 await #expect(throws: HuggingFaceHub.Error.self) {
                     _ = try await HuggingFaceHub.listAuthorRepos(
                         author: "FluidInference",
                         search: nil,
-                        session: URLSession.mocked()
+                        session: session
                     )
                 }
             }

@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("Transcriber availability")
+@Suite("Transcriber availability", .serialized, ResetSharedStateTrait())
 struct TranscriberAvailabilityTests {
     struct DefaultProbe: Transcriber {
         var capabilities: BackendCapabilities {

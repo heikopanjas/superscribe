@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("ModelDownloader networking", .serialized)
+@Suite("ModelDownloader networking", .serialized, ResetSharedStateTrait())
 struct ModelDownloaderNetworkTests {
 
     private final class ProgressList: @unchecked Sendable {
@@ -53,7 +53,7 @@ struct ModelDownloaderNetworkTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "mdl-subpath") { staging in
                     let model = RemoteModelInfo(
                         id: "demo",
@@ -69,7 +69,7 @@ struct ModelDownloaderNetworkTests {
                         model: model,
                         backend: .parakeet,
                         into: staging,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { sink.ticks.append($0) }
                     )
 
@@ -107,7 +107,7 @@ struct ModelDownloaderNetworkTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "mdl-bin") { dir in
                     let dest = dir.appendingPathComponent("tiny.bin.staging")
                     let model = RemoteModelInfo(
@@ -123,7 +123,7 @@ struct ModelDownloaderNetworkTests {
                     try await ModelDownloader.downloadFile(
                         model: model,
                         into: dest,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { lastBox.value = $0 }
                     )
                     #expect(try String(contentsOf: dest) == "hello")
@@ -151,7 +151,7 @@ struct ModelDownloaderNetworkTests {
                 }
                 throw URLError(.unsupportedURL)
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "mdl-repo-file") { dir in
                     let dest = dir.appendingPathComponent(file)
                     let log = RepoChunkLog()
@@ -160,7 +160,7 @@ struct ModelDownloaderNetworkTests {
                         rfilename: file,
                         into: dest,
                         expectedSize: 2,
-                        session: URLSession.mocked(),
+                        session: session,
                         onProgress: { done, total in
                             log.chunks.append((done, total))
                         }
@@ -190,7 +190,7 @@ struct ModelDownloaderNetworkTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 500, httpVersion: nil, headerFields: nil)!
                 return (resp, Data())
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "mdl-http") { staging in
                     let model = RemoteModelInfo(
                         id: "m",
@@ -203,7 +203,7 @@ struct ModelDownloaderNetworkTests {
                             model: model,
                             backend: .parakeet,
                             into: staging,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: { _ in }
                         )
                     }
@@ -225,7 +225,7 @@ struct ModelDownloaderNetworkTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(repoPayload.utf8))
             },
-            {
+            { session in
                 try await TestHelpers.withTempDirectory(prefix: "mdl-empty") { staging in
                     let model = RemoteModelInfo(
                         id: "m",
@@ -238,7 +238,7 @@ struct ModelDownloaderNetworkTests {
                             model: model,
                             backend: .parakeet,
                             into: staging,
-                            session: URLSession.mocked(),
+                            session: session,
                             onProgress: { _ in }
                         )
                     }

@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("TokenAccumulator")
+@Suite("TokenAccumulator", .serialized, ResetSharedStateTrait())
 struct TokenMergingTests {
     @Test func mergesSentencePieceBoundaries() {
         var acc = TokenAccumulator()

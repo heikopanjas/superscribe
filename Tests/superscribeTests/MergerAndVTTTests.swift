@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("Merger")
+@Suite("Merger", .serialized, ResetSharedStateTrait())
 struct MergerTests {
     private func track(
         _ speaker: String, _ segments: [(Double, Double)]
@@ -67,7 +67,7 @@ struct MergerTests {
     }
 }
 
-@Suite("VTTFormatter")
+@Suite("VTTFormatter", .serialized, ResetSharedStateTrait())
 struct VTTFormatterTests {
     private func segment(
         speaker: String,

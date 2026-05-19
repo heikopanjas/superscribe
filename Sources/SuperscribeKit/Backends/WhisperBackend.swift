@@ -6,8 +6,31 @@ import whisper
 /// (via per-call whisper_state), so the isolation is safe.
 private final class WhisperContext: @unchecked Sendable {
     let ptr: OpaquePointer
-    init(_ ptr: OpaquePointer) { self.ptr = ptr }
-    deinit { whisper_free(ptr) }
+    private let manageLifetime: Bool
+
+    init(_ ptr: OpaquePointer, manageLifetime: Bool = true) {
+        self.ptr = ptr
+        self.manageLifetime = manageLifetime
+    }
+
+    /// Unit-test placeholder; never passed to whisper C API release functions.
+    static func testStub() -> WhisperContext {
+        WhisperContext(OpaquePointer(bitPattern: 0x1)!, manageLifetime: false)
+    }
+
+    deinit {
+        if manageLifetime == true {
+            WhisperLiveAPI.releaseContext(ptr)
+        }
+    }
+}
+
+/// Synthetic whisper token for unit tests (avoids on-disk GGML models).
+internal struct WhisperTestToken: Sendable {
+    let token: String
+    let id: Int32
+    let t0: Int64
+    let t1: Int64
 }
 
 private func suppressLibraryLog(
@@ -33,6 +56,26 @@ public actor WhisperBackend: Transcriber {
     /// When `true`, `extractTimedWords` skips tokens whose text pointer is nil.
     nonisolated(unsafe) internal static var testForceNilTokenText = false
     nonisolated(unsafe) internal static var testNilTokenTextSkipsRemaining = 0
+    /// When `true`, `ensureLoaded` returns a stub context (no `.bin` on disk).
+    nonisolated(unsafe) internal static var testUseStubLoad = false
+    /// When set for `stub-*` model ids, simulates whisper token API results.
+    nonisolated(unsafe) internal static var testWhisperAPISegments: [[WhisperTestToken]]?
+    /// When set for `stub-*` model ids, bypasses `whisper_init_from_file_with_params`.
+    nonisolated(unsafe) internal static var testWhisperInitPointer: OpaquePointer?
+    /// When set for `stub-*` model ids, bypasses `whisper_init_state`.
+    nonisolated(unsafe) internal static var testWhisperStatePointer: OpaquePointer?
+
+    internal static func isStubModel(_ modelId: String) -> Bool {
+        modelId.hasPrefix("stub-")
+    }
+
+    private static func shouldUseStubLoad(for modelId: String) -> Bool {
+        testUseStubLoad == true && isStubModel(modelId)
+    }
+
+    private static func shouldUseStubAPI(for modelId: String) -> Bool {
+        testWhisperAPISegments != nil && isStubModel(modelId)
+    }
 
     public nonisolated static var isAvailable: Bool {
         if testForceUnavailable == true { return false }
@@ -65,58 +108,56 @@ public actor WhisperBackend: Transcriber {
     ) async throws -> SegmentTranscription {
         let context = try await ensureLoaded()
 
-        // Allocate per-call state so concurrent transcriptions don't share
-        // mutable whisper internals. (Logging is already silenced globally.)
+        let useStubAPI = Self.shouldUseStubAPI(for: modelId)
+
         let state: OpaquePointer?
         if Self.testForceStateInitFailed == true {
             state = nil
         }
         else {
-            state = whisper_init_state(context.ptr)
+            state = WhisperLiveAPI.initState(context: context.ptr, modelId: modelId)
         }
         guard let state else {
             throw WhisperError.stateInitFailed
         }
-        defer { whisper_free_state(state) }
+        defer {
+            WhisperLiveAPI.releaseState(state, modelId: modelId, usedStubAPI: useStubAPI)
+        }
 
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.print_progress = false
         params.print_realtime = false
         params.print_timestamps = false
         params.token_timestamps = true
-        // Disable temperature fallbacks: when the decoder's confidence drops,
-        // whisper re-runs the segment at increasing temperatures, which can
-        // cost 5-10x on hard segments. Setting temperature_inc to 0 keeps the
-        // greedy first pass and skips the fallback loop entirely.
         params.temperature_inc = 0.0
 
-        // Language hint: whisper expects a short ISO code like "en", "ja", etc.
-        // We must keep the C string alive for the duration of the call.
         let languageCStr: [CChar]? = config.language.flatMap { $0.cString(using: .utf8) }
         if languageCStr != nil {
             params.language = languageCStr!.withUnsafeBufferPointer { $0.baseAddress }
         }
 
-        // Initial prompt as a C string.
         let promptCStr: [CChar]? = config.prompt.flatMap { $0.cString(using: .utf8) }
         if promptCStr != nil {
             params.initial_prompt = promptCStr!.withUnsafeBufferPointer { $0.baseAddress }
         }
 
-        let rc: Int32
-        if Self.testForceTranscriptionFailed == true {
-            rc = -1
-        }
-        else {
-            rc = samples.withUnsafeBufferPointer { buf in
-                whisper_full_with_state(context.ptr, state, params, buf.baseAddress, Int32(buf.count))
-            }
-        }
+        let rc = WhisperLiveAPI.runFull(
+            context: context.ptr,
+            state: state,
+            params: params,
+            samples: samples,
+            useStubAPI: useStubAPI
+        )
         guard rc == 0 else {
             throw WhisperError.transcriptionFailed(code: rc)
         }
 
-        let words = extractTimedWords(ctx: context, state: state, segmentOffset: segment.start)
+        let words = extractTimedWords(
+            ctx: context,
+            state: state,
+            segmentOffset: segment.start,
+            modelId: modelId
+        )
         return SegmentTranscription(segment: segment, words: words)
     }
 
@@ -124,6 +165,9 @@ public actor WhisperBackend: Transcriber {
 
     private func ensureLoaded() async throws -> WhisperContext {
         try await loader.get { [modelId] in
+            if Self.shouldUseStubLoad(for: modelId) == true {
+                return WhisperContext.testStub()
+            }
             let binURL = WhisperBackend.installPath(for: modelId)
             try ModelInstallSupport.requireInstalled(
                 at: binURL, modelId: modelId, backend: .whisperCpp
@@ -132,55 +176,60 @@ public actor WhisperBackend: Transcriber {
             FileHandle.standardError.write(
                 Data("Loading Whisper model \(modelId)...\n".utf8)
             )
-            var ctxParams = whisper_context_default_params()
-            ctxParams.use_gpu = true
-            ctxParams.flash_attn = true
-            ggml_log_set(suppressLibraryLog, nil)
-            whisper_log_set(suppressLibraryLog, nil)
-            let ptr = whisper_init_from_file_with_params(binPath, ctxParams)
-            guard let ptr else {
-                throw WhisperError.contextInitFailed(path: binPath)
-            }
-            return WhisperContext(ptr)
+            return try Self.loadWhisperContext(from: binPath, modelId: modelId)
         }
     }
 
-    /// Walk whisper_state segments/tokens and merge sub-word pieces into
-    /// whole-word `TimedWord`s. whisper.cpp uses a leading space to mark word
-    /// boundaries (same convention as SentencePiece ▁).
+    private static func loadWhisperContext(from binPath: String, modelId: String) throws -> WhisperContext {
+        var ctxParams = whisper_context_default_params()
+        ctxParams.use_gpu = true
+        ctxParams.flash_attn = true
+        ggml_log_set(suppressLibraryLog, nil)
+        whisper_log_set(suppressLibraryLog, nil)
+
+        let ptr: OpaquePointer?
+        if isStubModel(modelId), let injected = testWhisperInitPointer {
+            ptr = injected
+        }
+        else {
+            ptr = WhisperLiveAPI.initContext(from: binPath, ctxParams: ctxParams)
+        }
+        guard let ptr else {
+            throw WhisperError.contextInitFailed(path: binPath)
+        }
+        let manageLifetime = isStubModel(modelId) == false || testWhisperInitPointer == nil
+        return WhisperContext(ptr, manageLifetime: manageLifetime)
+    }
+
     private nonisolated func extractTimedWords(
         ctx: WhisperContext,
         state: OpaquePointer,
-        segmentOffset: TimeInterval
+        segmentOffset: TimeInterval,
+        modelId: String
     ) -> [TimedWord] {
         var words: [TimedWord] = []
-        let nSegments = Int(whisper_full_n_segments_from_state(state))
+        let nSegments = WhisperLiveAPI.segmentCount(from: state, modelId: modelId)
 
         for s in 0 ..< nSegments {
-            let nTokens = Int(whisper_full_n_tokens_from_state(state, Int32(s)))
+            let nTokens = WhisperLiveAPI.tokenCount(from: state, segment: s, modelId: modelId)
             var accumulator = TokenAccumulator()
 
             for t in 0 ..< nTokens {
-                let data = whisper_full_get_token_data_from_state(state, Int32(s), Int32(t))
-                let rawPtr: UnsafePointer<CChar>?
-                if Self.testForceNilTokenText == true,
-                    Self.testNilTokenTextSkipsRemaining > 0
-                {
-                    Self.testNilTokenTextSkipsRemaining -= 1
-                    rawPtr = nil
-                }
-                else {
-                    rawPtr = whisper_full_get_token_text_from_state(
-                        ctx.ptr, state, Int32(s), Int32(t))
-                }
-                guard let rawPtr else {
+                let data = WhisperLiveAPI.tokenData(from: state, segment: s, token: t, modelId: modelId)
+                let tokenText = WhisperLiveAPI.tokenText(
+                    context: ctx.ptr,
+                    state: state,
+                    segment: s,
+                    token: t,
+                    modelId: modelId
+                )
+                guard let tokenText else {
                     continue
                 }
-                let token = String(cString: rawPtr)
-                guard data.id >= 0, token.hasPrefix("[_") == false else { continue }
+                guard data.id >= 0, tokenText.hasPrefix("[_") == false else { continue }
 
                 accumulator.accept(
-                    token: token,
+                    token: tokenText,
                     start: TimeInterval(data.t0) / 100.0,
                     end: TimeInterval(data.t1) / 100.0
                 )
@@ -193,6 +242,15 @@ public actor WhisperBackend: Transcriber {
 
     internal static func invokeLogSuppressorsForTesting() {
         suppressLibraryLog(ggml_log_level(0), nil as UnsafePointer<CChar>?, nil)
+    }
+
+    /// Exercises managed `WhisperContext` deinit without a real GGML model.
+    internal static func exerciseManagedContextReleaseForTesting() {
+        WhisperLiveAPI.testSkipContextRelease = true
+        defer { WhisperLiveAPI.testSkipContextRelease = false }
+        autoreleasepool {
+            _ = WhisperContext(OpaquePointer(bitPattern: 0x10)!, manageLifetime: true)
+        }
     }
 }
 

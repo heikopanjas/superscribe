@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("Backend dispatch")
+@Suite("Backend dispatch", .serialized, ResetSharedStateTrait())
 struct BackendDispatchTests {
     @Test func registryDefaultModelIds() {
         #expect(Backend.parakeet.registryDefaultModelId == ParakeetBackend.defaultModelId)

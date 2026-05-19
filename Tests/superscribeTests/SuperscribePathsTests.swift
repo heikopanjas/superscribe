@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("SuperscribePaths")
+@Suite("SuperscribePaths", .serialized, ResetSharedStateTrait())
 struct SuperscribePathsTests {
     private func home() -> URL {
         FileManager.default.homeDirectoryForCurrentUser

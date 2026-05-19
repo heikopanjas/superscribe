@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("sortedById")
+@Suite("sortedById", .serialized, ResetSharedStateTrait())
 struct SortingTests {
     @Test func installedModelsSortById() {
         let models = [

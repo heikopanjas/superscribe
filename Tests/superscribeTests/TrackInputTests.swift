@@ -3,7 +3,7 @@ import Testing
 
 @testable import superscribe
 
-@Suite("TrackInputScanning")
+@Suite("TrackInputScanning", .serialized, ResetSharedStateTrait())
 struct TrackInputTests {
     @Test func filtersByAudioExtension() throws {
         try TestHelpers.withTempDirectory { dir in

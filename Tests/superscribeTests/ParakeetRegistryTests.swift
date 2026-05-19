@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("ParakeetBackend.mapRepos")
+@Suite("ParakeetBackend.mapRepos", .serialized, ResetSharedStateTrait())
 struct ParakeetRegistryTests {
 
     @Test func mapsKnownRepoIdsToShortAliases() {

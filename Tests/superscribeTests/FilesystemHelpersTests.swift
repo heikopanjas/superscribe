@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("SuperscribeFS")
+@Suite("SuperscribeFS", .serialized, ResetSharedStateTrait())
 struct FilesystemHelpersTests {
     @Test func stagingURLUsesBasenameAndUUID() {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("model.bin")

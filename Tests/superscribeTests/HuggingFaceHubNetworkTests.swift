@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("HuggingFaceHub networking", .serialized)
+@Suite("HuggingFaceHub networking", .serialized, ResetSharedStateTrait())
 struct HuggingFaceHubNetworkTests {
 
     private func tearDownMocks() {
@@ -20,11 +20,11 @@ struct HuggingFaceHubNetworkTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
+            { session in
                 let repos = try await HuggingFaceHub.listAuthorRepos(
                     author: "FluidInference",
                     search: nil,
-                    session: URLSession.mocked()
+                    session: session
                 )
                 #expect(repos.count == 1)
                 #expect(repos[0].id == "FluidInference/demo-coreml")
@@ -45,10 +45,10 @@ struct HuggingFaceHubNetworkTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(payload.utf8))
             },
-            {
+            { session in
                 let info = try await HuggingFaceHub.repoInfo(
                     repoId: "ggerganov/whisper.cpp",
-                    session: URLSession.mocked()
+                    session: session
                 )
                 #expect(info.id == "ggerganov/whisper.cpp")
                 #expect(info.siblings.count == 1)
@@ -64,9 +64,9 @@ struct HuggingFaceHubNetworkTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!
                 return (resp, Data())
             },
-            {
+            { session in
                 await #expect(throws: HuggingFaceHub.Error.self) {
-                    _ = try await HuggingFaceHub.repoInfo(repoId: "nope/nope", session: URLSession.mocked())
+                    _ = try await HuggingFaceHub.repoInfo(repoId: "nope/nope", session: session)
                 }
             }
         )
@@ -75,9 +75,9 @@ struct HuggingFaceHubNetworkTests {
     @Test func transportErrorFromFailedMock() async throws {
         try await MockURLSessionHelpers.withMockHandler(
             { _ in throw URLError(.notConnectedToInternet) },
-            {
+            { session in
                 await #expect(throws: HuggingFaceHub.Error.self) {
-                    _ = try await HuggingFaceHub.repoInfo(repoId: "a/b", session: URLSession.mocked())
+                    _ = try await HuggingFaceHub.repoInfo(repoId: "a/b", session: session)
                 }
             }
         )
@@ -100,11 +100,11 @@ struct HuggingFaceHubNetworkTests {
                 let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (resp, Data(#"{"id":"x","lastModified":123,"siblings":[]}"#.utf8))
             },
-            {
+            { session in
                 await #expect(throws: HuggingFaceHub.Error.self) {
                     _ = try await HuggingFaceHub.repoInfo(
                         repoId: "ggerganov/whisper.cpp",
-                        session: URLSession.mocked()
+                        session: session
                     )
                 }
             }

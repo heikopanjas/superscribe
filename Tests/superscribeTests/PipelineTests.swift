@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("Pipeline")
+@Suite("Pipeline", .serialized, ResetSharedStateTrait())
 struct PipelineTests {
     @Test("pipeline produces intermediate transcript from two tracks")
     func twoTracks() async throws {
@@ -239,7 +239,7 @@ private struct SlowTranscriber: Transcriber {
 
 // MARK: - End-to-end merge test
 
-@Suite("EndToEnd")
+@Suite("EndToEnd", .serialized, ResetSharedStateTrait())
 struct EndToEndTests {
     @Test("pipeline + merger produces VTT with both speakers")
     func pipelineToVTT() async throws {

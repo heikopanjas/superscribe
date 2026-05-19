@@ -3,7 +3,7 @@ import Testing
 
 @testable import SuperscribeKit
 
-@Suite("ModelInstaller", .serialized)
+@Suite("ModelInstaller", .serialized, ResetSharedStateTrait())
 struct ModelInstallerTests {
 
     private func tempDir() throws -> URL {
@@ -99,7 +99,7 @@ struct ModelInstallerTests {
     }
 }
 
-@Suite("Backend installPath conventions", .serialized)
+@Suite("Backend installPath conventions", .serialized, ResetSharedStateTrait())
 struct InstallPathTests {
 
     @Test func whisperInstallPathUsesBinCacheConvention() {
@@ -137,7 +137,7 @@ struct InstallPathTests {
     }
 }
 
-@Suite("ModelInstallationError")
+@Suite("ModelInstallationError", .serialized, ResetSharedStateTrait())
 struct ModelInstallationErrorTests {
 
     @Test func modelNotInstalledMessageNamesInstallCommand() {
