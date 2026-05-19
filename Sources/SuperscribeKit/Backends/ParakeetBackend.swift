@@ -180,6 +180,7 @@ public actor ParakeetBackend: Transcriber {
             case .v3: return "v3"
             case .tdtCtc110m: return "tdt-ctc-110m"
             case .tdtJa: return "tdt-ja"
+            case .ctcZhCn: return "v3"
             @unknown default: return "v3"
         }
     }

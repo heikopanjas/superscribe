@@ -56,7 +56,7 @@ struct TokenMergingTests {
     }
 
     @Test func finishWithNoTokensReturnsEmpty() {
-        var acc = TokenAccumulator()
+        let acc = TokenAccumulator()
         let words = acc.finish(segmentOffset: 0)
         #expect(words.isEmpty == true)
     }
