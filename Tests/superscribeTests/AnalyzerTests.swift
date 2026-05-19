@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 
@@ -84,5 +85,38 @@ struct AnalyzerTests {
         let samples = tone(seconds: 0.5) + silence(seconds: 0.2) + tone(seconds: 0.5)
         let segments = analyzer.detectSpeech(samples: samples, sampleRate: sampleRate)
         #expect(segments.count == 1)
+    }
+
+    @Test func emptySamplesReturnsNoSegments() {
+        let analyzer = Analyzer()
+        #expect(analyzer.detectSpeech(samples: [], sampleRate: sampleRate).isEmpty == true)
+    }
+
+    @Test func nonPositiveSampleRateReturnsNoSegments() {
+        let analyzer = Analyzer()
+        #expect(analyzer.detectSpeech(samples: [0.1], sampleRate: 0).isEmpty == true)
+    }
+
+    @Test func rmsEmptyRangeReturnsZero() {
+        #expect(Analyzer.rms([1.0], from: 2, to: 2) == 0)
+    }
+
+    @Test func emptyAudioFileReturnsNoSegments() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("empty-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 16_000,
+            channels: 1,
+            interleaved: false
+        )!
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1)!
+        buffer.frameLength = 0
+        try file.write(from: buffer)
+
+        let analyzer = Analyzer()
+        #expect(try analyzer.detectSpeech(in: url).isEmpty == true)
     }
 }

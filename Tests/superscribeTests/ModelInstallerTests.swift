@@ -156,4 +156,15 @@ struct ModelInstallationErrorTests {
         #expect(msg.contains("bogus"))
         #expect(msg.contains("v2, v3"))
     }
+
+    @Test func unknownModelEmptyCatalogMessage() {
+        let err = ModelInstallationError.unknownModel(
+            model: "missing", backend: .whisperCpp, available: []
+        )
+        #expect(err.description.contains("(catalog empty)") == true)
+    }
+
+    @Test func installLockEarlyReturnAfterFire() async {
+        await ModelInstaller.exerciseInstallLockEarlyReturnForTesting()
+    }
 }

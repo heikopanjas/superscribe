@@ -44,6 +44,15 @@ struct ConcurrencyHelpersTests {
             }
         }
     }
+
+    @Test func rejectsNonPositiveLimit() async {
+        await #expect(throws: BoundedTaskGroupError.self) {
+            _ = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(
+                limit: 0,
+                items: [1]
+            ) { $0 }
+        }
+    }
 }
 
 private enum TestConcurrencyError: Error { case fail }

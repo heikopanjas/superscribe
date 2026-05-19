@@ -117,7 +117,7 @@ public struct Analyzer: Sendable {
 
     // MARK: - Helpers
 
-    private static func rms(_ samples: [Float], from start: Int, to end: Int) -> Float {
+    internal static func rms(_ samples: [Float], from start: Int, to end: Int) -> Float {
         guard end > start else { return 0 }
         var sumSquares: Float = 0
         for i in start ..< end {

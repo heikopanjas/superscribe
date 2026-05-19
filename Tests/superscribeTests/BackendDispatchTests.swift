@@ -64,4 +64,57 @@ struct BackendDispatchTests {
             _ = try Backend.whisperCpp.makeTranscriber(model: "tiny")
         }
     }
+
+    @Test func remoteModelsDispatchesToWhisper() async throws {
+        let info = """
+            {"id":"ggerganov/whisper.cpp","lastModified":"2024-01-01T00:00:00Z","siblings":[
+              {"rfilename":"ggml-tiny.bin","size":1000}
+            ]}
+            """
+        try await MockURLSessionHelpers.withMockHandler(
+            { req in
+                guard let url = req.url else { throw URLError(.badURL) }
+                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (resp, Data(info.utf8))
+            },
+            { session in
+                WhisperBackend.overrideRemoteModelsSession = session
+                defer { WhisperBackend.overrideRemoteModelsSession = nil }
+                let models = try await Backend.whisperCpp.remoteModels()
+                #expect(models.contains(where: { $0.id == "tiny" }) == true)
+            }
+        )
+    }
+
+    @Test func remoteModelsDispatchesToParakeet() async throws {
+        let payload = """
+            [{"id":"FluidInference/parakeet-tdt-0.6b-v3-coreml","lastModified":"2024-01-01T00:00:00Z"}]
+            """
+        try await MockURLSessionHelpers.withMockHandler(
+            { req in
+                guard let url = req.url else { throw URLError(.badURL) }
+                let s = url.absoluteString
+                if s.contains("/api/models?") == true {
+                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    return (resp, Data(payload.utf8))
+                }
+                if s.contains("/api/models/FluidInference/parakeet-tdt-0.6b-v3-coreml") == true {
+                    let info = """
+                        {"id":"FluidInference/parakeet-tdt-0.6b-v3-coreml","lastModified":"2024-01-01T00:00:00Z","siblings":[
+                          {"rfilename":"model.mlmodelc/x","size":100}
+                        ]}
+                        """
+                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    return (resp, Data(info.utf8))
+                }
+                throw URLError(.unsupportedURL)
+            },
+            { session in
+                ParakeetBackend.overrideRemoteModelsSession = session
+                defer { ParakeetBackend.overrideRemoteModelsSession = nil }
+                let models = try await Backend.parakeet.remoteModels()
+                #expect(models.contains(where: { $0.id == "v3" }) == true)
+            }
+        )
+    }
 }

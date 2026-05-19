@@ -174,13 +174,13 @@ public actor ParakeetBackend: Transcriber {
         )
     }
 
-    private static func shortIdForVersion(_ v: AsrModelVersion) -> String {
+    internal static func shortIdForVersion(_ v: AsrModelVersion) -> String {
         switch v {
             case .v2: return "v2"
             case .v3: return "v3"
             case .tdtCtc110m: return "tdt-ctc-110m"
             case .tdtJa: return "tdt-ja"
-            default: return "v3"
+            @unknown default: return "v3"
         }
     }
 }

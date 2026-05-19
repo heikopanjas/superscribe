@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-05-19 (v0.7.9 — DRY + 100% coverage policy)
+**Last updated:** 2026-05-19 (v0.7.10 — 100% region coverage gate)
 
 <!-- {mission} -->
 
@@ -79,7 +79,7 @@ confirmed your understanding.
 - Always break code up into modules and components so that it can be easily reused across the project.
 - **DRY (Don't Repeat Yourself).** Every piece of logic must have a single authoritative implementation. Before adding code, search for an existing helper, protocol, or module to extend; extract shared behavior when the same pattern appears twice. Duplicated logic is a defect — refactor it, don't copy it.
 - All code you write MUST be fully optimized. ‘Fully optimized’ includes maximizing algorithmic big-O efficiency for memory and runtime, following proper style conventions for the code and language, and no extra code beyond what is absolutely necessary to solve the problem the user provides (i.e. no technical debt). If the code is not fully optimized, you will be fined $100.
-- **SuperscribeKit line coverage must stay at 100%.** Any change under `Sources/SuperscribeKit/` that drops below 100% line coverage is incomplete. Run `_scripts/coverage.sh --run-tests` before finishing work; fix gaps or add tests — do not lower the threshold.
+- **SuperscribeKit coverage must stay at 100%.** Any change under `Sources/SuperscribeKit/` that drops below 100% **line or region** coverage is incomplete. Run `_scripts/coverage.sh --run-tests` before finishing work; fix gaps or add tests — do not lower the threshold.
 
 ### Working Together
 
@@ -121,7 +121,7 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 
 1. **Maintain Consistency**: Keep code style consistent across the codebase
 2. **Test First**: Write tests before implementing features when applicable
-3. **Verify Coverage**: After any `SuperscribeKit` change, run `_scripts/coverage.sh --run-tests` and confirm **100% line coverage** before committing
+3. **Verify Coverage**: After any `SuperscribeKit` change, run `_scripts/coverage.sh --run-tests` and confirm **100% line and region coverage** before committing
 4. **Document Changes**: Update documentation when changing functionality
 5. **Code Review**: [Describe your code review process]
 6. **Date Changes**: Update the "Last updated" timestamp in this file when making changes
@@ -129,13 +129,13 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 
 ### Test Coverage (mandatory)
 
-**Goal: 100% SuperscribeKit line coverage — never regress below this.**
+**Goal: 100% SuperscribeKit line and region coverage — never regress below either.**
 
 | Item | Detail |
 |---|---|
 | Gate | `_scripts/coverage.sh --run-tests` (or `_scripts/test.sh` then `_scripts/coverage.sh`) |
 | Minimum | `COVERAGE_MIN=100` (default; do not lower) |
-| Scope | `Sources/SuperscribeKit/` line coverage via `llvm-cov` |
+| Scope | `Sources/SuperscribeKit/` line **and region** coverage via `llvm-cov` |
 | CLI | `Sources/superscribe/` is not part of the gate |
 | Tests | Use `_scripts/test.sh` or `swift test --no-parallel -Xswiftc -strict-concurrency=complete` |
 
@@ -180,7 +180,7 @@ Load the `swift-coding-conventions` skill before writing, reviewing, or refactor
 Load the `swift-build-commands` skill when building or running the project.
 Load the `swift-testing-pro` skill when writing, reviewing, or refactoring tests (Swift Testing or XCTest).
 Follow the **DRY** principle: reuse and extend existing modules; extract shared logic instead of duplicating it.
-After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm 100% line coverage before committing.
+After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm 100% line and region coverage before committing.
 
 <!-- {integration} -->
 
@@ -199,6 +199,11 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-05-19 (v0.7.10 — 100% region coverage gate)
+
+- **Region coverage gate.** `_scripts/coverage.sh` now fails when SuperscribeKit **region** coverage drops below 100% (in addition to line coverage). Fifteen branch/region gaps closed with targeted tests and small dead-code removals (`AudioPreparer` progress fraction ternary).
+- **`ModelInstaller.exerciseInstallLockEarlyReturnForTesting()`.** Covers the install-lock fast path when `LockSignal.wait()` runs after `fire()`.
 
 ### 2026-05-19 (v0.7.9 — DRY + 100% SuperscribeKit coverage policy)
 

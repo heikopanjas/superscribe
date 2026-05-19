@@ -20,6 +20,12 @@ struct ParakeetBackendTests {
         #expect(await displayName(for: "bogus-unknown").contains("v3") == true)
     }
 
+    @Test func shortIdForVersionMapsKnownAndFutureCases() {
+        #expect(ParakeetBackend.shortIdForVersion(.v2) == "v2")
+        #expect(ParakeetBackend.shortIdForVersion(.tdtCtc110m) == "tdt-ctc-110m")
+        #expect(ParakeetBackend.shortIdForVersion(.ctcZhCn) == "v3")
+    }
+
     @Test func transcribeMapsTokenTimings() async throws {
         let timings: [TokenTiming] = [
             TokenTiming(token: "▁hel", tokenId: 1, startTime: 0, endTime: 0.05, confidence: 1),

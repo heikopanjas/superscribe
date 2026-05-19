@@ -302,3 +302,12 @@ private actor LockSignal {
         for cont in pending { cont.resume() }
     }
 }
+
+extension ModelInstaller {
+    /// Exercises `LockSignal.wait()` after `fire()` for coverage.
+    internal static func exerciseInstallLockEarlyReturnForTesting() async {
+        let signal = LockSignal()
+        await signal.fire()
+        await signal.wait()
+    }
+}

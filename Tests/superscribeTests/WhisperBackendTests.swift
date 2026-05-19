@@ -90,6 +90,25 @@ struct WhisperBackendTests {
         WhisperBackend.exerciseManagedContextReleaseForTesting()
     }
 
+    @Test func transcribeSkipsSpecialBracketTokens() async throws {
+        WhisperBackend.testUseStubLoad = true
+        WhisperBackend.testWhisperAPISegments = [
+            [
+                WhisperTestToken(token: "[_BEG_]", id: 50363, t0: 0, t1: 0),
+                WhisperTestToken(token: " ok", id: 1, t0: 0, t1: 10)
+            ]
+        ]
+
+        let backend = WhisperBackend(model: "stub-brackets")
+        let out = try await backend.transcribe(
+            samples: [Float](repeating: 0, count: 16_000),
+            segment: SpeechSegment(start: 0, end: 0.5),
+            config: TranscriptionConfig(language: "en", model: "stub-brackets", prompt: nil)
+        )
+        #expect(out.words.count == 1)
+        #expect(out.words[0].text == "ok")
+    }
+
     @Test func invalidBinThrowsContextInitFailed() async throws {
         let modelId = "bad-bin-\(UUID().uuidString.prefix(8))"
         let url = WhisperBackend.installPath(for: modelId)

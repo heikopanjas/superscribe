@@ -93,4 +93,14 @@ struct WhisperRegistryTests {
         #expect(found?.rfilename == "ggml-tiny-encoder.mlmodelc.zip")
         #expect(WhisperBackend.encoderZipSibling(for: "large-v3-turbo", in: siblings) == nil)
     }
+
+    @Test func filterGGMLIgnoresEmptyModelId() {
+        let siblings: [HuggingFaceHub.HFSibling] = [
+            .init(rfilename: "ggml-.bin", size: 1),
+            .init(rfilename: "ggml-tiny.bin", size: 2)
+        ]
+        let result = WhisperBackend.filterGGMLSiblings(siblings)
+        #expect(result.count == 1)
+        #expect(result[0].id == "tiny")
+    }
 }

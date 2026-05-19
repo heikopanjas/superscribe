@@ -368,9 +368,7 @@ public struct AudioPreparer: Sendable {
 
             if let onProgress, sourceLength > 0 {
                 let processed = min(framesProcessedTotal, sourceLength)
-                let fraction =
-                    sourceLength > 0
-                    ? min(1.0, Double(processed) / Double(sourceLength)) : 0
+                let fraction = min(1.0, Double(processed) / Double(sourceLength))
                 onProgress(
                     ConversionProgress(
                         source: sourceURL,

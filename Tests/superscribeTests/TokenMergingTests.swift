@@ -54,4 +54,10 @@ struct TokenMergingTests {
         #expect(words.count == 1)
         #expect(words[0].text == "transcript")
     }
+
+    @Test func finishWithNoTokensReturnsEmpty() {
+        var acc = TokenAccumulator()
+        let words = acc.finish(segmentOffset: 0)
+        #expect(words.isEmpty == true)
+    }
 }
