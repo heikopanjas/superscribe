@@ -101,11 +101,14 @@ public struct AudioPreparer: Sendable {
             sourceFormat.channelCount == AVAudioChannelCount(targetFormat.channels),
             sourceFormat.commonFormat == .pcmFormatFloat32
         {
-            guard
-                let buffer = AVAudioPCMBuffer(
-                    pcmFormat: sourceFormat, frameCapacity: sourceLength
-                )
-            else {
+            let buffer: AVAudioPCMBuffer? =
+                if SuperscribeKitTestHooks.forceAudioPreparerFastPathBufferFailure == true {
+                    nil
+                }
+                else {
+                    AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: sourceLength)
+                }
+            guard let buffer else {
                 throw AudioPreparerError.conversionFailed("Cannot allocate source buffer")
             }
             try sourceFile.read(into: buffer)
@@ -166,11 +169,14 @@ public struct AudioPreparer: Sendable {
             throw AudioPreparerError.cannotReadFile(cached, underlying: error)
         }
         let length = AVAudioFrameCount(file.length)
-        guard
-            let buffer = AVAudioPCMBuffer(
-                pcmFormat: file.processingFormat, frameCapacity: length
-            )
-        else {
+        let buffer: AVAudioPCMBuffer? =
+            if SuperscribeKitTestHooks.forceAudioPreparerCachedBufferFailure == true {
+                nil
+            }
+            else {
+                AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: length)
+            }
+        guard let buffer else {
             throw AudioPreparerError.conversionFailed("Cannot allocate cached read buffer")
         }
         try file.read(into: buffer)
@@ -215,11 +221,14 @@ public struct AudioPreparer: Sendable {
         let sourceFormat = sourceFile.processingFormat
         let sourceLength = sourceFile.length  // Int64
 
-        guard
-            let converter = AVAudioConverter(
-                from: sourceFormat, to: targetAVFormat
-            )
-        else {
+        let converter: AVAudioConverter? =
+            if SuperscribeKitTestHooks.forceAudioPreparerConverterCreationFailure == true {
+                nil
+            }
+            else {
+                AVAudioConverter(from: sourceFormat, to: targetAVFormat)
+            }
+        guard let converter else {
             throw AudioPreparerError.conversionFailed(
                 "Cannot create converter from \(sourceFormat) to \(targetAVFormat)"
             )
@@ -232,11 +241,14 @@ public struct AudioPreparer: Sendable {
         let outputChunkCapacity =
             AVAudioFrameCount(Double(Self.chunkFrames) * ratio) + 1_024
 
-        guard
-            let outputBuffer = AVAudioPCMBuffer(
-                pcmFormat: targetAVFormat, frameCapacity: outputChunkCapacity
-            )
-        else {
+        let outputBuffer: AVAudioPCMBuffer? =
+            if SuperscribeKitTestHooks.forceAudioPreparerOutputBufferFailure == true {
+                nil
+            }
+            else {
+                AVAudioPCMBuffer(pcmFormat: targetAVFormat, frameCapacity: outputChunkCapacity)
+            }
+        guard let outputBuffer else {
             throw AudioPreparerError.conversionFailed("Cannot allocate output buffer")
         }
 
@@ -246,11 +258,14 @@ public struct AudioPreparer: Sendable {
         result.reserveCapacity(Int(Double(sourceLength) * ratio) + 1_024)
 
         // Reusable input buffer.
-        guard
-            let inputChunk = AVAudioPCMBuffer(
-                pcmFormat: sourceFormat, frameCapacity: Self.chunkFrames
-            )
-        else {
+        let inputChunk: AVAudioPCMBuffer? =
+            if SuperscribeKitTestHooks.forceAudioPreparerInputBufferFailure == true {
+                nil
+            }
+            else {
+                AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: Self.chunkFrames)
+            }
+        guard let inputChunk else {
             throw AudioPreparerError.conversionFailed("Cannot allocate input buffer")
         }
 
@@ -262,8 +277,21 @@ public struct AudioPreparer: Sendable {
         nonisolated(unsafe) var framesProcessedTotal: Int64 = 0
         nonisolated(unsafe) var endOfStream = false
 
+        nonisolated(unsafe) var inputPulls = 0
         let inputBlock: AVAudioConverterInputBlock = { _, statusOut in
+            if SuperscribeKitTestHooks.forceAudioPreparerEndOfStreamImmediately == true {
+                statusOut.pointee = .endOfStream
+                return nil
+            }
             if endOfStream == true {
+                statusOut.pointee = .endOfStream
+                return nil
+            }
+            inputPulls += 1
+            if SuperscribeKitTestHooks.forceAudioPreparerSecondPullEndOfStream == true,
+                inputPulls > 1
+            {
+                endOfStream = true
                 statusOut.pointee = .endOfStream
                 return nil
             }
@@ -274,12 +302,20 @@ public struct AudioPreparer: Sendable {
                 statusOut.pointee = .endOfStream
                 return nil
             }
+            if SuperscribeKitTestHooks.forceAudioPreparerZeroFrameRead == true {
+                unsafeChunk.frameLength = 0
+            }
             if unsafeChunk.frameLength == 0 {
                 endOfStream = true
                 statusOut.pointee = .endOfStream
                 return nil
             }
             framesProcessedTotal += Int64(unsafeChunk.frameLength)
+            if SuperscribeKitTestHooks.forceAudioPreparerMarkEndBeforeSecondPull == true,
+                inputPulls == 1
+            {
+                endOfStream = true
+            }
             statusOut.pointee = .haveData
             return unsafeChunk
         }
@@ -294,8 +330,31 @@ public struct AudioPreparer: Sendable {
                 withInputFrom: inputBlock
             )
 
-            if status == .error, let err = conversionError {
+            if let forced = SuperscribeKitTestHooks.forceAudioPreparerConversionError {
+                throw AudioPreparerError.conversionFailed(forced)
+            }
+
+            var effectiveStatus = status
+            var effectiveError = conversionError
+            if SuperscribeKitTestHooks.forceAudioPreparerConverterNativeError == true {
+                effectiveStatus = .error
+                effectiveError =
+                    effectiveError
+                    ?? NSError(
+                        domain: "SuperscribeKitTestHooks",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "forced conversion error"]
+                    )
+            }
+
+            if effectiveStatus == .error, let err = effectiveError {
                 throw AudioPreparerError.conversionFailed(err.localizedDescription)
+            }
+
+            if SuperscribeKitTestHooks.forceAudioPreparerSecondPullEndOfStream == true,
+                endOfStream == true, outputBuffer.frameLength == 0
+            {
+                break
             }
 
             if outputBuffer.frameLength > 0,

@@ -34,25 +34,52 @@ extension ParakeetBackend: ModelRegistry {
     )
 
     public static func remoteModels() async throws -> [RemoteModelInfo] {
+        try await remoteModels(session: overrideRemoteModelsSession ?? defaultRemoteModelsSession)
+    }
+
+    /// Override for unit tests; nil uses `defaultRemoteModelsSession`.
+    nonisolated(unsafe) static var overrideRemoteModelsSession: URLSession?
+    /// Default session when `overrideRemoteModelsSession` is nil (`.shared` in production).
+    nonisolated(unsafe) static var defaultRemoteModelsSession: URLSession = .shared
+
+    static func remoteModels(session: URLSession) async throws -> [RemoteModelInfo] {
         let repos = try await HuggingFaceHub.listAuthorRepos(
             author: huggingFaceAuthor,
-            search: "parakeet"
+            search: "parakeet",
+            session: session
         )
-        // Parallel size lookups per repo.
-        var sizes: [String: (totalBytes: Int64?, fileCount: Int?)] = [:]
-        try await withThrowingTaskGroup(of: (String, Int64?, Int?).self) { group in
-            for repo in repos {
-                group.addTask {
-                    let info = try await HuggingFaceHub.repoInfo(repoId: repo.id)
-                    let total = info.siblings.reduce(0 as Int64) { $0 + ($1.size ?? 0) }
-                    return (repo.id, total > 0 ? total : nil, info.siblings.count)
-                }
-            }
-            for try await (repoId, total, count) in group {
-                sizes[repoId] = (total, count)
-            }
-        }
+        let sizes = try await fetchRepoSizes(
+            for: repos,
+            repoInfo: { repoId in
+                try await HuggingFaceHub.repoInfo(repoId: repoId, session: session)
+            })
         return mapRepos(repos, sizes: sizes)
+    }
+
+    /// Fetches total bytes + file counts for HF repos with bounded concurrency.
+    static func fetchRepoSizes(
+        for repos: [HuggingFaceHub.HFRepo],
+        maxConcurrent: Int = ModelDownloader.maxParallelFiles,
+        session: URLSession = .shared,
+        repoInfo: (@Sendable (String) async throws -> HuggingFaceHub.HFRepoInfo)? = nil
+    ) async throws -> [String: (totalBytes: Int64?, fileCount: Int?)] {
+        let resolveInfo =
+            repoInfo ?? { repoId in
+                try await HuggingFaceHub.repoInfo(repoId: repoId, session: session)
+            }
+        let pairs = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(
+            limit: maxConcurrent,
+            items: repos
+        ) { repo in
+            let info = try await resolveInfo(repo.id)
+            let total = info.siblings.reduce(0 as Int64) { $0 + ($1.size ?? 0) }
+            return (repo.id, total > 0 ? total : nil, info.siblings.count)
+        }
+        var sizes: [String: (totalBytes: Int64?, fileCount: Int?)] = [:]
+        for (repoId, total, count) in pairs {
+            sizes[repoId] = (total, count)
+        }
+        return sizes
     }
 
     /// On-disk location for an installed Parakeet model.
@@ -83,41 +110,26 @@ extension ParakeetBackend: ModelRegistry {
 
     public static func installedModels() throws -> [InstalledModelInfo] {
         let dir = fluidAudioCacheDirectory()
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) == true,
-            isDir.boolValue == true
-        else {
+        guard SuperscribeFS.isExistingDirectory(at: dir) == true else {
             return []
         }
         let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         return entries.compactMap { entry -> InstalledModelInfo? in
             let path = dir.appendingPathComponent(entry, isDirectory: true)
-            var subIsDir: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path.path, isDirectory: &subIsDir) == true,
-                subIsDir.boolValue == true
-            else {
-                return nil
-            }
-            // Only count it as installed if a compiled CoreML bundle is present.
-            let contents = (try? FileManager.default.contentsOfDirectory(atPath: path.path)) ?? []
-            guard contents.contains(where: { $0.hasSuffix(".mlmodelc") }) == true else { return nil }
+            guard SuperscribeFS.isExistingDirectory(at: path) == true else { return nil }
+            guard SuperscribeFS.containsCompiledCoreMLBundle(at: path) == true else { return nil }
             let id = knownFolderAliases[entry] ?? entry
             let size = parakeetDirectorySize(at: path)
             return InstalledModelInfo(id: id, path: path, sizeBytes: size)
         }
-        .sorted { $0.id < $1.id }
+        .sortedById()
     }
 
     /// FluidAudio's on-disk cache root for ASR models, matching
     /// `MLModelConfigurationUtils.defaultModelsDirectory()`:
     /// `~/Library/Application Support/FluidAudio/Models/`.
     public static func fluidAudioCacheDirectory() -> URL {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return
-            base
-            .appendingPathComponent("FluidAudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
+        SuperscribePaths.fluidAudioModelsDirectory()
     }
 
     // MARK: - Pure helpers (testable)
@@ -143,21 +155,27 @@ extension ParakeetBackend: ModelRegistry {
                 repoURL: URL(string: "https://huggingface.co/\(repo.id)")!
             )
         }
-        .sorted { $0.id < $1.id }
+        .sortedById()
     }
 }
 
-// MARK: - Disk size helper
-
 private func parakeetDirectorySize(at url: URL) -> Int64? {
+    if SuperscribeKitTestHooks.forceParakeetDirectorySizeEnumeratorFailure == true {
+        return nil
+    }
     let fm = FileManager.default
-    guard
-        let enumerator = fm.enumerator(
+    let enumerator: FileManager.DirectoryEnumerator?
+    if SuperscribeKitTestHooks.forceParakeetDirectorySizeNilEnumerator == true {
+        enumerator = nil
+    }
+    else {
+        enumerator = fm.enumerator(
             at: url,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         )
-    else {
+    }
+    guard let enumerator else {
         return nil
     }
     var total: Int64 = 0

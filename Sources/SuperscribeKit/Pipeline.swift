@@ -15,6 +15,7 @@ public struct TrackInput: Sendable {
 /// Configuration for the full transcription pipeline.
 public struct PipelineConfig: Sendable {
     public let tracks: [TrackInput]
+    public let backend: Backend
     public let transcriptionConfig: TranscriptionConfig
     public let analyzerConfig: AnalyzerConfig
     /// Maximum concurrent transcription calls (default 2 for ANE).
@@ -24,12 +25,14 @@ public struct PipelineConfig: Sendable {
 
     public init(
         tracks: [TrackInput],
+        backend: Backend = .parakeet,
         transcriptionConfig: TranscriptionConfig,
         analyzerConfig: AnalyzerConfig = AnalyzerConfig(),
         maxConcurrentTranscriptions: Int = 2,
         session: String? = nil
     ) {
         self.tracks = tracks
+        self.backend = backend
         self.transcriptionConfig = transcriptionConfig
         self.analyzerConfig = analyzerConfig
         self.maxConcurrentTranscriptions = maxConcurrentTranscriptions
@@ -144,7 +147,7 @@ public struct TranscribePipeline: Sendable {
             session: config.session,
             tracks: transcribedTracks,
             metadata: .init(
-                backend: .parakeet,
+                backend: config.backend,
                 model: config.transcriptionConfig.model,
                 language: config.transcriptionConfig.language,
                 analyzer: .init(
@@ -158,56 +161,42 @@ public struct TranscribePipeline: Sendable {
 
     // MARK: - Private
 
-    private func transcribeSegments(
+    internal func transcribeSegments(
         _ segments: [SpeechSegment],
         allSamples: [Float],
         preparer: AudioPreparer,
         onSegmentDone: (@Sendable (Int) -> Void)? = nil
     ) async throws -> [IntermediateTranscript.TranscribedSegment] {
-        try await withThrowingTaskGroup(
-            of: (Int, SegmentTranscription).self
-        ) { group in
-            var inFlight = 0
-            var nextIndex = 0
-            var results: [(Int, SegmentTranscription)] = []
-
-            while nextIndex < segments.count || group.isEmpty == false {
-                // Fill up to the concurrency limit.
-                while inFlight < config.maxConcurrentTranscriptions,
-                    nextIndex < segments.count
-                {
-                    let idx = nextIndex
-                    let segment = segments[idx]
-                    nextIndex += 1
-                    inFlight += 1
-                    group.addTask {
-                        let segmentSamples = preparer.slice(allSamples, segment: segment)
-                        let result = try await self.transcriber.transcribe(
-                            samples: segmentSamples,
-                            segment: segment,
-                            config: self.config.transcriptionConfig
-                        )
-                        return (idx, result)
-                    }
-                }
-
-                // Wait for at least one to finish.
-                if let result = try await group.next() {
-                    results.append(result)
-                    onSegmentDone?(result.0)
-                    inFlight -= 1
-                }
+        let indexedSegments = Array(segments.enumerated())
+        let results = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(
+            limit: config.maxConcurrentTranscriptions,
+            items: indexedSegments
+        ) { indexed in
+            let (idx, segment) = indexed
+            let segmentSamples = preparer.slice(allSamples, segment: segment)
+            let result: SegmentTranscription
+            if segmentSamples.isEmpty == true {
+                result = SegmentTranscription(segment: segment, words: [])
             }
-
-            // Sort by original index, map to intermediate format, drop empty segments.
-            return results.sorted { $0.0 < $1.0 }.compactMap { _, result in
-                guard result.words.isEmpty == false else { return nil }
-                return IntermediateTranscript.TranscribedSegment(
-                    start: result.segment.start,
-                    end: result.segment.end,
-                    words: result.words
+            else {
+                result = try await self.transcriber.transcribe(
+                    samples: segmentSamples,
+                    segment: segment,
+                    config: self.config.transcriptionConfig
                 )
             }
+            onSegmentDone?(idx)
+            return (idx, result)
+        }
+
+        return results.compactMap { pair in
+            let result = pair.1
+            guard result.words.isEmpty == false else { return nil }
+            return IntermediateTranscript.TranscribedSegment(
+                start: result.segment.start,
+                end: result.segment.end,
+                words: result.words
+            )
         }
     }
 }

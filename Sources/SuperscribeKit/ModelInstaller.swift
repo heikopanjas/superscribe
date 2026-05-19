@@ -19,19 +19,42 @@ public enum ModelInstaller {
     public static func install(
         model: RemoteModelInfo,
         backend: Backend,
+        session: URLSession = .shared,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void = { _ in }
     ) async throws -> URL {
         let finalDir = try installPath(for: model.id, backend: backend)
 
         return try await InstallLocks.shared.withLock(for: finalDir) {
             // 1. Idempotent fast path.
-            if isInstalled(at: finalDir, backend: backend) == true {
+            if backend == .whisperCpp {
+                let binReady = isInstalled(at: finalDir, backend: backend) == true
+                let encoderReady = WhisperBackend.isEncoderInstalled(modelId: model.id) == true
+                if binReady == true && encoderReady == true {
+                    return finalDir
+                }
+                if binReady == true && encoderReady == false {
+                    try await WhisperEncoderInstaller.installIfNeeded(
+                        model: model,
+                        session: session,
+                        onProgress: onProgress
+                    )
+                    return finalDir
+                }
+            }
+            else if isInstalled(at: finalDir, backend: backend) == true {
                 return finalDir
             }
 
             // 2. Disk-space pre-flight.
+            let requiredBytes: Int64? =
+                if backend == .whisperCpp {
+                    try await WhisperEncoderInstaller.totalInstallBytes(model: model, session: session)
+                }
+                else {
+                    model.totalSizeBytes
+                }
             try preflightDiskSpace(
-                requiredBytes: model.totalSizeBytes,
+                requiredBytes: requiredBytes,
                 installPath: finalDir
             )
 
@@ -39,9 +62,7 @@ public enum ModelInstaller {
             // Whisper models are single .bin files; everything else is a folder.
             let isSingleFile = backend == .whisperCpp
             let parent = finalDir.deletingLastPathComponent()
-            let stagingPath =
-                parent
-                .appendingPathComponent("\(finalDir.lastPathComponent).staging-\(UUID().uuidString)")
+            let stagingPath = SuperscribeFS.stagingURL(beside: finalDir)
 
             do {
                 try FileManager.default.createDirectory(
@@ -52,6 +73,7 @@ public enum ModelInstaller {
                     try await ModelDownloader.downloadFile(
                         model: model,
                         into: stagingPath,
+                        session: session,
                         onProgress: onProgress
                     )
                 }
@@ -60,20 +82,41 @@ public enum ModelInstaller {
                         model: model,
                         backend: backend,
                         into: stagingPath,
+                        session: session,
                         onProgress: onProgress
                     )
                 }
 
                 // 4. Atomic rename.
-                if FileManager.default.fileExists(atPath: finalDir.path) == true {
-                    try? FileManager.default.removeItem(at: stagingPath)
+                if SuperscribeFS.isExistingFile(at: finalDir) == true
+                    || SuperscribeFS.isExistingDirectory(at: finalDir) == true
+                {
+                    try SuperscribeFS.atomicReplace(
+                        staging: stagingPath,
+                        final: finalDir,
+                        policy: .discardStagingIfFinalExists
+                    )
                     return finalDir
                 }
                 do {
-                    try FileManager.default.moveItem(at: stagingPath, to: finalDir)
+                    if SuperscribeKitTestHooks.forceModelInstallerAtomicReplaceFailure == true {
+                        throw CocoaError(.fileWriteUnknown)
+                    }
+                    try SuperscribeFS.atomicReplace(
+                        staging: stagingPath,
+                        final: finalDir,
+                        policy: .removeFinalThenMove
+                    )
                 }
                 catch {
                     throw ModelInstallationError.installFailed(path: finalDir, underlying: error)
+                }
+                if backend == .whisperCpp {
+                    try await WhisperEncoderInstaller.installIfNeeded(
+                        model: model,
+                        session: session,
+                        onProgress: onProgress
+                    )
                 }
                 return finalDir
             }
@@ -87,13 +130,57 @@ public enum ModelInstaller {
 
     /// Per-backend convention for where a model lives on disk.
     public static func installPath(for modelId: String, backend: Backend) throws -> URL {
+        try backend.installPath(for: modelId)
+    }
+
+    /// Removes an installed model from disk.
+    ///
+    /// Whisper: deletes the `.bin` and the Core ML `{base}-encoder.mlmodelc` bundle when present.
+    /// Parakeet: deletes the model directory tree.
+    public static func removeInstalled(modelId: String, backend: Backend) throws {
         switch backend {
             case .whisperCpp:
-                return WhisperBackend.installPath(for: modelId)
+                let bin = WhisperBackend.installPath(for: modelId)
+                let encoder = WhisperBackend.encoderInstallPath(for: modelId)
+                let fm = FileManager.default
+                if SuperscribeFS.isExistingFile(at: bin) == true {
+                    try fm.removeItem(at: bin)
+                }
+                if SuperscribeFS.isExistingDirectory(at: encoder) == true {
+                    try fm.removeItem(at: encoder)
+                }
             case .parakeet:
-                return ParakeetBackend.installPath(for: modelId)
+                let path = try installPath(for: modelId, backend: backend)
+                if FileManager.default.fileExists(atPath: path.path) == true {
+                    try FileManager.default.removeItem(at: path)
+                }
             case .appleSpeech:
-                throw ModelInstallationError.modelNotInstalled(model: modelId, backend: backend)
+                break
+        }
+    }
+
+    /// Paths that `removeInstalled` would delete (for confirmation prompts).
+    public static func removalPaths(modelId: String, backend: Backend) throws -> [URL] {
+        switch backend {
+            case .whisperCpp:
+                var paths: [URL] = []
+                let bin = WhisperBackend.installPath(for: modelId)
+                if FileManager.default.fileExists(atPath: bin.path) == true {
+                    paths.append(bin)
+                }
+                let encoder = WhisperBackend.encoderInstallPath(for: modelId)
+                if WhisperBackend.isEncoderInstalled(modelId: modelId) == true {
+                    paths.append(encoder)
+                }
+                return paths
+            case .parakeet:
+                let path = try installPath(for: modelId, backend: backend)
+                if FileManager.default.fileExists(atPath: path.path) == true {
+                    return [path]
+                }
+                return []
+            case .appleSpeech:
+                return []
         }
     }
 
@@ -101,18 +188,9 @@ public enum ModelInstaller {
     public static func isInstalled(at path: URL, backend: Backend) -> Bool {
         switch backend {
             case .whisperCpp:
-                // Single .bin file — just check it exists as a regular file.
-                var isDir: ObjCBool = false
-                return FileManager.default.fileExists(atPath: path.path, isDirectory: &isDir) == true
-                    && isDir.boolValue == false
+                return SuperscribeFS.isExistingFile(at: path)
             case .parakeet:
-                var isDir: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDir) == true,
-                    isDir.boolValue == true
-                else { return false }
-                let contents =
-                    (try? FileManager.default.contentsOfDirectory(atPath: path.path)) ?? []
-                return contents.contains(where: { $0.hasSuffix(".mlmodelc") })
+                return SuperscribeFS.containsCompiledCoreMLBundle(at: path)
             case .appleSpeech:
                 return false
         }
@@ -144,12 +222,21 @@ public enum ModelInstaller {
             probe = probe.deletingLastPathComponent()
         }
 
-        guard
-            let values = try? probe.resourceValues(forKeys: [
-                .volumeAvailableCapacityForImportantUsageKey
-            ]),
-            let free = values.volumeAvailableCapacityForImportantUsage
+        let values: URLResourceValues?
+        if SuperscribeKitTestHooks.forceModelInstallerPreflightVolumeLookupFailure == true {
+            values = nil
+        }
         else {
+            values = try? probe.resourceValues(forKeys: [
+                .volumeAvailableCapacityForImportantUsageKey
+            ])
+        }
+        guard
+            let free = values?.volumeAvailableCapacityForImportantUsage
+        else {
+            if SuperscribeKitTestHooks.forceModelInstallerPreflightVolumeUnknown == true {
+                return
+            }
             return  // Can't determine — let the OS error on ENOSPC.
         }
 

@@ -91,15 +91,10 @@ extension IntermediateTranscript {
     /// JSON encoder configured for the on-disk format: pretty-printed,
     /// stable key order, ISO-8601 timestamps.
     public static func jsonEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
+        JSONCoding.transcriptEncoder()
     }
 
     public static func jsonDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
+        JSONCoding.catalogDecoder()
     }
 }

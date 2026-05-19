@@ -26,11 +26,11 @@ struct AnalyzerTests {
     }
 
     @Test("constant tone yields one segment spanning the file")
-    func constantTone() {
+    func constantTone() throws {
         let analyzer = Analyzer()
         let samples = tone(seconds: 2)
         let segments = analyzer.detectSpeech(samples: samples, sampleRate: sampleRate)
-        let segment = try! #require(segments.first)
+        let segment = try #require(segments.first)
         #expect(segments.count == 1)
         // With padding the segment may extend slightly beyond [0, 2] but is
         // clamped to file duration.
@@ -39,13 +39,13 @@ struct AnalyzerTests {
     }
 
     @Test("tone-silence-tone yields two segments with correct boundaries")
-    func toneSilenceTone() {
+    func toneSilenceTone() throws {
         let analyzer = Analyzer(config: AnalyzerConfig(padding: 0))
         let samples = tone(seconds: 1) + silence(seconds: 1) + tone(seconds: 1)
         let segments = analyzer.detectSpeech(samples: samples, sampleRate: sampleRate)
         #expect(segments.count == 2)
-        let first = try! #require(segments.first)
-        let second = try! #require(segments.last)
+        let first = try #require(segments.first)
+        let second = try #require(segments.last)
         #expect(abs(first.start - 0) < 0.05)
         #expect(abs(first.end - 1) < 0.05)
         #expect(abs(second.start - 2) < 0.05)
@@ -62,12 +62,12 @@ struct AnalyzerTests {
     }
 
     @Test("padding extends segment boundaries and clamps to file duration")
-    func padding() {
+    func padding() throws {
         let padding: TimeInterval = 0.2
         let analyzer = Analyzer(config: AnalyzerConfig(padding: padding))
         let samples = silence(seconds: 0.5) + tone(seconds: 1) + silence(seconds: 0.5)
         let segments = analyzer.detectSpeech(samples: samples, sampleRate: sampleRate)
-        let segment = try! #require(segments.first)
+        let segment = try #require(segments.first)
         #expect(segments.count == 1)
         // Tone runs roughly [0.5, 1.5]; padding should expand by ~0.2 each side.
         #expect(segment.start <= 0.5 - padding + 0.05)

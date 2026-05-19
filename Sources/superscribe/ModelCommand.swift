@@ -36,20 +36,12 @@ struct ModelCommand: AsyncParsableCommand {
     var json: Bool = false
 
     mutating func validate() throws {
-        // Verb exclusivity: at most one primary verb, with --refresh + --list
-        // allowed (refresh-then-list).
-        let verbs: [(String, Bool)] = [
+        try assertMutuallyExclusive([
             ("--list", list),
             ("--set-default", setDefault != nil),
             ("--download", download != nil),
             ("--rm", rm != nil)
-        ]
-        let activeVerbs = verbs.filter { $0.1 == true }.map(\.0)
-        if activeVerbs.count > 1 {
-            throw ValidationError(
-                "Only one of \(activeVerbs.joined(separator: ", ")) may be used at once."
-            )
-        }
+        ])
         if (download != nil || rm != nil) && refresh == true {
             throw ValidationError("--refresh cannot be combined with --download or --rm.")
         }
@@ -61,12 +53,8 @@ struct ModelCommand: AsyncParsableCommand {
         }
     }
 
-    private var resolvedBackend: Backend {
-        backend ?? UserConfig.load().resolvedDefaultBackend()
-    }
-
     mutating func run() async throws {
-        let backend = resolvedBackend
+        let backend = BackendManager.resolveBackend(cliBackend: backend)
 
         if let modelId = download {
             try await runDownload(modelId, backend: backend)
@@ -153,25 +141,30 @@ struct ModelCommand: AsyncParsableCommand {
 
     private func runRemove(_ modelId: String, backend: Backend) throws {
         let installed = (try? ModelManager.installedModels(for: backend)) ?? []
-        guard let entry = installed.first(where: { $0.id == modelId }) else {
+        guard installed.contains(where: { $0.id == modelId }) == true else {
             let valid = installed.map(\.id).joined(separator: ", ")
             throw ValidationError(
                 "Model '\(modelId)' is not installed for backend '\(backend.rawValue)'. "
                     + "Installed: \(valid.isEmpty ? "(none)" : valid)"
             )
         }
-        if yes == false {
-            FileHandle.standardError.write(
-                Data("Remove '\(modelId)' (\(entry.path.path))? [y/N] ".utf8)
+        let paths = try ModelInstaller.removalPaths(modelId: modelId, backend: backend)
+        if paths.isEmpty == true {
+            throw ValidationError(
+                "Model '\(modelId)' has no files to remove for backend '\(backend.rawValue)'."
             )
-            let answer = readLine(strippingNewline: true)?.lowercased() ?? ""
-            guard answer == "y" || answer == "yes" else {
+        }
+        if yes == false {
+            let listing = paths.map(\.path).joined(separator: "\n  ")
+            guard confirm(prompt: "Remove '\(modelId)'?\n  \(listing)\n[y/N] ", skip: false) == true else {
                 print("Aborted.")
                 return
             }
         }
-        try FileManager.default.removeItem(at: entry.path)
-        print("Removed \(entry.path.path)")
+        try ModelInstaller.removeInstalled(modelId: modelId, backend: backend)
+        for path in paths {
+            print("Removed \(path.path)")
+        }
     }
 
     private func runSetDefault(_ modelId: String, backend: Backend) async throws {
@@ -246,9 +239,7 @@ struct ModelCommand: AsyncParsableCommand {
     }
 
     private func printJSON<T: Encodable>(_ value: T) {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
+        let encoder = JSONCoding.catalogEncoder()
         if let data = try? encoder.encode(value),
             let s = String(data: data, encoding: .utf8)
         {

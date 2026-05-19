@@ -8,17 +8,13 @@ struct CatalogStoreTests {
 
     /// Sets up a temp catalog file path for the duration of the test.
     private func withTempCatalog<T>(_ body: () throws -> T) throws -> T {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("superscribe-tests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        let url = tmp.appendingPathComponent("catalog.json")
-        let prior = CatalogStore.overrideURL
-        CatalogStore.overrideURL = url
-        defer {
-            CatalogStore.overrideURL = prior
-            try? FileManager.default.removeItem(at: tmp)
+        try TestHelpers.withTempDirectory { tmp in
+            let url = tmp.appendingPathComponent("catalog.json")
+            let prior = CatalogStore.overrideURL
+            CatalogStore.overrideURL = url
+            defer { CatalogStore.overrideURL = prior }
+            return try body()
         }
-        return try body()
     }
 
     private func sampleEntry() -> CatalogEntry {

@@ -10,33 +10,42 @@ private final class WhisperContext: @unchecked Sendable {
     deinit { whisper_free(ptr) }
 }
 
+private func suppressLibraryLog(
+    _ level: ggml_log_level,
+    _ text: UnsafePointer<CChar>?,
+    _ userData: UnsafeMutableRawPointer?
+) {}
+
 /// whisper.cpp backend for on-device speech-to-text using OpenAI Whisper GGML
-/// models with Metal GPU acceleration.
+/// models. Encoder runs on the Apple Neural Engine when a Core ML bundle is
+/// installed beside the `.bin`; otherwise Metal GPU. Decoder uses Metal.
 ///
 /// Each instance owns a single `whisper_context` loaded from a `.bin` model
 /// file on disk. A per-call `whisper_state` provides safe concurrent use
 /// across the two-track pipeline without sharing mutable state between tasks.
 public actor WhisperBackend: Transcriber {
-    private var ctx: WhisperContext?
+    /// When `true`, `isAvailable` reports unavailable (for dispatch tests).
+    nonisolated(unsafe) internal static var testForceUnavailable = false
+    /// When `true`, `transcribe` throws `stateInitFailed` after load.
+    nonisolated(unsafe) internal static var testForceStateInitFailed = false
+    /// When `true`, `transcribe` throws `transcriptionFailed`.
+    nonisolated(unsafe) internal static var testForceTranscriptionFailed = false
+    /// When `true`, `extractTimedWords` skips tokens whose text pointer is nil.
+    nonisolated(unsafe) internal static var testForceNilTokenText = false
+    nonisolated(unsafe) internal static var testNilTokenTextSkipsRemaining = 0
+
+    public nonisolated static var isAvailable: Bool {
+        if testForceUnavailable == true { return false }
+        return true
+    }
+
+    private let loader = LoadOnce<WhisperContext>()
     private let modelId: String
-    private var loadingTask: Task<WhisperContext, any Error>?
 
     /// - Parameter model: GGML model variant, e.g. `"large-v3-turbo"`, `"base"`,
     ///   `"medium-q5_0"`. Defaults to `"large-v3-turbo"`.
     public init(model: String = WhisperBackend.defaultModelId) {
         self.modelId = model
-    }
-
-    deinit {
-        // whisper_free is handled by WhisperContext deinit
-    }
-
-    public static var isAvailable: Bool {
-        #if arch(arm64)
-        return true
-        #else
-        return false
-        #endif
     }
 
     public nonisolated var capabilities: BackendCapabilities {
@@ -56,13 +65,16 @@ public actor WhisperBackend: Transcriber {
     ) async throws -> SegmentTranscription {
         let context = try await ensureLoaded()
 
-        guard samples.isEmpty == false else {
-            return SegmentTranscription(segment: segment, words: [])
-        }
-
         // Allocate per-call state so concurrent transcriptions don't share
         // mutable whisper internals. (Logging is already silenced globally.)
-        guard let state = whisper_init_state(context.ptr) else {
+        let state: OpaquePointer?
+        if Self.testForceStateInitFailed == true {
+            state = nil
+        }
+        else {
+            state = whisper_init_state(context.ptr)
+        }
+        guard let state else {
             throw WhisperError.stateInitFailed
         }
         defer { whisper_free_state(state) }
@@ -91,8 +103,14 @@ public actor WhisperBackend: Transcriber {
             params.initial_prompt = promptCStr!.withUnsafeBufferPointer { $0.baseAddress }
         }
 
-        let rc = samples.withUnsafeBufferPointer { buf in
-            whisper_full_with_state(context.ptr, state, params, buf.baseAddress, Int32(buf.count))
+        let rc: Int32
+        if Self.testForceTranscriptionFailed == true {
+            rc = -1
+        }
+        else {
+            rc = samples.withUnsafeBufferPointer { buf in
+                whisper_full_with_state(context.ptr, state, params, buf.baseAddress, Int32(buf.count))
+            }
         }
         guard rc == 0 else {
             throw WhisperError.transcriptionFailed(code: rc)
@@ -105,43 +123,26 @@ public actor WhisperBackend: Transcriber {
     // MARK: - Private
 
     private func ensureLoaded() async throws -> WhisperContext {
-        if let c = ctx { return c }
-        if let task = loadingTask { return try await task.value }
-
-        let task = Task { [self] () async throws -> WhisperContext in
-            let binPath = WhisperBackend.installPath(for: modelId).path
-            guard FileManager.default.fileExists(atPath: binPath) == true else {
-                throw ModelInstallationError.modelNotInstalled(
-                    model: modelId, backend: .whisperCpp
-                )
-            }
+        try await loader.get { [modelId] in
+            let binURL = WhisperBackend.installPath(for: modelId)
+            try ModelInstallSupport.requireInstalled(
+                at: binURL, modelId: modelId, backend: .whisperCpp
+            )
+            let binPath = binURL.path
             FileHandle.standardError.write(
                 Data("Loading Whisper model \(modelId)...\n".utf8)
             )
             var ctxParams = whisper_context_default_params()
             ctxParams.use_gpu = true
-            // Fused flash-attention kernels on Metal: 20-40% faster encode +
-            // decode with no quality loss for f16/quantized GGML models.
             ctxParams.flash_attn = true
-            // Permanently silence all ggml/whisper C-library log output.
-            // Both sinks must be set: ggml_log_set covers ggml_metal_init and
-            // other ggml-level messages; whisper_log_set covers whisper-level
-            // messages. Neither is restored — we manage all user-facing output
-            // ourselves and never want internal C-library logging on stderr.
-            ggml_log_set({ _, _, _ in }, nil)
-            whisper_log_set({ _, _, _ in }, nil)
+            ggml_log_set(suppressLibraryLog, nil)
+            whisper_log_set(suppressLibraryLog, nil)
             let ptr = whisper_init_from_file_with_params(binPath, ctxParams)
             guard let ptr else {
                 throw WhisperError.contextInitFailed(path: binPath)
             }
-            let c = WhisperContext(ptr)
-            self.ctx = c
-            return c
+            return WhisperContext(ptr)
         }
-        loadingTask = task
-        let c = try await task.value
-        loadingTask = nil
-        return c
     }
 
     /// Walk whisper_state segments/tokens and merge sub-word pieces into
@@ -157,59 +158,41 @@ public actor WhisperBackend: Transcriber {
 
         for s in 0 ..< nSegments {
             let nTokens = Int(whisper_full_n_tokens_from_state(state, Int32(s)))
-            var currentText = ""
-            var wordStart: TimeInterval = 0
-            var wordEnd: TimeInterval = 0
+            var accumulator = TokenAccumulator()
 
             for t in 0 ..< nTokens {
                 let data = whisper_full_get_token_data_from_state(state, Int32(s), Int32(t))
-                guard let rawPtr = whisper_full_get_token_text_from_state(ctx.ptr, state, Int32(s), Int32(t)) else {
+                let rawPtr: UnsafePointer<CChar>?
+                if Self.testForceNilTokenText == true,
+                    Self.testNilTokenTextSkipsRemaining > 0
+                {
+                    Self.testNilTokenTextSkipsRemaining -= 1
+                    rawPtr = nil
+                }
+                else {
+                    rawPtr = whisper_full_get_token_text_from_state(
+                        ctx.ptr, state, Int32(s), Int32(t))
+                }
+                guard let rawPtr else {
                     continue
                 }
                 let token = String(cString: rawPtr)
-
-                // Skip special tokens: negative ids, and whisper's bracket
-                // tokens ([_BEG_], [_TT_N], [_EOT_], etc.) which have
-                // positive ids but must never appear as visible text.
                 guard data.id >= 0, token.hasPrefix("[_") == false else { continue }
 
-                // A leading space marks a new word boundary.
-                let isNewWord = token.hasPrefix(" ") || token.hasPrefix("▁")
-
-                if isNewWord == true && currentText.isEmpty == false {
-                    words.append(
-                        TimedWord(
-                            text: currentText,
-                            start: wordStart + segmentOffset,
-                            end: wordEnd + segmentOffset
-                        ))
-                    currentText = ""
-                }
-
-                let cleaned =
-                    token
-                    .replacingOccurrences(of: "▁", with: "")
-                    .trimmingCharacters(in: CharacterSet(charactersIn: " "))
-
-                if cleaned.isEmpty == false {
-                    if currentText.isEmpty == true {
-                        wordStart = TimeInterval(data.t0) / 100.0
-                    }
-                    currentText += cleaned
-                    wordEnd = TimeInterval(data.t1) / 100.0
-                }
+                accumulator.accept(
+                    token: token,
+                    start: TimeInterval(data.t0) / 100.0,
+                    end: TimeInterval(data.t1) / 100.0
+                )
             }
 
-            if currentText.isEmpty == false {
-                words.append(
-                    TimedWord(
-                        text: currentText,
-                        start: wordStart + segmentOffset,
-                        end: wordEnd + segmentOffset
-                    ))
-            }
+            words.append(contentsOf: accumulator.finish(segmentOffset: segmentOffset))
         }
         return words
+    }
+
+    internal static func invokeLogSuppressorsForTesting() {
+        suppressLibraryLog(ggml_log_level(0), nil as UnsafePointer<CChar>?, nil)
     }
 }
 

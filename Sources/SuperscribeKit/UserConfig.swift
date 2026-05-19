@@ -16,18 +16,18 @@ public struct UserConfig: Codable, Sendable {
 
     // MARK: - Persistence
 
-    public static let configDirectory: URL = {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".config/superscribe", isDirectory: true)
-    }()
+    public static let configDirectory: URL = SuperscribePaths.userConfigDirectory()
 
-    public static let configFileURL: URL = {
-        configDirectory.appendingPathComponent("config.json")
-    }()
+    /// Override for unit tests (nil = default `~/.config/superscribe/config.json`).
+    nonisolated(unsafe) static var overrideConfigFileURL: URL?
+
+    public static var configFileURL: URL {
+        overrideConfigFileURL ?? configDirectory.appendingPathComponent("config.json")
+    }
 
     public static func load() -> UserConfig {
         guard let data = try? Data(contentsOf: configFileURL),
-            let config = try? JSONDecoder().decode(UserConfig.self, from: data)
+            let config = try? JSONCoding.catalogDecoder().decode(UserConfig.self, from: data)
         else {
             return UserConfig()
         }
@@ -38,9 +38,7 @@ public struct UserConfig: Codable, Sendable {
         try FileManager.default.createDirectory(
             at: Self.configDirectory, withIntermediateDirectories: true
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(self)
+        let data = try JSONCoding.configEncoder().encode(self)
         try data.write(to: Self.configFileURL, options: .atomic)
     }
 

@@ -43,13 +43,13 @@ struct MergerTests {
     }
 
     @Test("adjacent same-speaker segments under maxCoalesceGap are coalesced")
-    func coalesce() {
+    func coalesce() throws {
         let merger = Merger(config: .init(gapThreshold: 5.0, maxCoalesceGap: 1.0))
         let result = merger.merge(
             transcript([
                 track("Alice", [(0.0, 1.0), (1.5, 2.5)])
             ]))
-        let only = try! #require(result.first)
+        let only = try #require(result.first)
         #expect(result.count == 1)
         #expect(only.start == 0.0)
         #expect(only.end == 2.5)

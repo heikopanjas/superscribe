@@ -16,8 +16,7 @@ public struct ConvertedAudioCache: Sendable {
     }
 
     public static func defaultRoot() -> URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".cache/superscribe/audio", isDirectory: true)
+        SuperscribePaths.audioCacheRoot()
     }
 
     /// Identity of a (source file, target format) pair.
@@ -51,6 +50,9 @@ public struct ConvertedAudioCache: Sendable {
     /// Build a cache key from a source file URL and a target audio format.
     /// Returns `nil` if the file's size or mtime cannot be read.
     public func key(for url: URL, targetFormat: AudioFormat) -> CacheKey? {
+        if SuperscribeKitTestHooks.forceCacheKeyAttributeParseFailure == true {
+            return nil
+        }
         let absolute = url.standardizedFileURL.path
         let attrs: [FileAttributeKey: Any]
         do {
@@ -60,6 +62,7 @@ public struct ConvertedAudioCache: Sendable {
             return nil
         }
         guard
+            SuperscribeKitTestHooks.forceCacheKeyAttributeGuardFailure == false,
             let size = (attrs[.size] as? NSNumber)?.int64Value,
             let modDate = attrs[.modificationDate] as? Date
         else {
@@ -109,8 +112,7 @@ public struct ConvertedAudioCache: Sendable {
     public func loadManifest() throws -> [String: ManifestEntry] {
         guard FileManager.default.fileExists(atPath: manifestURL.path) == true else { return [:] }
         let data = try Data(contentsOf: manifestURL)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = JSONCoding.catalogDecoder()
         let entries = try decoder.decode([ManifestEntry].self, from: data)
         return Dictionary(entries.map { ($0.digest, $0) }, uniquingKeysWith: { $1 })
     }
@@ -131,18 +133,14 @@ public struct ConvertedAudioCache: Sendable {
     }
 
     private func writeManifest(_ entries: [ManifestEntry]) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(entries)
-        let stagingURL = root.appendingPathComponent(
-            "manifest.json.staging-\(UUID().uuidString)", isDirectory: false
-        )
+        let data = try JSONCoding.catalogEncoder().encode(entries)
+        let stagingURL = SuperscribeFS.stagingURL(beside: manifestURL, label: "manifest.json")
         try data.write(to: stagingURL)
-        if FileManager.default.fileExists(atPath: manifestURL.path) == true {
-            try FileManager.default.removeItem(at: manifestURL)
-        }
-        try FileManager.default.moveItem(at: stagingURL, to: manifestURL)
+        try SuperscribeFS.atomicReplace(
+            staging: stagingURL,
+            final: manifestURL,
+            policy: .removeFinalThenMove
+        )
     }
 
     /// Atomically write `samples` (in `format`) under `key`. Stages to a
@@ -159,10 +157,7 @@ public struct ConvertedAudioCache: Sendable {
         )
 
         let finalURL = cacheURL(for: key)
-        let stagingURL = root.appendingPathComponent(
-            "\(key.digest).wav.staging-\(UUID().uuidString)",
-            isDirectory: false
-        )
+        let stagingURL = SuperscribeFS.stagingURL(beside: finalURL, label: "\(key.digest).wav")
 
         let avFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -184,6 +179,9 @@ public struct ConvertedAudioCache: Sendable {
 
         let outputFile: AVAudioFile
         do {
+            if SuperscribeKitTestHooks.forceCacheStoreOpenFailure == true {
+                throw CocoaError(.fileWriteNoPermission)
+            }
             outputFile = try AVAudioFile(
                 forWriting: stagingURL,
                 settings: settings,
@@ -204,12 +202,17 @@ public struct ConvertedAudioCache: Sendable {
         do {
             while offset < totalFrames {
                 let count = min(chunkFrames, totalFrames - offset)
-                guard
-                    let buffer = AVAudioPCMBuffer(
-                        pcmFormat: avFormat,
-                        frameCapacity: AVAudioFrameCount(count)
-                    )
-                else {
+                let buffer: AVAudioPCMBuffer? =
+                    if SuperscribeKitTestHooks.forceCacheStoreWriteBufferFailure == true {
+                        nil
+                    }
+                    else {
+                        AVAudioPCMBuffer(
+                            pcmFormat: avFormat,
+                            frameCapacity: AVAudioFrameCount(count)
+                        )
+                    }
+                guard let buffer else {
                     throw AudioPreparerError.conversionFailed(
                         "Cannot allocate cache write buffer"
                     )
@@ -220,10 +223,17 @@ public struct ConvertedAudioCache: Sendable {
                     buffer.floatChannelData![0].update(from: base, count: count)
                 }
                 try outputFile.write(from: buffer)
+                if SuperscribeKitTestHooks.forceCacheStoreMidWriteFailure == true {
+                    throw CocoaError(.fileWriteUnknown)
+                }
                 offset += count
             }
         }
         catch {
+            if let forced = SuperscribeKitTestHooks.forceCacheStoreWriteError {
+                try? FileManager.default.removeItem(at: stagingURL)
+                throw forced
+            }
             try? FileManager.default.removeItem(at: stagingURL)
             throw error
         }
@@ -233,11 +243,14 @@ public struct ConvertedAudioCache: Sendable {
         _ = outputFile
 
         do {
-            // Replace any existing file (defensive; lookup avoids this normally).
-            if FileManager.default.fileExists(atPath: finalURL.path) == true {
-                try FileManager.default.removeItem(at: finalURL)
+            if SuperscribeKitTestHooks.forceCacheStoreAtomicReplaceFailure == true {
+                throw CocoaError(.fileWriteUnknown)
             }
-            try FileManager.default.moveItem(at: stagingURL, to: finalURL)
+            try SuperscribeFS.atomicReplace(
+                staging: stagingURL,
+                final: finalURL,
+                policy: .removeFinalThenMove
+            )
         }
         catch {
             try? FileManager.default.removeItem(at: stagingURL)

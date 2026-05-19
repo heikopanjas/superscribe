@@ -30,6 +30,8 @@ let package = Package(
                 .linkedFramework("Metal"),
                 .linkedFramework("MetalKit"),
                 .linkedFramework("Accelerate"),
+                .linkedFramework("CoreML"),
+                .linkedFramework("Foundation"),
                 .linkedLibrary("c++")
             ]
         ),
@@ -42,7 +44,10 @@ let package = Package(
         ),
         .testTarget(
             name: "superscribeTests",
-            dependencies: ["SuperscribeKit"]
+            dependencies: [
+                "SuperscribeKit",
+                "superscribe"
+            ]
         )
     ]
 )

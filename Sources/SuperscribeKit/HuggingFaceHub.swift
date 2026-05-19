@@ -58,6 +58,12 @@ public enum HuggingFaceHub {
             case lastModified
             case siblings
         }
+
+        public init(id: String, lastModified: Date? = nil, siblings: [HFSibling] = []) {
+            self.id = id
+            self.lastModified = lastModified
+            self.siblings = siblings
+        }
     }
 
     // MARK: - Endpoints
@@ -132,7 +138,7 @@ public enum HuggingFaceHub {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
             let (data, response) = try await session.data(for: request)
-            if let http = response as? HTTPURLResponse, !(200 ..< 300).contains(http.statusCode) {
+            if let http = response as? HTTPURLResponse, http.isSuccess == false {
                 throw Error.http(status: http.statusCode, url: url)
             }
             return data

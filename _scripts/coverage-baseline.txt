@@ -1,0 +1,31 @@
+SuperscribeKit code coverage baseline
+Recorded: 2026-05-19
+
+Command:
+  swift test --enable-code-coverage -Xswiftc -strict-concurrency=complete
+  _scripts/coverage.sh
+
+SuperscribeKit TOTAL (line coverage): 43.32% (1715 / 3026 lines)
+
+Per-file line coverage:
+  VTTFormatter.swift              100.00%
+  IntermediateTranscript.swift    100.00%
+  Pipeline.swift                   99.60%
+  Merger.swift                     94.59%
+  Types.swift                      90.91%
+  CatalogStore.swift               88.00%
+  AudioPreparer.swift              81.97%
+  WhisperBackend+Registry.swift    76.07%
+  ConvertedAudioCache.swift        82.65%
+  ModelInstallationError.swift     65.00%
+  Analyzer.swift                   50.00%
+  HuggingFaceHub.swift             36.47%
+  ParakeetBackend+Registry.swift   34.71%
+  ModelInstaller.swift             25.91%
+  ParakeetBackend.swift             0.00%
+  WhisperBackend.swift              0.00%
+  ModelDownloader.swift             0.00%
+  UserConfig.swift                  0.00%
+  WhisperEncoderInstaller.swift     0.00%
+
+Target after DRY refactor: 100% (enforced by _scripts/coverage.sh)

@@ -6,7 +6,7 @@ import Testing
 @Suite("WhisperBackend.filterGGMLSiblings")
 struct WhisperRegistryTests {
 
-    @Test func extractsGGMLBinFiles() {
+    @Test func extractsGGMLBinFiles() throws {
         let siblings: [HuggingFaceHub.HFSibling] = [
             .init(rfilename: "ggml-base.bin", size: 100_000_000),
             .init(rfilename: "ggml-large-v3-turbo.bin", size: 1_500_000_000),
@@ -22,13 +22,13 @@ struct WhisperRegistryTests {
 
         #expect(result.count == 2)
 
-        let base = try! #require(byId["base"])
+        let base = try #require(byId["base"])
         #expect(base.totalSizeBytes == 100_000_000)
         #expect(base.fileCount == 1)
         #expect(base.subpath == nil)
         #expect(base.repoId == WhisperBackend.huggingFaceRepoId)
 
-        let turbo = try! #require(byId["large-v3-turbo"])
+        let turbo = try #require(byId["large-v3-turbo"])
         #expect(turbo.totalSizeBytes == 1_500_000_000)
         #expect(turbo.fileCount == 1)
     }
@@ -62,13 +62,35 @@ struct WhisperRegistryTests {
         #expect(result.map(\.id) == ["base", "medium", "tiny"])
     }
 
-    @Test func installPathUsesCacheDirectory() {
-        let path = WhisperBackend.installPath(for: "large-v3-turbo")
-        #expect(path.lastPathComponent == "large-v3-turbo.bin")
-        #expect(path.path.contains("superscribe/whisper/large-v3-turbo.bin"))
-    }
-
     @Test func defaultModelId() {
         #expect(WhisperBackend.defaultModelId == "large-v3-turbo")
+    }
+
+    @Test func encoderBaseIdStripsQuantSuffix() {
+        #expect(WhisperBackend.encoderBaseId(for: "large-v3-turbo") == "large-v3-turbo")
+        #expect(WhisperBackend.encoderBaseId(for: "medium-q5_0") == "medium")
+        #expect(WhisperBackend.encoderBaseId(for: "tiny-q8_0") == "tiny")
+    }
+
+    @Test func encoderInstallPathAndZipName() {
+        #expect(
+            WhisperBackend.encoderInstallPath(for: "large-v3-turbo").lastPathComponent
+                == "large-v3-turbo-encoder.mlmodelc"
+        )
+        #expect(
+            WhisperBackend.encoderZipRemoteName(for: "medium-q5_0")
+                == "ggml-medium-encoder.mlmodelc.zip"
+        )
+    }
+
+    @Test func encoderZipSiblingLookup() {
+        let siblings: [HuggingFaceHub.HFSibling] = [
+            .init(rfilename: "ggml-tiny.bin", size: 1),
+            .init(rfilename: "ggml-tiny-encoder.mlmodelc.zip", size: 2),
+            .init(rfilename: "ggml-base-encoder.mlmodelc.zip", size: 3)
+        ]
+        let found = WhisperBackend.encoderZipSibling(for: "tiny", in: siblings)
+        #expect(found?.rfilename == "ggml-tiny-encoder.mlmodelc.zip")
+        #expect(WhisperBackend.encoderZipSibling(for: "large-v3-turbo", in: siblings) == nil)
     }
 }

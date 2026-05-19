@@ -9,25 +9,13 @@ struct ConvertedAudioCacheTests {
 
     /// Writes a short 48 kHz mono WAV (sine) to a temp file.
     private func makeTempSource(durationSeconds: Double = 0.25) throws -> URL {
-        let sampleRate: Double = 48_000
-        let frameCount = AVAudioFrameCount(sampleRate * durationSeconds)
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
-        buffer.frameLength = frameCount
-        let floats = buffer.floatChannelData![0]
-        for i in 0 ..< Int(frameCount) {
-            floats[i] = sinf(2.0 * .pi * 440.0 * Float(i) / Float(sampleRate)) * 0.25
-        }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("converted-\(UUID().uuidString).wav")
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
-        return url
+        try TestHelpers.makeTempSineWAV(
+            name: "converted", durationSeconds: durationSeconds, amplitude: 0.25
+        )
     }
 
-    private func makeCache() -> ConvertedAudioCache {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("superscribe-cache-tests-\(UUID().uuidString)")
+    private func makeCache() throws -> ConvertedAudioCache {
+        let dir = try TestHelpers.makeTempDir(prefix: "superscribe-cache-tests")
         return ConvertedAudioCache(root: dir)
     }
 
@@ -37,7 +25,7 @@ struct ConvertedAudioCacheTests {
     }
 
     @Test func lookupReturnsNilForMissingEntry() throws {
-        let cache = makeCache()
+        let cache = try makeCache()
         let url = try makeTempSource()
         defer { try? FileManager.default.removeItem(at: url) }
         let key = cache.key(for: url, targetFormat: .asr16kMono)!
@@ -45,7 +33,7 @@ struct ConvertedAudioCacheTests {
     }
 
     @Test func storeThenLookupReturnsURL() throws {
-        let cache = makeCache()
+        let cache = try makeCache()
         let url = try makeTempSource()
         defer { try? FileManager.default.removeItem(at: url) }
         let key = cache.key(for: url, targetFormat: .asr16kMono)!
@@ -56,7 +44,7 @@ struct ConvertedAudioCacheTests {
     }
 
     @Test func cachedSamplesRoundTripThroughAudioPreparer() throws {
-        let cache = makeCache()
+        let cache = try makeCache()
         let url = try makeTempSource(durationSeconds: 0.5)
         defer { try? FileManager.default.removeItem(at: url) }
         let preparer = AudioPreparer(targetFormat: .asr16kMono, cache: cache)
@@ -77,7 +65,7 @@ struct ConvertedAudioCacheTests {
     }
 
     @Test func keyChangesWhenFormatChanges() throws {
-        let cache = makeCache()
+        let cache = try makeCache()
         let url = try makeTempSource()
         defer { try? FileManager.default.removeItem(at: url) }
         let k16 = cache.key(for: url, targetFormat: AudioFormat(sampleRate: 16_000, channels: 1))!
@@ -86,7 +74,7 @@ struct ConvertedAudioCacheTests {
     }
 
     @Test func keyChangesWhenSourceMtimeChanges() throws {
-        let cache = makeCache()
+        let cache = try makeCache()
         let url = try makeTempSource()
         defer { try? FileManager.default.removeItem(at: url) }
         let k1 = cache.key(for: url, targetFormat: .asr16kMono)!
@@ -100,12 +88,47 @@ struct ConvertedAudioCacheTests {
         #expect(k1.digest != k2.digest)
     }
 
-    @Test func nilCacheDisablesLookupAndStore() throws {
-        let url = try makeTempSource()
-        defer { try? FileManager.default.removeItem(at: url) }
-        let preparer = AudioPreparer(targetFormat: .asr16kMono, cache: nil)
-        let samples = try preparer.loadAndConvert(url: url)
-        #expect(samples.count > 0)
+    @Test func keyReturnsNilWhenAttributesUnreadable() throws {
+        let cache = try ConvertedAudioCache(root: TestHelpers.makeTempDir(prefix: "cache-key2"))
+        defer { try? FileManager.default.removeItem(at: cache.root) }
+        let missing = URL(fileURLWithPath: "/tmp/no-such-\(UUID().uuidString).wav")
+        #expect(cache.key(for: missing, targetFormat: .asr16kMono) == nil)
+    }
+
+    @Test func storeFailsWhenCacheRootIsAFile() throws {
+        let rootFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rootfile-\(UUID().uuidString)")
+        try Data("x".utf8).write(to: rootFile)
+        defer { try? FileManager.default.removeItem(at: rootFile) }
+        let cache = ConvertedAudioCache(root: rootFile)
+        let key = ConvertedAudioCache.CacheKey(
+            sourcePath: "/tmp/a.wav",
+            sourceSize: 1,
+            sourceMtimeNanos: 1,
+            formatKey: "f32-16000-1"
+        )
+        #expect(throws: Error.self) {
+            _ = try cache.store(samples: [0.1], format: .asr16kMono, key: key)
+        }
+    }
+
+    @Test func storeFailsWhenRootIsReadOnly() throws {
+        let root = try TestHelpers.makeTempDir(prefix: "cache-ro")
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+        let cache = ConvertedAudioCache(root: root)
+        let key = ConvertedAudioCache.CacheKey(
+            sourcePath: "/tmp/a.wav",
+            sourceSize: 1,
+            sourceMtimeNanos: 1,
+            formatKey: "f32-16000-1"
+        )
+        #expect(throws: AudioPreparerError.self) {
+            _ = try cache.store(samples: [0.1, 0.2], format: .asr16kMono, key: key)
+        }
     }
 }
 

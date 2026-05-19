@@ -21,17 +21,11 @@ struct CacheCommand: ParsableCommand {
     var yes: Bool = false
 
     mutating func validate() throws {
-        let verbs: [(String, Bool)] = [
+        try assertMutuallyExclusive([
             ("--list", list),
             ("--clear", clear),
             ("--rm", rm != nil)
-        ]
-        let active = verbs.filter(\.1).map(\.0)
-        if active.count > 1 {
-            throw ValidationError(
-                "Only one of \(active.joined(separator: ", ")) may be used at once."
-            )
-        }
+        ])
         if yes == true && clear == false {
             throw ValidationError("--yes applies only to --clear.")
         }
@@ -89,18 +83,14 @@ struct CacheCommand: ParsableCommand {
             print("Cache is already empty.")
             return
         }
-        if yes == false {
-            FileHandle.standardError.write(
-                Data(
-                    "Delete \(entries.count) entry(s) (\(formatBytes(totalBytes))) from \(cache.root.path)? [y/N] "
-                        .utf8
-                )
-            )
-            let answer = readLine(strippingNewline: true)?.lowercased() ?? ""
-            guard answer == "y" || answer == "yes" else {
-                print("Aborted.")
-                return
-            }
+        guard
+            confirm(
+                prompt: "Delete \(entries.count) entry(s) (\(formatBytes(totalBytes))) from \(cache.root.path)? [y/N] ",
+                skip: yes
+            ) == true
+        else {
+            print("Aborted.")
+            return
         }
         try FileManager.default.removeItem(at: cache.root)
         print("Cleared \(entries.count) entry(s) (\(formatBytes(totalBytes))).")
@@ -148,18 +138,4 @@ struct CacheCommand: ParsableCommand {
         }
         return (entries, total)
     }
-}
-
-private func formatAge(_ seconds: TimeInterval) -> String {
-    let s = Int(seconds)
-    if s < 60 { return "< 1m ago" }
-    if s < 3600 { return "\(s / 60)m ago" }
-    if s < 86400 {
-        let h = s / 3600
-        let m = (s % 3600) / 60
-        return m > 0 ? "\(h)h \(m)m ago" : "\(h)h ago"
-    }
-    let d = s / 86400
-    let h = (s % 86400) / 3600
-    return h > 0 ? "\(d)d \(h)h ago" : "\(d)d ago"
 }

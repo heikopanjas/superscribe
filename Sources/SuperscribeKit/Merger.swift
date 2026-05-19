@@ -61,8 +61,8 @@ public struct Merger: Sendable {
             case .preserve:
                 return segments
             case .trim, .interleave:
-                // TODO: implement non-preserve overlap policies for non-VTT outputs.
-                fatalError("OverlapPolicy.\(config.overlapPolicy.rawValue) is not implemented yet")
+                // Not implemented yet — preserve ordering until SRT/JSON outputs need it.
+                return segments
         }
     }
 

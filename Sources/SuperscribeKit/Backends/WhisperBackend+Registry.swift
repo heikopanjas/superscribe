@@ -7,7 +7,16 @@ extension WhisperBackend: ModelRegistry {
     public static let huggingFaceRepoId = "ggerganov/whisper.cpp"
 
     public static func remoteModels() async throws -> [RemoteModelInfo] {
-        let info = try await HuggingFaceHub.repoInfo(repoId: huggingFaceRepoId)
+        try await remoteModels(session: overrideRemoteModelsSession ?? defaultRemoteModelsSession)
+    }
+
+    /// Override for unit tests; nil uses `defaultRemoteModelsSession`.
+    nonisolated(unsafe) static var overrideRemoteModelsSession: URLSession?
+    /// Default session when `overrideRemoteModelsSession` is nil (`.shared` in production).
+    nonisolated(unsafe) static var defaultRemoteModelsSession: URLSession = .shared
+
+    static func remoteModels(session: URLSession) async throws -> [RemoteModelInfo] {
+        let info = try await HuggingFaceHub.repoInfo(repoId: huggingFaceRepoId, session: session)
         return filterGGMLSiblings(info.siblings, lastModified: info.lastModified)
     }
 
@@ -30,7 +39,48 @@ extension WhisperBackend: ModelRegistry {
                 let size = (try? path.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
                 return InstalledModelInfo(id: id, path: path, sizeBytes: size.map(Int64.init))
             }
-            .sorted { $0.id < $1.id }
+            .sortedById()
+    }
+
+    /// Directory whisper.cpp loads for ANE encoder inference (`{base}-encoder.mlmodelc`).
+    public static func encoderInstallPath(for modelId: String) -> URL {
+        whisperCacheDirectory().appendingPathComponent(
+            "\(encoderBaseId(for: modelId))-encoder.mlmodelc",
+            isDirectory: true
+        )
+    }
+
+    /// Base model name used for Core ML encoder artifacts (strips quant suffixes).
+    public static func encoderBaseId(for modelId: String) -> String {
+        guard modelId.count >= 5 else { return modelId }
+        let suffix = modelId.suffix(5)
+        // Match whisper.cpp: -q?_? (e.g. -q5_0, -q8_0)
+        if suffix.first == "-",
+            suffix.dropFirst().first == "q",
+            suffix.dropFirst(3).first == "_"
+        {
+            return String(modelId.dropLast(5))
+        }
+        return modelId
+    }
+
+    /// HF repo filename for the encoder zip (`ggml-<base>-encoder.mlmodelc.zip`).
+    public static func encoderZipRemoteName(for modelId: String) -> String {
+        "ggml-\(encoderBaseId(for: modelId))-encoder.mlmodelc.zip"
+    }
+
+    /// Finds the encoder zip sibling for `modelId`, if published on the repo.
+    public static func encoderZipSibling(
+        for modelId: String,
+        in siblings: [HuggingFaceHub.HFSibling]
+    ) -> HuggingFaceHub.HFSibling? {
+        let name = encoderZipRemoteName(for: modelId)
+        return siblings.first { $0.rfilename == name }
+    }
+
+    /// `true` when the Core ML encoder bundle directory exists.
+    public static func isEncoderInstalled(modelId: String) -> Bool {
+        SuperscribeFS.isExistingDirectory(at: encoderInstallPath(for: modelId))
     }
 
     // MARK: - Pure helpers (testable)
@@ -64,13 +114,12 @@ extension WhisperBackend: ModelRegistry {
                 repoURL: repoURL
             )
         }
-        .sorted { $0.id < $1.id }
+        .sortedById()
     }
 
     // MARK: - Private
 
     static func whisperCacheDirectory() -> URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("superscribe/whisper", isDirectory: true)
+        SuperscribePaths.whisperModelCacheDirectory()
     }
 }

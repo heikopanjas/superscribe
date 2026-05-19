@@ -31,7 +31,7 @@ superscribe run \
 | Name | Flag | Default model | Notes |
 |---|---|---|---|
 | Parakeet (FluidAudio) | `parakeet` | `v3` | CoreML, Neural Engine, fast |
-| whisper.cpp | `whisper.cpp` | `large-v3-turbo` | Metal GPU, GGML binary |
+| whisper.cpp | `whisper.cpp` | `large-v3-turbo` | ANE encoder + Metal decoder (GGML `.bin`) |
 | Apple Speech | `apple-speech` | — | Reserved, not yet implemented |
 
 Parakeet is the default backend. Switch with `--backend whisper.cpp` or set a permanent default:
@@ -66,7 +66,7 @@ Model storage locations:
 | Backend | Location |
 |---|---|
 | Parakeet | `~/Library/Application Support/FluidAudio/Models/<name>/` |
-| whisper.cpp | `~/Library/Caches/superscribe/whisper/<name>.bin` |
+| whisper.cpp | `~/Library/Caches/superscribe/whisper/<name>.bin` and `<base>-encoder.mlmodelc/` (ANE; auto-downloaded with the `.bin`) |
 
 ## Subcommands
 
@@ -235,7 +235,9 @@ The xcframework is not included in the repository (it is gitignored). Build it o
 ./_scripts/build-whisper.sh
 ```
 
-The script downloads whisper.cpp v1.7.5, compiles it with CMake/Ninja targeting `arm64` with Metal GPU support, and produces `whisper-build/whisper.xcframework`. Re-running is a no-op if the xcframework already exists. To rebuild from scratch, delete `whisper-build/` and re-run.
+The script downloads whisper.cpp v1.7.5, compiles it with CMake/Ninja targeting `arm64` with **Metal and Core ML in a single static archive** (one xcframework — do not link a second Core-ML-only build), and produces `whisper-build/whisper.xcframework`. Re-running is a no-op if the xcframework already exists. To rebuild from scratch (required after upgrading superscribe when the whisper build changes), delete `whisper-build/` and re-run.
+
+The first transcription with a newly installed Core ML encoder bundle may be slow while macOS compiles the graph for the Neural Engine.
 
 ## Project structure
 

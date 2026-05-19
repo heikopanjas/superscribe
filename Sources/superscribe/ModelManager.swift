@@ -26,20 +26,12 @@ final class ModelManager {
 
     /// Backend → its `remoteModels()` static call.
     static func remoteModels(for backend: Backend) async throws -> [RemoteModelInfo] {
-        switch backend {
-            case .parakeet: return try await ParakeetBackend.remoteModels()
-            case .whisperCpp: return try await WhisperBackend.remoteModels()
-            case .appleSpeech: return []
-        }
+        try await backend.remoteModels()
     }
 
     /// Backend → its `installedModels()` static call.
     static func installedModels(for backend: Backend) throws -> [InstalledModelInfo] {
-        switch backend {
-            case .parakeet: return try ParakeetBackend.installedModels()
-            case .whisperCpp: return try WhisperBackend.installedModels()
-            case .appleSpeech: return []
-        }
+        try backend.installedModels()
     }
 
     /// If `model` isn't installed for `backend`, look it up in the catalog

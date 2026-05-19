@@ -22,3 +22,13 @@ public protocol Transcriber: Sendable {
         config: TranscriptionConfig
     ) async throws -> SegmentTranscription
 }
+
+extension Transcriber {
+    public static var isAvailable: Bool {
+        #if arch(arm64)
+        return true
+        #else
+        return false
+        #endif
+    }
+}

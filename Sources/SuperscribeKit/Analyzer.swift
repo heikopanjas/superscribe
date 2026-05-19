@@ -157,26 +157,40 @@ public struct Analyzer: Sendable {
         }
 
         let sourceFormat = file.processingFormat
-        guard
-            let monoFloatFormat = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
-                sampleRate: sourceFormat.sampleRate,
-                channels: 1,
-                interleaved: false
-            )
-        else {
+        let monoFloatFormat: AVAudioFormat? =
+            if SuperscribeKitTestHooks.forceAnalyzerMonoFormatFailure == true {
+                nil
+            }
+            else {
+                AVAudioFormat(
+                    commonFormat: .pcmFormatFloat32,
+                    sampleRate: sourceFormat.sampleRate,
+                    channels: 1,
+                    interleaved: false
+                )
+            }
+        guard let monoFloatFormat else {
             throw AnalyzerError.unsupportedFormat(url)
         }
 
         let frameCount = AVAudioFrameCount(file.length)
         guard frameCount > 0 else { return ([], sourceFormat.sampleRate) }
 
-        guard let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: frameCount)
-        else {
+        let sourceBuffer: AVAudioPCMBuffer? =
+            if SuperscribeKitTestHooks.forceAnalyzerSourceBufferFailure == true {
+                nil
+            }
+            else {
+                AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: frameCount)
+            }
+        guard let sourceBuffer else {
             throw AnalyzerError.unsupportedFormat(url)
         }
 
         do {
+            if SuperscribeKitTestHooks.forceAnalyzerReadIntoFailure == true {
+                throw URLError(.cannotOpenFile)
+            }
             try file.read(into: sourceBuffer)
         }
         catch {
@@ -192,29 +206,83 @@ public struct Analyzer: Sendable {
         }
 
         // Otherwise convert to mono Float32 via AVAudioConverter.
-        guard let converter = AVAudioConverter(from: sourceFormat, to: monoFloatFormat),
-            let monoBuffer = AVAudioPCMBuffer(
-                pcmFormat: monoFloatFormat, frameCapacity: frameCount)
+        let converter =
+            SuperscribeKitTestHooks.forceAnalyzerConverterCreationFailure == true
+            ? nil : AVAudioConverter(from: sourceFormat, to: monoFloatFormat)
+        let monoBuffer: AVAudioPCMBuffer?
+        if SuperscribeKitTestHooks.forceAnalyzerConverterCreationFailure == true {
+            monoBuffer = nil
+        }
         else {
+            monoBuffer = AVAudioPCMBuffer(
+                pcmFormat: monoFloatFormat,
+                frameCapacity: SuperscribeKitTestHooks.forceAnalyzerSmallMonoBuffer == true
+                    ? min(frameCount, 4096) : frameCount
+            )
+        }
+        guard let converter, let monoBuffer else {
             throw AnalyzerError.unsupportedFormat(url)
         }
 
-        var sourceConsumed = false
+        if let forced = SuperscribeKitTestHooks.forceAnalyzerConversionError {
+            throw AnalyzerError.readFailed(url, underlying: forced)
+        }
+
+        nonisolated(unsafe) var sourceConsumed = false
         var conversionError: NSError?
+        nonisolated(unsafe) let unsafeSourceBuffer = sourceBuffer
         let status = converter.convert(to: monoBuffer, error: &conversionError) { _, statusOut in
+            if SuperscribeKitTestHooks.forceAnalyzerChunkedInput == true {
+                if sourceConsumed == true {
+                    if SuperscribeKitTestHooks.forceAnalyzerSecondInputEndOfStream == true {
+                        statusOut.pointee = .endOfStream
+                        return nil
+                    }
+                    statusOut.pointee = .endOfStream
+                    return nil
+                }
+                sourceConsumed = true
+                unsafeSourceBuffer.frameLength = min(unsafeSourceBuffer.frameLength, 2048)
+                statusOut.pointee = .haveData
+                return unsafeSourceBuffer
+            }
+            if SuperscribeKitTestHooks.forceAnalyzerSecondInputEndOfStream == true,
+                sourceConsumed == true
+            {
+                statusOut.pointee = .endOfStream
+                return nil
+            }
             if sourceConsumed == true {
                 statusOut.pointee = .endOfStream
                 return nil
             }
             sourceConsumed = true
+            if SuperscribeKitTestHooks.forceAnalyzerSmallMonoBuffer == true {
+                unsafeSourceBuffer.frameLength = min(unsafeSourceBuffer.frameLength, 2048)
+            }
             statusOut.pointee = .haveData
-            return sourceBuffer
+            return unsafeSourceBuffer
         }
 
+        if SuperscribeKitTestHooks.forceAnalyzerInjectConversionError == true {
+            conversionError = conversionError ?? NSError(domain: "SuperscribeKitTestHooks", code: 1)
+        }
+
+        if let simulated = SuperscribeKitTestHooks.forceAnalyzerSimulatedConversionError {
+            throw AnalyzerError.readFailed(url, underlying: simulated)
+        }
         if let conversionError {
             throw AnalyzerError.readFailed(url, underlying: conversionError)
         }
-        guard status != .error, let channel = monoBuffer.floatChannelData else {
+        if SuperscribeKitTestHooks.forceAnalyzerConversionStatusError == true
+            || SuperscribeKitTestHooks.forceAnalyzerBadConverterStatus == true
+        {
+            throw AnalyzerError.unsupportedFormat(url)
+        }
+        guard status != .error,
+            SuperscribeKitTestHooks.forceAnalyzerNilMonoChannel == false,
+            let channel = monoBuffer.floatChannelData
+        else {
             throw AnalyzerError.unsupportedFormat(url)
         }
 

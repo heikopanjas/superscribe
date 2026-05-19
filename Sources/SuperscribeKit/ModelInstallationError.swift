@@ -31,8 +31,8 @@ public enum ModelInstallationError: Error, CustomStringConvertible, Sendable {
                     """
             case .insufficientDiskSpace(let need, let have, let path):
                 return """
-                    Insufficient disk space at \(path.path): need \(formatBytesShort(need)), \
-                    have \(formatBytesShort(have)) (quota-aware free).
+                    Insufficient disk space at \(path.path): need \(ByteFormatting.format(need)), \
+                    have \(ByteFormatting.format(have)) (quota-aware free).
                     """
             case .downloadFailed(let url, let underlying):
                 return "Download failed for \(url.absoluteString): \(underlying)"
@@ -53,13 +53,4 @@ extension Backend {
             case .appleSpeech: return "Apple Speech"
         }
     }
-}
-
-/// Compact byte formatter used in error messages (avoids importing the CLI helper).
-private func formatBytesShort(_ bytes: Int64) -> String {
-    let v = Double(bytes)
-    if v >= 1_073_741_824 { return String(format: "%.1f GiB", v / 1_073_741_824) }
-    if v >= 1_048_576 { return String(format: "%.1f MiB", v / 1_048_576) }
-    if v >= 1_024 { return String(format: "%.1f KiB", v / 1_024) }
-    return "\(bytes) B"
 }

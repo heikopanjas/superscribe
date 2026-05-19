@@ -4,6 +4,10 @@
 # Requirements: cmake, ninja  (brew install cmake ninja)
 # Output:       whisper-build/whisper.xcframework  (gitignored)
 #
+# Metal (GGML) and Core ML (ANE encoder) are enabled in a single CMake configure
+# and merged into one static archive. Do not link a second Core-ML-only build
+# alongside this xcframework — that causes duplicate symbols.
+#
 # Idempotent: re-running when the xcframework already exists is a no-op.
 # To force a rebuild, delete whisper-build/ and re-run.
 
@@ -56,7 +60,8 @@ else
 fi
 
 # ── cmake configure ────────────────────────────────────────────────────────────
-echo "==> Configuring (CMake + Ninja, arm64, Release)..."
+# Metal + Core ML in one tree (see upstream build-xcframework.sh combine_static_libraries).
+echo "==> Configuring (CMake + Ninja, arm64, Release, Metal + Core ML)..."
 cmake -B "$BUILD_DIR" -S "$SRC_DIR" \
     -G Ninja \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
@@ -64,6 +69,8 @@ cmake -B "$BUILD_DIR" -S "$SRC_DIR" \
     -DBUILD_SHARED_LIBS=OFF \
     -DGGML_METAL=ON \
     -DGGML_METAL_EMBED_LIBRARY=ON \
+    -DWHISPER_COREML=1 \
+    -DWHISPER_COREML_ALLOW_FALLBACK=1 \
     -DWHISPER_BUILD_EXAMPLES=OFF \
     -DWHISPER_BUILD_TESTS=OFF \
     -DWHISPER_BUILD_SERVER=OFF \
@@ -77,17 +84,29 @@ cmake --build "$BUILD_DIR" --config Release
 # ── combine static libs ────────────────────────────────────────────────────────
 echo "==> Combining static libraries..."
 
-# Collect all .a files produced by the build (whisper + ggml family).
-mapfile -t LIBS < <(find "$BUILD_DIR" \
-    \( -name "libwhisper.a" -o -name "libggml*.a" \) \
-    | sort)
+find_lib() {
+    local name="$1"
+    local path
+    path="$(find "$BUILD_DIR" -name "$name" -print -quit)"
+    if [[ -z "$path" ]]; then
+        echo "error: $name not found under $BUILD_DIR"
+        exit 1
+    fi
+    echo "$path"
+}
 
-if [[ ${#LIBS[@]} -eq 0 ]]; then
-    echo "error: no .a files found under $BUILD_DIR"
-    exit 1
-fi
+# Order matches upstream whisper.cpp build-xcframework.sh (macOS arm64).
+LIBS=(
+    "$(find_lib libwhisper.a)"
+    "$(find_lib libggml.a)"
+    "$(find_lib libggml-base.a)"
+    "$(find_lib libggml-cpu.a)"
+    "$(find_lib libggml-metal.a)"
+    "$(find_lib libggml-blas.a)"
+    "$(find_lib libwhisper.coreml.a)"
+)
 
-echo "  Found:"
+echo "  Merging:"
 for lib in "${LIBS[@]}"; do
     echo "    $lib"
 done
@@ -96,8 +115,6 @@ done
 libtool -static -o "$COMBINED_LIB" "${LIBS[@]}" 2>/dev/null
 
 # ── merge headers ─────────────────────────────────────────────────────────────
-# whisper.h includes ggml.h and ggml-cpu.h from ggml/include/ — combine both
-# header directories so SPM can resolve all transitive includes.
 HEADERS_MERGED="$BUILD_ROOT/headers"
 rm -rf "$HEADERS_MERGED"
 mkdir -p "$HEADERS_MERGED"
@@ -112,7 +129,6 @@ xcodebuild -create-xcframework \
     -output "$XCFW_DIR"
 
 # ── write module.modulemap ─────────────────────────────────────────────────────
-# SPM needs a modulemap adjacent to the headers so `import whisper` works.
 HEADERS_DIR="$(find "$XCFW_DIR" -type d -name "Headers" | head -1)"
 if [[ -z "$HEADERS_DIR" ]]; then
     echo "error: could not locate Headers/ inside $XCFW_DIR"
@@ -126,7 +142,7 @@ module whisper {
 }
 MODULEMAP
 
-# ── done ───────────────────────────────────────────────────────────────────────
+# ── done ───────────────────────────────────────────────────────
 echo ""
 echo "Done. whisper.xcframework built at:"
 echo "  $XCFW_DIR"

@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-05-19 (v0.6.2 whisper perf + download progress)
+**Last updated:** 2026-05-19 (v0.7.6 — 100% SuperscribeKit line coverage)
 
 <!-- {mission} -->
 
@@ -11,7 +11,7 @@
 Two on-device ASR backends are supported, both Apple Silicon only:
 
 - **Parakeet** (default) — FluidAudio CoreML / Apple Neural Engine. Fast, low power.
-- **whisper.cpp** — GGML models with Metal GPU acceleration. Higher accuracy, broader language coverage.
+- **whisper.cpp** — GGML models; encoder on ANE via Core ML when the encoder bundle is installed, Metal fallback otherwise; decoder on Metal. Higher accuracy, broader language coverage.
 
 ## Technology Stack
 
@@ -157,6 +157,63 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-05-19 (v0.7.6 — 100% SuperscribeKit line coverage gate)
+
+- **Coverage gate passes.** `_scripts/coverage.sh --run-tests` reports **100.00%** SuperscribeKit line coverage; **307 tests** in 57 suites under `-strict-concurrency=complete` and `--no-parallel`.
+- **Tier 4 gap tests.** `FinalLineCoverageGapTests` + `WhisperEncoderInstallerNetworkTests` cover nil-coalescing branches (manifest load failures, HF download totals, encoder zip size nil, Parakeet registry edge cases, `SuperscribeFS` listing failures).
+- **Test hooks.** `SuperscribeKitTestHooks` adds `forceContentsOfDirectoryFailure`, `forceUnzipInvalidStderr`, `forceEncoderBundleEnumeratorNil`. `WhisperEncoderInstaller.decodeUnzipStderr(raw:)` extracted for branch coverage; `WhisperBackend` uses named `suppressLibraryLog` C callback + `invokeLogSuppressorsForTesting()`.
+- **ModelDownloader.** `knownTotal` reduce uses force-unwrap after `allSatisfy` (drops unreachable `?? 0` in closure).
+
+### 2026-05-19 (v0.7.5 — SuperscribeKit coverage tests)
+
+- **`ModelInstaller.install(session:)`.** Optional `URLSession` argument (default `.shared`) threaded through downloads and `WhisperEncoderInstaller` so tests use `URLSession.mocked()` without global protocol registration.
+- **`TestHelpers.withTempDirectory` async overload.** Supports `async throws` bodies used by downloader/installer network tests.
+- **`ParakeetBackend.ensureLoaded`.** Fixed missing `return` before `loader.get { … }` (compile regression).
+- **New test files (Swift Testing, `@testable`, explicit bool checks):** `MockURLSession.swift`, `UserConfigTests`, `DownloadProgressTrackerTests`, `ParakeetBackendTests`, `WhisperBackendTests`, `HuggingFaceHubNetworkTests`, `ModelDownloaderNetworkTests`, `ModelInstallerInstallTests`, `WhisperEncoderInstallerNetworkTests`, `IntermediateTranscriptTests`. Whisper integration test guards on `medium.bin`; Parakeet missing-model test guards when `tdt-ja` is installed.
+
+### 2026-05-19 (v0.7.4 — Tier 3 DRY refactor + tests)
+
+- **TestHelpers.swift.** Shared `makeTempDir`, `withTempDirectory`, `makeTempSineWAV`, `runMockPipeline`, and `MockTranscriber`; migrated Pipeline, ConvertedAudioCache, ModelInstaller, and CatalogStore tests.
+- **TrackInputScanning.** Extracted `audioExtensions` + directory scan/sort/map from `TranscribeCommand.runCreateInput`; `TrackInputTests` cover filter, sort, speaker keys.
+- **Backend resolution unified.** `BackendManager.resolveBackend(cliBackend:config:)` replaces `ModelCommand.resolvedBackend`; optional `config` param on `resolveBackendAndModel` for tests. `BackendManagerTests` cover CLI > config > built-in priority.
+- **formatAge moved.** From private `CacheCommand` helper to `Utilities.swift` alongside `formatDate`; `FormatAgeTests` added.
+- **Test cleanup.** Removed duplicate `WhisperRegistryTests.installPathUsesCacheDirectory`; fixed all `try! #require` to `throws` + `try #require`. 133 tests pass.
+
+### 2026-05-19 (v0.7.3 — Tier 2 DRY refactor + tests)
+
+- **`SuperscribeFS`.** `URL+SuperscribeFS.swift`: staging URLs, directory/file checks, `atomicReplace`, Core ML bundle detection.
+- **`SuperscribePaths`.** Named accessors for all five intentional cache/config roots (not unified).
+- **`ConcurrencyHelpers.withBoundedThrowingTaskGroup`.** Shared bounded concurrency for `ModelDownloader`, `Pipeline`, and Parakeet repo fetches.
+- **`DownloadProgressTracker` + `DownloadProgressReporting`.** Extracted from `ModelDownloader`; encoder install uses shared progress tick helper.
+- **`ProgressReporting.throttleInterval`.** Single ~10 Hz constant for download + conversion reporters.
+- **`PipelineConfig.backend`.** Metadata now records the actual backend (was hardcoded `.parakeet`).
+- **Empty-samples guard** moved from backends into `Pipeline.transcribeSegments`.
+- **Default `Transcriber.isAvailable`** on Apple Silicon via protocol extension; backends drop duplicate `#if arch(arm64)`.
+- **CLI utilities.** `assertMutuallyExclusive`, `confirm`, `printErr` in `Utilities.swift`; used by `ModelCommand` and `CacheCommand`.
+- **Tests.** 30 new tests across `FilesystemHelpersTests`, `SuperscribePathsTests`, `CLIUtilitiesTests`, `HTTPValidationTests`, `ConcurrencyHelpersTests`, `SortingTests`, `WhisperEncoderInstallerTests`, `TranscriberAvailabilityTests`; extended `PipelineTests` and `ParakeetRegistryTests` (117 total).
+
+### 2026-05-19 (v0.7.2 — Tier 1 DRY refactor + tests)
+
+- **`PipelineRunner`.** Shared transcribe bootstrap for `transcribe` and `run` with injectable `Dependencies` for tests.
+- **`TokenAccumulator`.** Unified sub-word → word merging for Parakeet and Whisper backends (`Backends/TokenMerging.swift`).
+- **`Backend` dispatch.** `BackendDispatch.swift` centralizes `installPath`, `remoteModels`, `installedModels`, `makeTranscriber`, and `registryDefaultModelId`; `BackendManager`/`ModelManager`/`ModelInstaller.installPath` delegate to it.
+- **`LoadOnce` actor.** Replaces per-backend `loadingTask` coalescing; clears in-flight task on failure for retry. `ModelInstallSupport.requireInstalled` shared preflight.
+- **`ModelDownloader.streamBytes`.** Single async byte-stream writer for `downloadOne` and `downloadRepoFile`.
+- **Shared Kit helpers.** `ByteFormatting`, `JSONCoding` (catalog/config/transcript encoders), `HTTPValidation.isSuccess`.
+- **CLI helpers.** `saveIntermediateTranscript`, `printTranscribeSummary`, `defaultIntermediateOutputPath`, `clearProgressLine` in `Utilities.swift`.
+- **Tests.** 33 new tests across `TokenMergingTests`, `PipelineRunnerTests`, `BackendDispatchTests`, `ModelDownloaderTests`, `JSONCodingTests`, `LoadOnceTests`, `CLIHelpersTests`, `ByteFormattingTests` (87 total).
+
+### 2026-05-19 (v0.7.1 — coverage infrastructure, Tier 0 DRY refactor)
+
+- **`_scripts/coverage.sh`.** Reports SuperscribeKit line coverage via `llvm-cov`; exits non-zero when below `COVERAGE_MIN` (default 100). Run `swift test --enable-code-coverage` first, or pass `--run-tests`. Baseline recorded in `_scripts/coverage-baseline.txt` (43.32% line coverage as of 2026-05-19).
+- **Test target links CLI.** `superscribeTests` now depends on `superscribe` executable so future CLI helper tests can `@testable import superscribe`.
+
+### 2026-05-19 (v0.7.0 — whisper Core ML encoder / ANE)
+
+- **Unified whisper xcframework (Metal + Core ML).** `_scripts/build-whisper.sh` enables `WHISPER_COREML=1` and `WHISPER_COREML_ALLOW_FALLBACK=1` in the same CMake configure as `GGML_METAL`; merges `libwhisper.coreml.a` into the single static archive. `Package.swift` links `CoreML` and `Foundation`. Must rebuild `whisper-build/` after pull — never link a second Core-ML-only library.
+- **Encoder bundle install.** `WhisperEncoderInstaller` auto-downloads `ggml-<base>-encoder.mlmodelc.zip` from Hugging Face alongside the `.bin`; installed as `{cache}/<base>-encoder.mlmodelc/`. Quantized model ids strip `-q5_0` etc. for encoder base name (matches whisper.cpp path logic).
+- **Metal preserved.** Decoder and encoder fallback remain on Metal/GGML when the Core ML bundle is absent.
 
 ### 2026-05-19 (v0.6.2 — whisper perf + download progress)
 

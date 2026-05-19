@@ -8,16 +8,31 @@ import Foundation
 /// Models are downloaded automatically on first use and cached at
 /// `~/.cache/fluidaudio/Models/`.
 public actor ParakeetBackend: Transcriber {
-    private var asrManager: AsrManager?
-    private var models: AsrModels?
+    /// Test hook for `ensureLoaded()` disk path without FluidAudio on disk.
+    nonisolated(unsafe) internal static var testLoadHook: (@Sendable () async throws -> any ParakeetASRSession)?
+    /// When `true`, `isAvailable` reports unavailable (for dispatch tests).
+    nonisolated(unsafe) internal static var testForceUnavailable = false
+
+    public nonisolated static var isAvailable: Bool {
+        if testForceUnavailable == true { return false }
+        return true
+    }
+
+    private let loader = LoadOnce<any ParakeetASRSession>()
     private let modelVersion: AsrModelVersion
-    private var loadingTask: Task<AsrManager, any Error>?
+    private let injectedSession: (any ParakeetASRSession)?
 
     /// - Parameter model: Model version string. Accepted values:
     ///   `"v3"` (multilingual, default), `"v2"` (English-only),
     ///   `"tdt-ctc-110m"`, `"tdt-ja"`.
     public init(model: String = "v3") {
+        self.init(model: model, injectedSession: nil)
+    }
+
+    /// Test-only injection point for `ParakeetASRSession` (skips disk load).
+    internal init(model: String, injectedSession: (any ParakeetASRSession)?) {
         self.modelVersion = Self.parseModelVersion(model)
+        self.injectedSession = injectedSession
     }
 
     private static func parseModelVersion(_ model: String) -> AsrModelVersion {
@@ -28,14 +43,6 @@ public actor ParakeetBackend: Transcriber {
             case "tdt-ja", "tdtja", "ja": return .tdtJa
             default: return .v3
         }
-    }
-
-    public static var isAvailable: Bool {
-        #if arch(arm64)
-        return true
-        #else
-        return false
-        #endif
     }
 
     public nonisolated var capabilities: BackendCapabilities {
@@ -55,10 +62,6 @@ public actor ParakeetBackend: Transcriber {
     ) async throws -> SegmentTranscription {
         let manager = try await ensureLoaded()
 
-        guard samples.isEmpty == false else {
-            return SegmentTranscription(segment: segment, words: [])
-        }
-
         // Map config.language to FluidAudio's Language enum.
         let language: Language? = config.language.flatMap { Language(rawValue: $0) }
 
@@ -72,49 +75,55 @@ public actor ParakeetBackend: Transcriber {
             language: language
         )
 
-        return mapResult(asrResult, segment: segment)
+        return ParakeetResultMapping.map(asrResult, segment: segment)
     }
 
     // MARK: - Private
 
-    private func ensureLoaded() async throws -> AsrManager {
-        if let manager = asrManager {
-            return manager
+    private func ensureLoaded() async throws -> any ParakeetASRSession {
+        if let injectedSession {
+            return injectedSession
         }
-        // Coalesce concurrent callers onto a single load task
-        // to avoid actor-reentrancy double-loads.
-        if let task = loadingTask {
-            return try await task.value
-        }
-        let task = Task { [self] () async throws -> AsrManager in
-            // Resolve install dir from our short id and require it to exist.
-            // Install pipeline is responsible for downloads.
+        return try await loader.get { [modelVersion] in
+            if let testLoadHook = Self.testLoadHook {
+                return try await testLoadHook()
+            }
             let modelId = ParakeetBackend.shortIdForVersion(modelVersion)
             let installDir = ParakeetBackend.installPath(for: modelId)
-            guard FileManager.default.fileExists(atPath: installDir.path) == true else {
-                throw ModelInstallationError.modelNotInstalled(
-                    model: modelId, backend: .parakeet
-                )
-            }
+            try ModelInstallSupport.requireInstalled(
+                at: installDir, modelId: modelId, backend: .parakeet
+            )
             FileHandle.standardError.write(
                 Data("Loading Parakeet TDT \(modelVersion) models from local cache...\n".utf8)
             )
-            // Note: FluidAudio's [INFO] log output is only emitted in DEBUG
-            // builds (AppLogger uses #if DEBUG to gate console writes), so no
-            // suppression is needed here.
-            let loadedModels = try await AsrModels.load(
-                from: installDir, version: modelVersion
+            if let afterInstalled = SuperscribeKitTestHooks.parakeetLoadAfterInstalledCheck {
+                return try await afterInstalled()
+            }
+            if let materialize = SuperscribeKitTestHooks.parakeetMaterializeSession {
+                return try await materialize(installDir, modelVersion)
+            }
+            return try await Self.materializeFromDisk(
+                installDir: installDir,
+                modelVersion: modelVersion
             )
-            let mgr = AsrManager()
-            try await mgr.loadModels(loadedModels)
-            self.models = loadedModels
-            self.asrManager = mgr
-            return mgr
         }
-        loadingTask = task
-        let manager = try await task.value
-        loadingTask = nil
-        return manager
+    }
+
+    /// Loads FluidAudio ASR models from `installDir`. Separated for coverage of the
+    /// disk-load path in unit tests (expects failure when bundles are absent).
+    internal static func materializeFromDisk(
+        installDir: URL,
+        modelVersion: AsrModelVersion
+    ) async throws -> any ParakeetASRSession {
+        FileHandle.standardError.write(
+            Data("Loading Parakeet TDT \(modelVersion) models from local cache...\n".utf8)
+        )
+        let loadedModels = try await AsrModels.load(
+            from: installDir, version: modelVersion
+        )
+        let mgr = AsrManager()
+        try await mgr.loadModels(loadedModels)
+        return mgr as any ParakeetASRSession
     }
 
     private static func shortIdForVersion(_ v: AsrModelVersion) -> String {
@@ -125,83 +134,5 @@ public actor ParakeetBackend: Transcriber {
             case .tdtJa: return "tdt-ja"
             default: return "v3"
         }
-    }
-
-    /// Map FluidAudio's `ASRResult` to our `SegmentTranscription`.
-    private nonisolated func mapResult(
-        _ asr: ASRResult,
-        segment: SpeechSegment
-    ) -> SegmentTranscription {
-        let words: [TimedWord]
-
-        if let timings = asr.tokenTimings, timings.isEmpty == false {
-            // Merge sub-word tokens into word-level timings.
-            words = mergeTokensIntoWords(timings, segmentOffset: segment.start)
-        }
-        else {
-            // No token-level timings — emit entire text as a single word
-            // spanning the segment.
-            let text = asr.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.isEmpty == true {
-                words = []
-            }
-            else {
-                words = [TimedWord(text: text, start: segment.start, end: segment.end)]
-            }
-        }
-
-        return SegmentTranscription(segment: segment, words: words)
-    }
-
-    /// Merge Parakeet's sub-word `TokenTiming`s (SentencePiece ▁-prefixed)
-    /// into whole-word `TimedWord`s.
-    private nonisolated func mergeTokensIntoWords(
-        _ timings: [TokenTiming],
-        segmentOffset: TimeInterval
-    ) -> [TimedWord] {
-        var words: [TimedWord] = []
-        var currentText = ""
-        var wordStart: TimeInterval = 0
-        var wordEnd: TimeInterval = 0
-
-        for timing in timings {
-            let token = timing.token
-
-            // SentencePiece word boundary: leading ▁ means new word.
-            let isNewWord = token.hasPrefix("▁") || token.hasPrefix(" ")
-
-            if isNewWord == true && currentText.isEmpty == false {
-                words.append(
-                    TimedWord(
-                        text: currentText,
-                        start: wordStart + segmentOffset,
-                        end: wordEnd + segmentOffset
-                    ))
-                currentText = ""
-            }
-
-            let cleaned =
-                token
-                .replacingOccurrences(of: "▁", with: "")
-                .replacingOccurrences(of: " ", with: "")
-
-            if currentText.isEmpty == true {
-                wordStart = timing.startTime
-            }
-            currentText += cleaned
-            wordEnd = timing.endTime
-        }
-
-        // Flush last word.
-        if currentText.isEmpty == false {
-            words.append(
-                TimedWord(
-                    text: currentText,
-                    start: wordStart + segmentOffset,
-                    end: wordEnd + segmentOffset
-                ))
-        }
-
-        return words
     }
 }

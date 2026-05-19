@@ -15,57 +15,29 @@ struct RunCommand: AsyncParsableCommand {
     var keepIntermediate: Bool = false
 
     mutating func run() async throws {
-        let (backend, model) = BackendManager.resolveBackendAndModel(
-            cliBackend: transcribeOptions.backend, cliModel: transcribeOptions.model
-        )
-        FileHandle.standardError.write(
-            Data("Using backend: \(backend.rawValue), model: \(model)\n".utf8)
-        )
-        try await ModelManager.ensureModelInstalled(model, backend: backend)
-        let transcriber = try BackendManager.makeTranscriber(backend: backend, model: model)
-
-        let pipelineConfig = PipelineConfig(
-            tracks: transcribeOptions.trackInputs,
-            transcriptionConfig: transcribeOptions.transcriptionConfig(model: model),
-            analyzerConfig: transcribeOptions.analyzerConfig,
-            session: nil
+        let opts = transcribeOptions
+        let result = try await PipelineRunner.run(
+            options: PipelineRunOptions(
+                cliBackend: opts.backend,
+                cliModel: opts.model,
+                tracks: opts.trackInputs,
+                transcriptionConfig: { model in opts.transcriptionConfig(model: model) },
+                analyzerConfig: opts.analyzerConfig,
+                useCache: opts.noCache == false
+            )
         )
 
-        let audioCache: ConvertedAudioCache? = transcribeOptions.noCache ? nil : ConvertedAudioCache()
-        let conversionReporter = ConversionProgressReporter()
-
-        let pipeline = TranscribePipeline(
-            transcriber: transcriber,
-            config: pipelineConfig,
-            audioCache: audioCache,
-            onProgress: makeProgressHandler(),
-            onConversionProgress: conversionReporter.handler()
-        )
-
-        let transcribeStart = Date()
-        let transcript = try await pipeline.run()
-        let transcribeDuration = Date().timeIntervalSince(transcribeStart)
-
-        // Clear progress line.
-        FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
-
-        let segCount = transcript.tracks.reduce(0) { $0 + $1.segments.count }
-        let trackCount = transcript.tracks.count
-        FileHandle.standardError.write(
-            Data("Transcribed \(segCount) segments from \(trackCount) track(s) in \(formatDuration(transcribeDuration))\n".utf8)
-        )
+        printTranscribeSummary(transcript: result.transcript, duration: result.duration)
 
         if keepIntermediate == true {
-            let data = try IntermediateTranscript.jsonEncoder().encode(transcript)
-            let outputPath =
-                transcribeOptions.output.isEmpty
-                ? "transcript.superscribe.\(backend.rawValue).json"
-                : transcribeOptions.output
-            let outputURL = URL(fileURLWithPath: outputPath)
-            try data.write(to: outputURL)
+            let outputPath = defaultIntermediateOutputPath(
+                backend: result.backend,
+                explicitOutput: transcribeOptions.output
+            )
+            try saveIntermediateTranscript(result.transcript, to: outputPath)
         }
 
-        let output = MergeCommand.renderMerged(transcript, options: mergeOptions)
+        let output = MergeCommand.renderMerged(result.transcript, options: mergeOptions)
 
         if let path = mergeOptions.mergeOutput {
             try output.write(toFile: path, atomically: true, encoding: .utf8)

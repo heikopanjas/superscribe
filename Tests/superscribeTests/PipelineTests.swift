@@ -1,84 +1,21 @@
-import AVFoundation
 import Foundation
 import Testing
 
 @testable import SuperscribeKit
 
-// MARK: - Mock backend
-
-/// A deterministic transcriber for testing: returns one word per segment
-/// with text "mock-word".
-struct MockTranscriber: Transcriber {
-    static var isAvailable: Bool { true }
-
-    var capabilities: BackendCapabilities {
-        BackendCapabilities(
-            requiredAudioFormat: .asr16kMono,
-            displayName: "Mock",
-            defaultModelId: "mock"
-        )
-    }
-
-    func transcribe(
-        samples: [Float],
-        segment: SpeechSegment,
-        config: TranscriptionConfig
-    ) async throws -> SegmentTranscription {
-        let word = TimedWord(
-            text: "mock-word",
-            start: segment.start,
-            end: segment.end
-        )
-        return SegmentTranscription(segment: segment, words: [word])
-    }
-}
-
-// MARK: - Pipeline tests
-
 @Suite("Pipeline")
 struct PipelineTests {
-    /// Writes a short sine-wave WAV to a temp file and returns its URL.
-    private func makeTempAudio(name: String, durationSeconds: Double = 1.0) throws -> URL {
-        let sampleRate: Double = 48_000
-        let frameCount = AVAudioFrameCount(sampleRate * durationSeconds)
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
-        buffer.frameLength = frameCount
-        let floats = buffer.floatChannelData![0]
-        let freq: Float = 440.0
-        for i in 0 ..< Int(frameCount) {
-            floats[i] = sinf(2.0 * .pi * freq * Float(i) / Float(sampleRate)) * 0.5
-        }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(name)-\(UUID().uuidString).wav")
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
-        return url
-    }
-
     @Test("pipeline produces intermediate transcript from two tracks")
     func twoTracks() async throws {
-        let aliceURL = try makeTempAudio(name: "Alice", durationSeconds: 2.0)
+        let aliceURL = try TestHelpers.makeTempSineWAV(name: "Alice", durationSeconds: 2.0)
         defer { try? FileManager.default.removeItem(at: aliceURL) }
-        let bobURL = try makeTempAudio(name: "Bob", durationSeconds: 2.0)
+        let bobURL = try TestHelpers.makeTempSineWAV(name: "Bob", durationSeconds: 2.0)
         defer { try? FileManager.default.removeItem(at: bobURL) }
 
-        let config = PipelineConfig(
-            tracks: [
-                TrackInput(speaker: "Alice", file: aliceURL),
-                TrackInput(speaker: "Bob", file: bobURL)
-            ],
-            transcriptionConfig: TranscriptionConfig(
-                language: "en", model: "test", prompt: nil
-            ),
-            analyzerConfig: AnalyzerConfig()
-        )
-
-        let pipeline = TranscribePipeline(
-            transcriber: MockTranscriber(),
-            config: config
-        )
-        let transcript = try await pipeline.run()
+        let transcript = try await TestHelpers.runMockPipeline(tracks: [
+            TrackInput(speaker: "Alice", file: aliceURL),
+            TrackInput(speaker: "Bob", file: bobURL)
+        ])
 
         #expect(transcript.version == IntermediateTranscript.currentVersion)
         #expect(transcript.tracks.count == 2)
@@ -98,21 +35,13 @@ struct PipelineTests {
 
     @Test("intermediate transcript round-trips through JSON")
     func jsonRoundTrip() async throws {
-        let url = try makeTempAudio(name: "Solo", durationSeconds: 1.0)
+        let url = try TestHelpers.makeTempSineWAV(name: "Solo", durationSeconds: 1.0)
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let config = PipelineConfig(
+        let original = try await TestHelpers.runMockPipeline(
             tracks: [TrackInput(speaker: "Solo", file: url)],
-            transcriptionConfig: TranscriptionConfig(
-                language: nil, model: "test", prompt: nil
-            )
+            language: nil
         )
-
-        let pipeline = TranscribePipeline(
-            transcriber: MockTranscriber(),
-            config: config
-        )
-        let original = try await pipeline.run()
 
         let data = try IntermediateTranscript.jsonEncoder().encode(original)
         let decoded = try IntermediateTranscript.jsonDecoder().decode(
@@ -124,6 +53,188 @@ struct PipelineTests {
         #expect(decoded.tracks.first?.speaker == "Solo")
         #expect(decoded.tracks.first?.segments.count == original.tracks.first?.segments.count)
     }
+
+    @Test("pipeline metadata records configured backend")
+    func backendMetadata() async throws {
+        let url = try TestHelpers.makeTempSineWAV(name: "Backend", durationSeconds: 1.0)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let transcript = try await TestHelpers.runMockPipeline(
+            tracks: [TrackInput(speaker: "Solo", file: url)],
+            backend: .whisperCpp,
+            model: "large-v3-turbo"
+        )
+        #expect(transcript.metadata.backend == .whisperCpp)
+        #expect(transcript.metadata.model == "large-v3-turbo")
+    }
+
+    @Test("empty segment samples do not invoke transcriber")
+    func emptySegmentSkipsTranscriber() async throws {
+        let counter = TranscribeCallCounter()
+        let transcriber = CountingTranscriber(counter: counter)
+        let preparer = AudioPreparer(for: transcriber.capabilities)
+        let samples = Array(repeating: Float(0.1), count: 16_000)
+        let segments = [SpeechSegment(start: 0.5, end: 0.5)]
+
+        let pipeline = TranscribePipeline(
+            transcriber: transcriber,
+            config: PipelineConfig(
+                tracks: [TrackInput(speaker: "Solo", file: URL(fileURLWithPath: "/tmp/x.wav"))],
+                backend: .parakeet,
+                transcriptionConfig: TranscriptionConfig(language: "en", model: "test", prompt: nil)
+            )
+        )
+
+        let results = try await pipeline.transcribeSegments(
+            segments,
+            allSamples: samples,
+            preparer: preparer
+        )
+        #expect(results.isEmpty == true)
+        #expect(await counter.count == 0)
+    }
+
+    @Test("silent track is omitted from intermediate transcript")
+    func emptyTrackDropped() async throws {
+        let speechURL = try TestHelpers.makeTempSineWAV(name: "Speech", durationSeconds: 1.0)
+        defer { try? FileManager.default.removeItem(at: speechURL) }
+        let silenceURL = try TestHelpers.makeTempSineWAV(
+            name: "Silence", durationSeconds: 1.0, amplitude: 0.0
+        )
+        defer { try? FileManager.default.removeItem(at: silenceURL) }
+
+        let transcript = try await TestHelpers.runMockPipeline(tracks: [
+            TrackInput(speaker: "Speech", file: speechURL),
+            TrackInput(speaker: "Silence", file: silenceURL)
+        ])
+        #expect(transcript.tracks.count == 1)
+        #expect(transcript.tracks.first?.speaker == "Speech")
+    }
+
+    @Test("progress callbacks advance monotonically across tracks")
+    func progressOrder() async throws {
+        let aliceURL = try TestHelpers.makeTempSineWAV(name: "Alice", durationSeconds: 1.5)
+        defer { try? FileManager.default.removeItem(at: aliceURL) }
+        let bobURL = try TestHelpers.makeTempSineWAV(name: "Bob", durationSeconds: 1.5)
+        defer { try? FileManager.default.removeItem(at: bobURL) }
+
+        let lock = NSLock()
+        nonisolated(unsafe) var ticks: [TranscriptionProgress] = []
+        let pipeline = TranscribePipeline(
+            transcriber: MockTranscriber(),
+            config: TestHelpers.mockPipelineConfig(tracks: [
+                TrackInput(speaker: "Alice", file: aliceURL),
+                TrackInput(speaker: "Bob", file: bobURL)
+            ]),
+            onProgress: { tick in
+                lock.lock()
+                ticks.append(tick)
+                lock.unlock()
+            }
+        )
+        _ = try await pipeline.run()
+
+        #expect(ticks.isEmpty == false)
+        #expect(ticks.last?.overallCompleted == ticks.last?.overallTotal)
+        for (a, b) in zip(ticks, ticks.dropFirst()) {
+            #expect(b.overallCompleted >= a.overallCompleted)
+        }
+    }
+
+    @Test("maxConcurrentTranscriptions bounds parallel segment work")
+    func maxConcurrent() async throws {
+        let depth = ConcurrencyDepthTracker()
+        let transcriber = SlowTranscriber(depth: depth)
+        let preparer = AudioPreparer(for: transcriber.capabilities)
+        let samples = Array(repeating: Float(0.1), count: 64_000)
+        let segments = (0 ..< 4).map {
+            SpeechSegment(start: Double($0) * 0.5, end: Double($0) * 0.5 + 0.4)
+        }
+
+        let pipeline = TranscribePipeline(
+            transcriber: transcriber,
+            config: PipelineConfig(
+                tracks: [TrackInput(speaker: "Solo", file: URL(fileURLWithPath: "/tmp/x.wav"))],
+                transcriptionConfig: TranscriptionConfig(language: "en", model: "test", prompt: nil),
+                maxConcurrentTranscriptions: 1
+            )
+        )
+        _ = try await pipeline.transcribeSegments(
+            segments,
+            allSamples: samples,
+            preparer: preparer
+        )
+        #expect(await depth.peak == 1)
+    }
+}
+
+private struct CountingTranscriber: Transcriber {
+    let counter: TranscribeCallCounter
+
+    var capabilities: BackendCapabilities {
+        BackendCapabilities(
+            requiredAudioFormat: .asr16kMono,
+            displayName: "Counter",
+            defaultModelId: "counter"
+        )
+    }
+
+    func transcribe(
+        samples: [Float],
+        segment: SpeechSegment,
+        config: TranscriptionConfig
+    ) async throws -> SegmentTranscription {
+        await counter.increment()
+        return SegmentTranscription(
+            segment: segment,
+            words: [TimedWord(text: "x", start: segment.start, end: segment.end)]
+        )
+    }
+}
+
+private actor TranscribeCallCounter {
+    private(set) var count = 0
+    func increment() { count += 1 }
+}
+
+private actor ConcurrencyDepthTracker {
+    private(set) var peak = 0
+    private var inFlight = 0
+
+    func entered() {
+        inFlight += 1
+        if inFlight > peak { peak = inFlight }
+    }
+
+    func exited() {
+        inFlight -= 1
+    }
+}
+
+private struct SlowTranscriber: Transcriber {
+    let depth: ConcurrencyDepthTracker
+
+    var capabilities: BackendCapabilities {
+        BackendCapabilities(
+            requiredAudioFormat: .asr16kMono,
+            displayName: "Slow",
+            defaultModelId: "slow"
+        )
+    }
+
+    func transcribe(
+        samples: [Float],
+        segment: SpeechSegment,
+        config: TranscriptionConfig
+    ) async throws -> SegmentTranscription {
+        await depth.entered()
+        try await Task.sleep(for: .milliseconds(50))
+        await depth.exited()
+        return SegmentTranscription(
+            segment: segment,
+            words: [TimedWord(text: "slow", start: segment.start, end: segment.end)]
+        )
+    }
 }
 
 // MARK: - End-to-end merge test
@@ -132,46 +243,16 @@ struct PipelineTests {
 struct EndToEndTests {
     @Test("pipeline + merger produces VTT with both speakers")
     func pipelineToVTT() async throws {
-        let sampleRate: Double = 48_000
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-
-        func writeAudio(name: String, seconds: Double) throws -> URL {
-            let frameCount = AVAudioFrameCount(sampleRate * seconds)
-            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
-            buffer.frameLength = frameCount
-            let floats = buffer.floatChannelData![0]
-            for i in 0 ..< Int(frameCount) {
-                floats[i] = sinf(2.0 * .pi * 440.0 * Float(i) / Float(sampleRate)) * 0.5
-            }
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(name)-\(UUID().uuidString).wav")
-            let file = try AVAudioFile(forWriting: url, settings: format.settings)
-            try file.write(from: buffer)
-            return url
-        }
-
-        let aliceURL = try writeAudio(name: "Alice", seconds: 1.0)
+        let aliceURL = try TestHelpers.makeTempSineWAV(name: "Alice", durationSeconds: 1.0)
         defer { try? FileManager.default.removeItem(at: aliceURL) }
-        let bobURL = try writeAudio(name: "Bob", seconds: 1.0)
+        let bobURL = try TestHelpers.makeTempSineWAV(name: "Bob", durationSeconds: 1.0)
         defer { try? FileManager.default.removeItem(at: bobURL) }
 
-        // Transcribe
-        let pipelineConfig = PipelineConfig(
-            tracks: [
-                TrackInput(speaker: "Alice", file: aliceURL),
-                TrackInput(speaker: "Bob", file: bobURL)
-            ],
-            transcriptionConfig: TranscriptionConfig(
-                language: "en", model: "test", prompt: nil
-            )
-        )
-        let pipeline = TranscribePipeline(
-            transcriber: MockTranscriber(),
-            config: pipelineConfig
-        )
-        let transcript = try await pipeline.run()
+        let transcript = try await TestHelpers.runMockPipeline(tracks: [
+            TrackInput(speaker: "Alice", file: aliceURL),
+            TrackInput(speaker: "Bob", file: bobURL)
+        ])
 
-        // Merge + format
         let merger = Merger()
         let merged = merger.merge(transcript)
         let vtt = VTTFormatter(includeWords: false).render(merged)

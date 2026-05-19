@@ -43,4 +43,42 @@ struct ParakeetRegistryTests {
         #expect(result[0].totalSizeBytes == 123_456_789)
         #expect(result[0].fileCount == 7)
     }
+
+    @Test func fetchRepoSizesCapsConcurrency() async throws {
+        let repos = (0 ..< 8).map { index in
+            HuggingFaceHub.HFRepo(
+                id: "FluidInference/parakeet-repo-\(index)",
+                lastModified: nil
+            )
+        }
+        let gate = InFlightGate()
+        let maxConcurrent = 2
+
+        _ = try await ParakeetBackend.fetchRepoSizes(
+            for: repos,
+            maxConcurrent: maxConcurrent
+        ) { repoId in
+            await gate.enter()
+            defer { Task { await gate.leave() } }
+            try await Task.sleep(for: .milliseconds(25))
+            return HuggingFaceHub.HFRepoInfo(id: repoId, siblings: [])
+        }
+
+        #expect(await gate.peak <= maxConcurrent)
+        #expect(await gate.peak > 1)
+    }
+}
+
+private actor InFlightGate {
+    private(set) var current = 0
+    private(set) var peak = 0
+
+    func enter() {
+        current += 1
+        peak = max(peak, current)
+    }
+
+    func leave() {
+        current -= 1
+    }
 }

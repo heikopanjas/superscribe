@@ -54,8 +54,7 @@ public enum CatalogStore {
     }
 
     static func defaultCacheDirectory() -> URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".cache/superscribe", isDirectory: true)
+        SuperscribePaths.catalogCacheDirectory()
     }
 
     /// Loads the catalog from disk. Returns an empty catalog if the file is
@@ -66,9 +65,7 @@ public enum CatalogStore {
             return Catalog()
         }
         let data = try Data(contentsOf: url)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(Catalog.self, from: data)
+        return try JSONCoding.catalogDecoder().decode(Catalog.self, from: data)
     }
 
     /// Atomically writes the catalog to disk, creating parent directories
@@ -79,10 +76,7 @@ public enum CatalogStore {
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(catalog)
+        let data = try JSONCoding.catalogEncoder().encode(catalog)
         try data.write(to: url, options: .atomic)
     }
 

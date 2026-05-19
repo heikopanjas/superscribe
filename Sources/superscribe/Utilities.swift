@@ -1,3 +1,4 @@
+import ArgumentParser
 import Foundation
 import SuperscribeKit
 
@@ -15,6 +16,59 @@ func makeProgressHandler() -> @Sendable (TranscriptionProgress) -> Void {
     }
 }
 
+func formatBytes(_ bytes: Int64) -> String {
+    ByteFormatting.format(bytes)
+}
+
+func defaultIntermediateOutputPath(backend: Backend, explicitOutput: String) -> String {
+    if explicitOutput.isEmpty == true {
+        return "transcript.superscribe.\(backend.rawValue).json"
+    }
+    return explicitOutput
+}
+
+func saveIntermediateTranscript(_ transcript: IntermediateTranscript, to path: String) throws {
+    let data = try IntermediateTranscript.jsonEncoder().encode(transcript)
+    try data.write(to: URL(fileURLWithPath: path))
+}
+
+func printTranscribeSummary(transcript: IntermediateTranscript, duration: TimeInterval) {
+    let trackCount = transcript.tracks.count
+    let segCount = transcript.tracks.reduce(0) { $0 + $1.segments.count }
+    FileHandle.standardError.write(
+        Data(
+            "Transcribed \(segCount) segments from \(trackCount) track(s) in \(formatDuration(duration))\n"
+                .utf8
+        )
+    )
+}
+
+func clearProgressLine() {
+    FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
+}
+
+func printErr(_ text: String) {
+    FileHandle.standardError.write(Data(text.utf8))
+}
+
+/// Throws when more than one `(name, active)` verb pair is `true`.
+func assertMutuallyExclusive(_ verbs: [(String, Bool)]) throws {
+    let active = verbs.filter(\.1).map(\.0)
+    if active.count > 1 {
+        throw ValidationError(
+            "Only one of \(active.joined(separator: ", ")) may be used at once."
+        )
+    }
+}
+
+/// Reads `[y/N]` from stdin unless `skip` is true.
+func confirm(prompt: String, skip: Bool) -> Bool {
+    if skip == true { return true }
+    printErr(prompt)
+    let answer = readLine(strippingNewline: true)?.lowercased() ?? ""
+    return answer == "y" || answer == "yes"
+}
+
 func formatDuration(_ seconds: TimeInterval) -> String {
     if seconds < 60 {
         return String(format: "%.1fs", seconds)
@@ -30,7 +84,7 @@ final class ConversionProgressReporter: @unchecked Sendable {
     private let lock = NSLock()
     private var lastEmitted: [String: Date] = [:]
     private var lastFraction: [String: Double] = [:]
-    private let throttle: TimeInterval = 0.1
+    private let throttle: TimeInterval = ProgressReporting.throttleInterval
 
     func handler() -> @Sendable (ConversionProgress) -> Void {
         { [weak self] progress in
@@ -65,23 +119,24 @@ final class ConversionProgressReporter: @unchecked Sendable {
 
 // MARK: - Formatting helpers
 
-func formatBytes(_ bytes: Int64) -> String {
-    let units: [(threshold: Double, suffix: String)] = [
-        (1024 * 1024 * 1024, "GiB"),
-        (1024 * 1024, "MiB"),
-        (1024, "KiB")
-    ]
-    let value = Double(bytes)
-    for (threshold, suffix) in units where value >= threshold {
-        return String(format: "%.1f %@", value / threshold, suffix)
-    }
-    return "\(bytes) B"
-}
-
 func formatDate(_ date: Date) -> String {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withFullDate]
     return f.string(from: date)
+}
+
+func formatAge(_ seconds: TimeInterval) -> String {
+    let s = Int(seconds)
+    if s < 60 { return "< 1m ago" }
+    if s < 3600 { return "\(s / 60)m ago" }
+    if s < 86400 {
+        let h = s / 3600
+        let m = (s % 3600) / 60
+        return m > 0 ? "\(h)h \(m)m ago" : "\(h)h ago"
+    }
+    let d = s / 86400
+    let h = (s % 86400) / 3600
+    return h > 0 ? "\(d)d \(h)h ago" : "\(d)d ago"
 }
 
 extension String {

@@ -7,10 +7,7 @@ import Testing
 struct ModelInstallerTests {
 
     private func tempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("superscribe-installer-tests-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        try TestHelpers.makeTempDir(prefix: "superscribe-installer-tests")
     }
 
     private func makeMlmodelc(at dir: URL) throws {
@@ -60,6 +57,28 @@ struct ModelInstallerTests {
             requiredBytes: 0,
             installPath: dir.appendingPathComponent("model")
         )
+    }
+
+    @Test func removeInstalledWhisperDeletesBinAndEncoderBundle() throws {
+        let modelId = "test-rm-\(UUID().uuidString.prefix(8))"
+        let bin = WhisperBackend.installPath(for: String(modelId))
+        let encoder = WhisperBackend.encoderInstallPath(for: String(modelId))
+        defer {
+            try? FileManager.default.removeItem(at: bin)
+            try? FileManager.default.removeItem(at: encoder)
+        }
+        try FileManager.default.createDirectory(
+            at: bin.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(atPath: bin.path, contents: Data("x".utf8))
+        try FileManager.default.createDirectory(at: encoder, withIntermediateDirectories: true)
+
+        let paths = try ModelInstaller.removalPaths(modelId: String(modelId), backend: .whisperCpp)
+        #expect(paths.count == 2)
+
+        try ModelInstaller.removeInstalled(modelId: String(modelId), backend: .whisperCpp)
+        #expect(FileManager.default.fileExists(atPath: bin.path) == false)
+        #expect(WhisperBackend.isEncoderInstalled(modelId: String(modelId)) == false)
     }
 
     @Test func preflightDiskSpaceRejectsImpossiblyLargeRequest() throws {
