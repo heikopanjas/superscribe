@@ -13,13 +13,19 @@ enum WhisperEncoderInstaller {
         guard let bin = info.siblings.first(where: { $0.rfilename == binName }) else {
             return model.totalSizeBytes
         }
-        var total = bin.size ?? 0
-        if let enc = WhisperBackend.encoderZipSibling(for: model.id, in: info.siblings),
-            let encSize = enc.size
-        {
-            total += encSize
+        var total: Int64 = 0
+        if let binSize = bin.size {
+            total = binSize
         }
-        return total > 0 ? total : nil
+        if let enc = WhisperBackend.encoderZipSibling(for: model.id, in: info.siblings) {
+            if let encSize = enc.size {
+                total += encSize
+            }
+        }
+        if total > 0 {
+            return total
+        }
+        return nil
     }
 
     /// Installs the encoder bundle when HF publishes a zip for this model.
@@ -105,13 +111,20 @@ enum WhisperEncoderInstaller {
             policy: .removeFinalThenMove
         )
 
+        let bytesCompleted: Int64
+        if let size = sibling.size {
+            bytesCompleted = Int64(size)
+        }
+        else {
+            bytesCompleted = 0
+        }
         DownloadProgressReporting.emit(
             modelId: model.id,
             backend: .whisperCpp,
             currentFile: zipName,
             filesCompleted: 2,
             filesTotal: 2,
-            bytesCompleted: sibling.size ?? 0,
+            bytesCompleted: bytesCompleted,
             bytesTotal: sibling.size,
             onProgress: onProgress
         )
@@ -165,9 +178,16 @@ enum WhisperEncoderInstaller {
     }
 
     static func decodeUnzipStderr(raw: Data) -> String {
-        let stderrData =
-            SuperscribeKitTestHooks.forceUnzipInvalidStderr == true
-            ? Data([0xFF, 0xFE, 0xFD]) : raw
-        return String(data: stderrData, encoding: .utf8) ?? "unzip failed"
+        let stderrData: Data
+        if SuperscribeKitTestHooks.forceUnzipInvalidStderr == true {
+            stderrData = Data([0xFF, 0xFE, 0xFD])
+        }
+        else {
+            stderrData = raw
+        }
+        if let text = String(data: stderrData, encoding: .utf8) {
+            return text
+        }
+        return "unzip failed"
     }
 }

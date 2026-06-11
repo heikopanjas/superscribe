@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-05-19 (v0.7.10 — 100% region coverage gate)
+**Last updated:** 2026-06-11 (v0.8.0 — appleSpeech backend)
 
 <!-- {mission} -->
 
@@ -8,10 +8,11 @@
 
 **superscribe** is a macOS command-line tool and Swift library that transcribes multi-track podcast recordings into a single time-aligned subtitle file (VTT today; SRT/JSON/TXT planned). Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a publish-ready output.
 
-Two on-device ASR backends are supported, both Apple Silicon only:
+Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Silicon; Apple Speech on macOS 26+):
 
 - **Parakeet** (default) — FluidAudio CoreML / Apple Neural Engine. Fast, low power.
 - **whisper.cpp** — GGML models; encoder on ANE via Core ML when the encoder bundle is installed, Metal fallback otherwise; decoder on Metal. Higher accuracy, broader language coverage.
+- **Apple Speech** — `SpeechAnalyzer` / `SpeechTranscriber`; system-managed locale assets via `AssetInventory`. Requires **macOS 26+** at runtime; package minimum remains macOS 14 with clear unavailable errors below 26.
 
 ## Technology Stack
 
@@ -19,7 +20,7 @@ Two on-device ASR backends are supported, both Apple Silicon only:
 - **Platform:** macOS 14+, Apple Silicon (arm64) only
 - **Package Manager:** Swift Package Manager
 - **Build dependencies (one-time):** `cmake`, `ninja` (for the whisper.cpp xcframework build script)
-- **Runtime dependencies:** swift-argument-parser, FluidAudio, whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/build-whisper.sh`)
+- **Runtime dependencies:** swift-argument-parser, FluidAudio, whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/build-whisper.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
 - **Version Control:** Git
 - **License:** MIT
 
@@ -28,7 +29,8 @@ Two on-device ASR backends are supported, both Apple Silicon only:
 ```
 Sources/
   SuperscribeKit/          Core library (importable by Swift apps)
-    Backends/              ParakeetBackend, WhisperBackend (+Registry)
+    Backends/              ParakeetBackend, WhisperBackend, AppleSpeechBackend (+Registry, +LiveAPI)
+    AppleSpeechAssetInstaller.swift  Locale asset install via AssetInventory
     Format/                VTTFormatter
     Analyzer.swift         Silence detection
     AudioPreparer.swift    Audio conversion + slicing (16 kHz mono f32 PCM)
@@ -143,7 +145,7 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 
 - Every new or changed line in `SuperscribeKit` must be covered by a test, or the change is not done.
 - Tests must be **CI-safe**: no downloaded whisper GGML models, no Hugging Face model fetches, no reliance on machine-local cache contents. Use test hooks and stubs (see v0.7.8–v0.7.9 entries).
-- **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusion: `WhisperBackend+LiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk).
+- **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusions: `WhisperBackend+LiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk), `AppleSpeechBackend+LiveAPI.swift` (Speech framework APIs and `#available(macOS 26, *)` transcriber bridge; unit tests use stub hooks in `AppleSpeechBackend.swift` and `AppleSpeechSupport.swift`).
 - If coverage drops, add tests or refactor untestable code into an excluded shim — never weaken the gate.
 
 ### DRY (Don't Repeat Yourself)
@@ -199,6 +201,13 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-06-11 (v0.8.0 — appleSpeech backend)
+
+- **Apple Speech backend implemented.** `AppleSpeechBackend` actor conforms to `Transcriber`; models are BCP-47 locales (e.g. `en-US`); default from `Locale.current` with `en-US` fallback. No Hugging Face downloads — `AppleSpeechAssetInstaller` uses `AssetInventory.reserve` + `assetInstallationRequest`.
+- **Runtime availability.** Package minimum stays macOS 14; `AppleSpeechSupport.isRuntimeAvailable()` gates the backend at runtime (macOS 26+). CLI `backend --list` annotates `(requires macOS 26+)` when unavailable.
+- **LiveAPI shim pattern.** Speech framework isolation in `AppleSpeechBackend+LiveAPI.swift` (coverage-excluded); `AppleSpeechTranscriberBridge.make(model:)` holds `#available` transcriber construction so `BackendDispatch.swift` stays fully coverable.
+- **Tests.** Six new suites (`AppleSpeechSupportTests`, `AppleSpeechBackendTests`, etc.); stub hooks for locale lists, transcription spans, and API availability without real Speech assets.
 
 ### 2026-05-19 (v0.7.10 — 100% region coverage gate)
 

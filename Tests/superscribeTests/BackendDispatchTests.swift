@@ -8,7 +8,7 @@ struct BackendDispatchTests {
     @Test func registryDefaultModelIds() {
         #expect(Backend.parakeet.registryDefaultModelId == ParakeetBackend.defaultModelId)
         #expect(Backend.whisperCpp.registryDefaultModelId == WhisperBackend.defaultModelId)
-        #expect(Backend.appleSpeech.registryDefaultModelId.isEmpty == true)
+        #expect(Backend.appleSpeech.registryDefaultModelId == AppleSpeechSupport.defaultLocaleId)
     }
 
     @Test func installPathForWhisper() throws {
@@ -22,14 +22,29 @@ struct BackendDispatchTests {
         #expect(path.lastPathComponent.contains("v3") || path.path.contains("v3"))
     }
 
-    @Test func installPathForAppleSpeechThrows() {
-        #expect(throws: ModelInstallationError.self) {
-            _ = try Backend.appleSpeech.installPath(for: "any")
+    @Test func installPathForAppleSpeechWhenUnavailable() {
+        if AppleSpeechSupport.isRuntimeAvailable() == false {
+            #expect(throws: ModelInstallationError.self) {
+                _ = try Backend.appleSpeech.installPath(for: "en-US")
+            }
         }
     }
 
-    @Test func installedModelsEmptyForAppleSpeech() throws {
-        #expect(try Backend.appleSpeech.installedModels().isEmpty == true)
+    @Test func installedModelsEmptyForAppleSpeechWhenUnavailable() async throws {
+        if AppleSpeechSupport.isRuntimeAvailable() == false {
+            #expect(try await Backend.appleSpeech.installedModels().isEmpty == true)
+        }
+    }
+
+    @Test func installedModelsDispatchesToAppleSpeechWhenAvailable() async throws {
+        if #available(macOS 26, *) {
+            if AppleSpeechSupport.isRuntimeAvailable() == true {
+                AppleSpeechLiveAPI.testInstalledLocaleIds = ["en-US"]
+                defer { AppleSpeechLiveAPI.testInstalledLocaleIds = nil }
+                let models = try await Backend.appleSpeech.installedModels()
+                #expect(models.contains(where: { $0.id == "en-US" }) == true)
+            }
+        }
     }
 
     @Test func makeTranscriberReturnsParakeetOnArm64() throws {
@@ -41,9 +56,37 @@ struct BackendDispatchTests {
         #endif
     }
 
-    @Test func makeTranscriberAppleSpeechUnavailable() {
+    @Test func makeTranscriberAppleSpeechUnavailableWhenForced() {
+        let prior = AppleSpeechSupport.testForceRuntimeUnavailable
+        AppleSpeechSupport.testForceRuntimeUnavailable = true
+        defer { AppleSpeechSupport.testForceRuntimeUnavailable = prior }
         #expect(throws: BackendTranscriberError.self) {
-            _ = try Backend.appleSpeech.makeTranscriber(model: "")
+            _ = try Backend.appleSpeech.makeTranscriber(model: "en-US")
+        }
+    }
+
+    @Test func makeTranscriberAppleSpeechUnavailableBelowMacOS26() {
+        let priorVersion = AppleSpeechSupport.testOSMajorVersionOverride
+        AppleSpeechSupport.testOSMajorVersionOverride = 25
+        defer { AppleSpeechSupport.testOSMajorVersionOverride = priorVersion }
+        #expect(throws: BackendTranscriberError.self) {
+            _ = try Backend.appleSpeech.makeTranscriber(model: "en-US")
+        }
+    }
+
+    @Test func makeTranscriberAppleSpeechUnavailableWhenAPIForcedOff() {
+        let prior = AppleSpeechSupport.testForceAPIAvailabilityFalse
+        AppleSpeechSupport.testForceAPIAvailabilityFalse = true
+        defer { AppleSpeechSupport.testForceAPIAvailabilityFalse = prior }
+        #expect(throws: BackendTranscriberError.self) {
+            _ = try Backend.appleSpeech.makeTranscriber(model: "en-US")
+        }
+    }
+
+    @Test func makeTranscriberReturnsAppleSpeechOnMacOS26() throws {
+        if #available(macOS 26, *) {
+            let t = try Backend.appleSpeech.makeTranscriber(model: "en-US")
+            #expect(t.capabilities.displayName == "Apple Speech")
         }
     }
 

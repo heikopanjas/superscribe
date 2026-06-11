@@ -17,32 +17,32 @@ struct ModelInstallerTests {
         )
     }
 
-    @Test func isInstalledRecognisesMlmodelcDir() throws {
+    @Test func isInstalledRecognisesMlmodelcDir() async throws {
         let dir = try tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // Parakeet: directory with .mlmodelc bundle.
         let parakeetModel = dir.appendingPathComponent("parakeet-v3", isDirectory: true)
         try FileManager.default.createDirectory(at: parakeetModel, withIntermediateDirectories: true)
-        #expect(!ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet))
+        #expect(await ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet) == false)
         try makeMlmodelc(at: parakeetModel)
-        #expect(ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet))
+        #expect(await ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet) == true)
     }
 
-    @Test func isInstalledWhisperRequiresBinFile() throws {
+    @Test func isInstalledWhisperRequiresBinFile() async throws {
         let dir = try tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let binPath = dir.appendingPathComponent("large-v3-turbo.bin")
         // File absent — not installed.
-        #expect(!ModelInstaller.isInstalled(at: binPath, backend: .whisperCpp))
+        #expect(await ModelInstaller.isInstalled(at: binPath, backend: .whisperCpp) == false)
         // Create the file — now installed.
         FileManager.default.createFile(atPath: binPath.path, contents: Data("fake".utf8))
-        #expect(ModelInstaller.isInstalled(at: binPath, backend: .whisperCpp))
+        #expect(await ModelInstaller.isInstalled(at: binPath, backend: .whisperCpp) == true)
         // A directory at that path is not a valid .bin — not installed.
         let dirPath = dir.appendingPathComponent("model-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
-        #expect(!ModelInstaller.isInstalled(at: dirPath, backend: .whisperCpp))
+        #expect(await ModelInstaller.isInstalled(at: dirPath, backend: .whisperCpp) == false)
     }
 
     @Test func preflightDiskSpacePassesWhenSizeUnknown() throws {
@@ -59,7 +59,7 @@ struct ModelInstallerTests {
         )
     }
 
-    @Test func removeInstalledWhisperDeletesBinAndEncoderBundle() throws {
+    @Test func removeInstalledWhisperDeletesBinAndEncoderBundle() async throws {
         let modelId = "test-rm-\(UUID().uuidString.prefix(8))"
         let bin = WhisperBackend.installPath(for: String(modelId))
         let encoder = WhisperBackend.encoderInstallPath(for: String(modelId))
@@ -73,10 +73,10 @@ struct ModelInstallerTests {
         FileManager.default.createFile(atPath: bin.path, contents: Data("x".utf8))
         try FileManager.default.createDirectory(at: encoder, withIntermediateDirectories: true)
 
-        let paths = try ModelInstaller.removalPaths(modelId: String(modelId), backend: .whisperCpp)
+        let paths = try await ModelInstaller.removalPaths(modelId: String(modelId), backend: .whisperCpp)
         #expect(paths.count == 2)
 
-        try ModelInstaller.removeInstalled(modelId: String(modelId), backend: .whisperCpp)
+        try await ModelInstaller.removeInstalled(modelId: String(modelId), backend: .whisperCpp)
         #expect(FileManager.default.fileExists(atPath: bin.path) == false)
         #expect(WhisperBackend.isEncoderInstalled(modelId: String(modelId)) == false)
     }

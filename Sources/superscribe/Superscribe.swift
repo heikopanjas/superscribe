@@ -4,7 +4,7 @@ import SuperscribeKit
 
 @main
 struct Superscribe: AsyncParsableCommand {
-    static let toolVersion = "0.7.11"
+    static let toolVersion = "0.8.0"
 
     static let configuration = CommandConfiguration(
         commandName: "superscribe",

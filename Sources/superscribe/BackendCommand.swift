@@ -33,9 +33,17 @@ struct BackendCommand: ParsableCommand {
             let userDefault = config.resolvedDefaultBackend()
             for backend in Backend.allCases {
                 let marker = (backend == userDefault) ? "  (default)" : ""
-                print("  \(backend.rawValue)\(marker)")
+                let availability = Self.availabilityNote(for: backend)
+                print("  \(backend.rawValue)\(marker)\(availability)")
             }
         }
+    }
+
+    private static func availabilityNote(for backend: Backend) -> String {
+        if backend == .appleSpeech && AppleSpeechSupport.isRuntimeAvailable() == false {
+            return "  (requires macOS 26+)"
+        }
+        return ""
     }
 
     private func printCapabilities() throws {

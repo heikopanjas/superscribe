@@ -43,5 +43,22 @@ enum TestIsolation {
         WhisperBackend.testWhisperInitPointer = nil
         WhisperBackend.testWhisperStatePointer = nil
         WhisperLiveAPI.testSkipContextRelease = false
+        AppleSpeechSupport.testForceRuntimeUnavailable = false
+        AppleSpeechSupport.testOSMajorVersionOverride = nil
+        AppleSpeechSupport.testForceAPIAvailabilityFalse = false
+        AppleSpeechSupport.testDefaultLocaleIdentifierOverride = nil
+        if #available(macOS 26, *) {
+            AppleSpeechBackend.testForceUnavailable = false
+            AppleSpeechBackend.testLoadHook = nil
+            AppleSpeechLiveAPI.testSupportedLocaleIds = nil
+            AppleSpeechLiveAPI.testInstalledLocaleIds = nil
+            AppleSpeechLiveAPI.testTranscriptionSpans = nil
+            AppleSpeechLiveAPI.testForceInstallFailure = false
+            AppleSpeechLiveAPI.testForceTranscriptionFailure = false
+            AppleSpeechLiveAPI.testSkipLiveTranscription = false
+            AppleSpeechLiveAPI.testForceReserveFailure = false
+            AppleSpeechLiveAPI.testForceUnsupportedLocale = false
+            AppleSpeechLiveAPI.testSkipLocaleInstall = false
+        }
     }
 }

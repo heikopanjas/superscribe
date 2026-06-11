@@ -8,7 +8,7 @@ struct ModelCommand: AsyncParsableCommand {
         abstract: "List, refresh, or set defaults for transcription models."
     )
 
-    @Option(name: .long, help: "Backend (parakeet, whisper.cpp). Defaults to your configured backend.")
+    @Option(name: .long, help: "Backend (parakeet, whisper.cpp, appleSpeech). Defaults to your configured backend.")
     var backend: Backend?
 
     @Flag(name: .long, help: "List models. Implicit when no other verb is given.")
@@ -23,7 +23,7 @@ struct ModelCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Re-fetch the remote catalog for the backend, updating the cache.")
     var refresh: Bool = false
 
-    @Option(name: .long, help: "Download a model by id (e.g. v3, large-v3_turbo).")
+    @Option(name: .long, help: "Download a model by id (e.g. v3, large-v3-turbo, en-US).")
     var download: String?
 
     @Option(name: .long, help: "Remove an installed model by id.")
@@ -61,7 +61,7 @@ struct ModelCommand: AsyncParsableCommand {
             return
         }
         if let modelId = rm {
-            try runRemove(modelId, backend: backend)
+            try await runRemove(modelId, backend: backend)
             return
         }
         if let modelId = setDefault {
@@ -81,7 +81,7 @@ struct ModelCommand: AsyncParsableCommand {
     private func runList(backend: Backend) async throws {
         if remote == true {
             let (entry, refreshed) = try await ModelManager.catalog(for: backend, forceRefresh: refresh)
-            let installed = (try? ModelManager.installedModels(for: backend)) ?? []
+            let installed = (try? await ModelManager.installedModels(for: backend)) ?? []
             let installedIds = Set(installed.map(\.id))
             if json == true {
                 printJSON(entry.models)
@@ -98,7 +98,7 @@ struct ModelCommand: AsyncParsableCommand {
         }
 
         // Local install scan.
-        let installed = try ModelManager.installedModels(for: backend)
+        let installed = try await ModelManager.installedModels(for: backend)
         if json == true {
             printJSON(installed)
         }
@@ -116,7 +116,7 @@ struct ModelCommand: AsyncParsableCommand {
 
     private func runDownload(_ modelId: String, backend: Backend) async throws {
         let installPath = try ModelInstaller.installPath(for: modelId, backend: backend)
-        if ModelInstaller.isInstalled(at: installPath, backend: backend) == true {
+        if await ModelInstaller.isInstalled(at: installPath, backend: backend) == true {
             print("Already installed at \(installPath.path)")
             return
         }
@@ -139,8 +139,8 @@ struct ModelCommand: AsyncParsableCommand {
         print("Installed at \(final.path)")
     }
 
-    private func runRemove(_ modelId: String, backend: Backend) throws {
-        let installed = (try? ModelManager.installedModels(for: backend)) ?? []
+    private func runRemove(_ modelId: String, backend: Backend) async throws {
+        let installed = (try? await ModelManager.installedModels(for: backend)) ?? []
         guard installed.contains(where: { $0.id == modelId }) == true else {
             let valid = installed.map(\.id).joined(separator: ", ")
             throw ValidationError(
@@ -148,7 +148,7 @@ struct ModelCommand: AsyncParsableCommand {
                     + "Installed: \(valid.isEmpty ? "(none)" : valid)"
             )
         }
-        let paths = try ModelInstaller.removalPaths(modelId: modelId, backend: backend)
+        let paths = try await ModelInstaller.removalPaths(modelId: modelId, backend: backend)
         if paths.isEmpty == true {
             throw ValidationError(
                 "Model '\(modelId)' has no files to remove for backend '\(backend.rawValue)'."
@@ -161,7 +161,7 @@ struct ModelCommand: AsyncParsableCommand {
                 return
             }
         }
-        try ModelInstaller.removeInstalled(modelId: modelId, backend: backend)
+        try await ModelInstaller.removeInstalled(modelId: modelId, backend: backend)
         for path in paths {
             print("Removed \(path.path)")
         }

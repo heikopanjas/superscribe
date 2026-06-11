@@ -237,6 +237,68 @@ let model = RemoteModelInfo(
         }
     }
 
+    @Test func installIfNeededThrowsWhenEncoderBundleIsFile() async throws {
+        let repoId = WhisperBackend.huggingFaceRepoId
+        let tag = "zip-file-\(UUID().uuidString.prefix(6))"
+        let zipName = WhisperBackend.encoderZipRemoteName(for: tag)
+        let encoderName = "\(WhisperBackend.encoderBaseId(for: tag))-encoder.mlmodelc"
+
+        try await TestHelpers.withTempDirectory(prefix: "wenc-file") { build in
+            let fakeFile = build.appendingPathComponent(encoderName)
+            try Data("not-a-directory".utf8).write(to: fakeFile)
+            let zipURL = build.appendingPathComponent("encoder.zip")
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+            proc.arguments = ["-q", "-r", zipURL.path, encoderName]
+            proc.currentDirectoryURL = build
+            try proc.run()
+            proc.waitUntilExit()
+            #expect(proc.terminationStatus == 0)
+            let zipData = try Data(contentsOf: zipURL)
+
+            let payload = """
+                {"id":"\(repoId)","lastModified":null,"siblings":[
+                  {"rfilename":"\(zipName)","size":\(zipData.count)}
+                ]}
+                """
+
+            try await MockURLSessionHelpers.withMockHandler(
+                { req in
+                    guard let url = req.url else { throw URLError(.badURL) }
+                    let s = url.absoluteString
+                    if s.contains("/api/models/\(repoId)") == true {
+                        let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                        return (resp, Data(payload.utf8))
+                    }
+                    if s.contains("/resolve/main/\(zipName)") == true {
+                        let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                        return (resp, zipData)
+                    }
+                    throw URLError(.unsupportedURL)
+                },
+                { session in
+                    let model = RemoteModelInfo(
+                        id: tag,
+                        repoId: repoId,
+                        subpath: nil,
+                        totalSizeBytes: Int64(zipData.count),
+                        fileCount: 1,
+                        lastModified: nil,
+                        repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                    )
+
+                    await #expect(throws: ModelInstallationError.self) {
+                        try await WhisperEncoderInstaller.installIfNeeded(
+                            model: model,
+                            session: session,
+                            onProgress: { _ in }
+                        )
+                    }
+                }
+            )
+        }
+    }
+
     @Test func installIfNeededCompletesWhenZipSizeNil() async throws {
         let repoId = WhisperBackend.huggingFaceRepoId
         let tag = "zip-nil-size-\(UUID().uuidString.prefix(6))"
@@ -352,6 +414,12 @@ let model = RemoteModelInfo(
         defer { SuperscribeKitTestHooks.forceUnzipInvalidStderr = false }
         SuperscribeKitTestHooks.forceUnzipInvalidStderr = true
         #expect(WhisperEncoderInstaller.decodeUnzipStderr(raw: Data("ignored".utf8)) == "unzip failed")
+    }
+
+    @Test func decodeUnzipStderrFallsBackWhenRawUTF8Invalid() {
+        defer { SuperscribeKitTestHooks.forceUnzipInvalidStderr = false }
+        SuperscribeKitTestHooks.forceUnzipInvalidStderr = false
+        #expect(WhisperEncoderInstaller.decodeUnzipStderr(raw: Data([0xFF, 0xFE])) == "unzip failed")
     }
 
     @Test func installIfNeededUnzipFailureReadsRawStderr() async throws {

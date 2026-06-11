@@ -157,14 +157,17 @@ struct BackendDispatchExtendedTests {
         #endif
     }
 
-    @Test func appleSpeechRemoteModelsEmpty() async throws {
+    @Test func appleSpeechRemoteModelsEmptyWhenUnavailable() async throws {
+        let prior = AppleSpeechSupport.testForceRuntimeUnavailable
+        AppleSpeechSupport.testForceRuntimeUnavailable = true
+        defer { AppleSpeechSupport.testForceRuntimeUnavailable = prior }
         #expect(try await Backend.appleSpeech.remoteModels().isEmpty == true)
     }
 
     @Test func parakeetInstalledModelsEmptyWhenCacheMissing() async throws {
         try await TestHelpers.withIsolatedModelCaches { parakeetRoot, _ in
             #expect(FileManager.default.fileExists(atPath: parakeetRoot.path) == true)
-            let models = try Backend.parakeet.installedModels()
+            let models = try await Backend.parakeet.installedModels()
             #expect(models.isEmpty == true)
         }
     }
@@ -174,7 +177,7 @@ struct BackendDispatchExtendedTests {
             try FileManager.default.createDirectory(at: whisperRoot, withIntermediateDirectories: true)
             let bin = whisperRoot.appendingPathComponent("demo.bin")
             try Data("x".utf8).write(to: bin)
-            let models = try Backend.whisperCpp.installedModels()
+            let models = try await Backend.whisperCpp.installedModels()
             #expect(models.contains(where: { $0.id == "demo" }) == true)
         }
     }
@@ -680,12 +683,18 @@ struct ModelInstallerExtendedTests {
         }
     }
 
-    @Test func removeInstalledAppleSpeechNoOp() throws {
-        try ModelInstaller.removeInstalled(modelId: "any", backend: .appleSpeech)
+    @Test func removeInstalledAppleSpeechReleasesLocale() async throws {
+        if #available(macOS 26, *) {
+            try await ModelInstaller.removeInstalled(modelId: "en-US", backend: .appleSpeech)
+        }
     }
 
-    @Test func removalPathsAppleSpeechEmpty() throws {
-        #expect(try ModelInstaller.removalPaths(modelId: "any", backend: .appleSpeech).isEmpty == true)
+    @Test func removalPathsAppleSpeechEmptyWhenNotInstalled() async throws {
+        if #available(macOS 26, *) {
+            AppleSpeechLiveAPI.testInstalledLocaleIds = []
+            defer { AppleSpeechLiveAPI.testInstalledLocaleIds = nil }
+            #expect(try await ModelInstaller.removalPaths(modelId: "any", backend: .appleSpeech).isEmpty == true)
+        }
     }
 
     @Test func removalPathsParakeetWhenPresent() async throws {
@@ -693,7 +702,7 @@ struct ModelInstallerExtendedTests {
             let tag = "pk-path-\(UUID().uuidString.prefix(8))"
             let dir = ParakeetBackend.installPath(for: tag)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let paths = try ModelInstaller.removalPaths(modelId: tag, backend: .parakeet)
+            let paths = try await ModelInstaller.removalPaths(modelId: tag, backend: .parakeet)
             #expect(paths.count == 1)
             #expect(paths[0].path == dir.path)
         }
@@ -822,9 +831,9 @@ struct ModelInstallerExtendedTests {
         try ModelInstaller.preflightDiskSpace(requiredBytes: required, installPath: dir.appendingPathComponent("m.bin"))
     }
 
-    @Test func isInstalledAppleSpeechAlwaysFalse() {
+    @Test func isInstalledAppleSpeechFalseForInvalidMarker() async {
         let url = URL(fileURLWithPath: "/tmp/x")
-        #expect(ModelInstaller.isInstalled(at: url, backend: .appleSpeech) == false)
+        #expect(await ModelInstaller.isInstalled(at: url, backend: .appleSpeech) == false)
     }
 }
 
@@ -977,6 +986,38 @@ struct FinalLineCoverageGapTests {
         SuperscribePaths.overrideWhisperModelCacheDirectory = missing
         defer { SuperscribePaths.overrideWhisperModelCacheDirectory = prior }
         #expect(try WhisperBackend.installedModels().isEmpty == true)
+    }
+
+    @Test func totalInstallBytesNilWhenBinSizeZero() async throws {
+        let repoId = WhisperBackend.huggingFaceRepoId
+        let tag = "zero-size-\(UUID().uuidString.prefix(6))"
+        let payload = """
+            {"id":"\(repoId)","lastModified":null,"siblings":[
+              {"rfilename":"ggml-\(tag).bin","size":0}
+            ]}
+            """
+        try await MockURLSessionHelpers.withMockHandler(
+            { req in
+                guard let url = req.url else { throw URLError(.badURL) }
+                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (resp, Data(payload.utf8))
+            },
+            { session in
+                let model = RemoteModelInfo(
+                    id: tag,
+                    repoId: repoId,
+                    totalSizeBytes: nil,
+                    fileCount: nil,
+                    lastModified: nil,
+                    repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                )
+                let total = try await WhisperEncoderInstaller.totalInstallBytes(
+                    model: model,
+                    session: session
+                )
+                #expect(total == nil)
+            }
+        )
     }
 
     @Test func totalInstallBytesNilWhenBinHasNoSize() async throws {

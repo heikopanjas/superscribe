@@ -13,13 +13,23 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 COVERAGE_MIN="${COVERAGE_MIN:-100}"
-BUILD_DIR="${BUILD_DIR:-.build/arm64-apple-macosx/debug}"
+if [[ -z "${BUILD_DIR:-}" ]]; then
+    if [[ -f ".build/out/Products/Debug/codecov/default.profdata" ]]; then
+        BUILD_DIR=".build/out/Products/Debug"
+    else
+        BUILD_DIR=".build/arm64-apple-macosx/debug"
+    fi
+fi
 PROFILE="${BUILD_DIR}/codecov/default.profdata"
-BINARY="${BUILD_DIR}/superscribePackageTests.xctest/Contents/MacOS/superscribePackageTests"
+if [[ -f "${BUILD_DIR}/superscribeTests.xctest/Contents/MacOS/superscribeTests" ]]; then
+    BINARY="${BUILD_DIR}/superscribeTests.xctest/Contents/MacOS/superscribeTests"
+else
+    BINARY="${BUILD_DIR}/superscribePackageTests.xctest/Contents/MacOS/superscribePackageTests"
+fi
 SCOPE="Sources/SuperscribeKit"
 # whisper.cpp C API paths in WhisperBackend+LiveAPI.swift require a real GGML model;
 # unit tests use stub hooks instead — exclude from the 100% gate.
-IGNORE_LIVE_API='WhisperBackend\+LiveAPI\.swift'
+IGNORE_LIVE_API='WhisperBackend\+LiveAPI\.swift|AppleSpeechBackend\+LiveAPI\.swift'
 REPORT="/tmp/superscribe-coverage-report.txt"
 
 run_tests=false

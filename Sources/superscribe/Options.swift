@@ -31,13 +31,13 @@ struct TranscribeOptions: ParsableArguments {
     )
     var track: [TrackSpec] = []
 
-    @Option(name: .long, help: "Transcription backend (parakeet, whisper.cpp). Uses configured default if omitted.")
+    @Option(name: .long, help: "Transcription backend (parakeet, whisper.cpp, appleSpeech). Uses configured default if omitted.")
     var backend: Backend?
 
     @Option(
         name: .long,
         help:
-            "Model variant. Parakeet: v2, v3, tdt-ctc-110m, tdt-ja. Whisper: large-v3-turbo, base, medium-q5_0, etc. (run `model --list --backend whisper.cpp` for all). Uses configured default if omitted."
+            "Model variant. Parakeet: v2, v3, tdt-ctc-110m, tdt-ja. Whisper: large-v3-turbo, base, medium-q5_0, etc. Apple Speech: en-US, de-DE, etc. (run `model --list --remote --backend <name>` for all). Uses configured default if omitted."
     )
     var model: String?
 

@@ -72,7 +72,7 @@ struct ModelInstallerInstallTests {
                     onProgress: { _ in }
                 )
                 #expect(url.path == finalDir.path)
-                #expect(ModelInstaller.isInstalled(at: finalDir, backend: .parakeet) == true)
+                #expect(await ModelInstaller.isInstalled(at: finalDir, backend: .parakeet) == true)
             }
         )
     }
@@ -122,7 +122,7 @@ struct ModelInstallerInstallTests {
                     session: session,
                     onProgress: { _ in }
                 )
-                #expect(ModelInstaller.isInstalled(at: binURL, backend: .whisperCpp) == true)
+                #expect(await ModelInstaller.isInstalled(at: binURL, backend: .whisperCpp) == true)
                 #expect(WhisperBackend.isEncoderInstalled(modelId: tag) == false)
             }
         )
@@ -252,7 +252,7 @@ struct ModelInstallerInstallTests {
                     onProgress: { _ in }
                 )
                 _ = try await (first, second)
-                #expect(ModelInstaller.isInstalled(at: binURL, backend: .whisperCpp) == true)
+                #expect(await ModelInstaller.isInstalled(at: binURL, backend: .whisperCpp) == true)
             }
         )
     }
@@ -317,7 +317,7 @@ struct ModelInstallerInstallTests {
         )
     }
 
-    @Test func removeInstalledParakeetDeletesDirectory() throws {
+    @Test func removeInstalledParakeetDeletesDirectory() async throws {
         let tag = "pk-rm-\(UUID().uuidString.prefix(8))"
         let dir = ParakeetBackend.installPath(for: tag)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -329,13 +329,13 @@ struct ModelInstallerInstallTests {
             try? FileManager.default.removeItem(at: dir)
         }
 
-        try ModelInstaller.removeInstalled(modelId: tag, backend: .parakeet)
+        try await ModelInstaller.removeInstalled(modelId: tag, backend: .parakeet)
         #expect(FileManager.default.fileExists(atPath: dir.path) == false)
     }
 
-    @Test func removalPathsParakeetReturnsEmptyWhenAbsent() throws {
+    @Test func removalPathsParakeetReturnsEmptyWhenAbsent() async throws {
         let tag = "pk-missing-\(UUID().uuidString.prefix(8))"
-        let paths = try ModelInstaller.removalPaths(modelId: tag, backend: .parakeet)
+        let paths = try await ModelInstaller.removalPaths(modelId: tag, backend: .parakeet)
         #expect(paths.isEmpty == true)
     }
 }

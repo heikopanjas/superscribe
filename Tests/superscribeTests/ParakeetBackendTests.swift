@@ -12,6 +12,11 @@ struct ParakeetBackendTests {
         return backend.capabilities.displayName
     }
 
+    @Test func publicInitUsesDefaultModel() async {
+        let backend = ParakeetBackend()
+        #expect(backend.capabilities.displayName.contains("v3") == true)
+    }
+
     @Test func modelStringSelectsReportedVariants() async {
         #expect(await displayName(for: "v2").contains("v2") == true)
         #expect(await displayName(for: "v3").contains("v3") == true)

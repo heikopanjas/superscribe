@@ -30,15 +30,15 @@ final class ModelManager {
     }
 
     /// Backend → its `installedModels()` static call.
-    static func installedModels(for backend: Backend) throws -> [InstalledModelInfo] {
-        try backend.installedModels()
+    static func installedModels(for backend: Backend) async throws -> [InstalledModelInfo] {
+        try await backend.installedModels()
     }
 
     /// If `model` isn't installed for `backend`, look it up in the catalog
     /// (auto-fetch if missing) and install it via `ModelInstaller`.
     /// No-op when the model is already on disk.
     static func ensureModelInstalled(_ model: String, backend: Backend) async throws {
-        let installed = (try? installedModels(for: backend)) ?? []
+        let installed = (try? await installedModels(for: backend)) ?? []
         if installed.contains(where: { $0.id == model }) == true { return }
 
         FileHandle.standardError.write(

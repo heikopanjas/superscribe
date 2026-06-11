@@ -22,12 +22,26 @@ public enum ModelInstaller {
         session: URLSession = .shared,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void = { _ in }
     ) async throws -> URL {
+        if backend == .appleSpeech {
+            let finalDir = try installPath(for: model.id, backend: backend)
+            return try await InstallLocks.shared.withLock(for: finalDir) {
+                if await AppleSpeechAssetInstaller.isInstalled(localeId: model.id) == true {
+                    return finalDir
+                }
+                return try await AppleSpeechAssetInstaller.ensureInstalled(
+                    localeId: model.id,
+                    backend: backend,
+                    onProgress: onProgress
+                )
+            }
+        }
+
         let finalDir = try installPath(for: model.id, backend: backend)
 
         return try await InstallLocks.shared.withLock(for: finalDir) {
             // 1. Idempotent fast path.
             if backend == .whisperCpp {
-                let binReady = isInstalled(at: finalDir, backend: backend) == true
+                let binReady = await isInstalled(at: finalDir, backend: backend) == true
                 let encoderReady = WhisperBackend.isEncoderInstalled(modelId: model.id) == true
                 if binReady == true && encoderReady == true {
                     return finalDir
@@ -41,7 +55,7 @@ public enum ModelInstaller {
                     return finalDir
                 }
             }
-            else if isInstalled(at: finalDir, backend: backend) == true {
+            else if await isInstalled(at: finalDir, backend: backend) == true {
                 return finalDir
             }
 
@@ -137,8 +151,10 @@ public enum ModelInstaller {
     ///
     /// Whisper: deletes the `.bin` and the Core ML `{base}-encoder.mlmodelc` bundle when present.
     /// Parakeet: deletes the model directory tree.
-    public static func removeInstalled(modelId: String, backend: Backend) throws {
+    public static func removeInstalled(modelId: String, backend: Backend) async throws {
         switch backend {
+            case .appleSpeech:
+                await AppleSpeechAssetInstaller.release(localeId: modelId)
             case .whisperCpp:
                 let bin = WhisperBackend.installPath(for: modelId)
                 let encoder = WhisperBackend.encoderInstallPath(for: modelId)
@@ -154,14 +170,17 @@ public enum ModelInstaller {
                 if FileManager.default.fileExists(atPath: path.path) == true {
                     try FileManager.default.removeItem(at: path)
                 }
-            case .appleSpeech:
-                break
         }
     }
 
     /// Paths that `removeInstalled` would delete (for confirmation prompts).
-    public static func removalPaths(modelId: String, backend: Backend) throws -> [URL] {
+    public static func removalPaths(modelId: String, backend: Backend) async throws -> [URL] {
         switch backend {
+            case .appleSpeech:
+                if await AppleSpeechAssetInstaller.isInstalled(localeId: modelId) == true {
+                    return [AppleSpeechSupport.installMarkerURL(for: modelId)]
+                }
+                return []
             case .whisperCpp:
                 var paths: [URL] = []
                 let bin = WhisperBackend.installPath(for: modelId)
@@ -179,20 +198,21 @@ public enum ModelInstaller {
                     return [path]
                 }
                 return []
-            case .appleSpeech:
-                return []
         }
     }
 
     /// Returns `true` if a model looks completely installed (per-backend heuristic).
-    public static func isInstalled(at path: URL, backend: Backend) -> Bool {
+    public static func isInstalled(at path: URL, backend: Backend) async -> Bool {
         switch backend {
             case .whisperCpp:
                 return SuperscribeFS.isExistingFile(at: path)
             case .parakeet:
                 return SuperscribeFS.containsCompiledCoreMLBundle(at: path)
             case .appleSpeech:
-                return false
+                guard let localeId = AppleSpeechSupport.localeId(fromInstallMarker: path) else {
+                    return false
+                }
+                return await AppleSpeechAssetInstaller.isInstalled(localeId: localeId)
         }
     }
 

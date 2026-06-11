@@ -59,6 +59,26 @@ struct DownloadProgressTrackerTests {
         #expect(final.bytesCompleted == 200)
     }
 
+    @Test func zeroByteWindowSkipsThroughputUpdate() async throws {
+        let sink = TickSink()
+        let tracker = DownloadProgressTracker(
+            modelId: "zero-delta",
+            backend: .parakeet,
+            filesTotal: 1,
+            bytesTotal: 100,
+            onProgress: { sink.ticks.append($0) }
+        )
+
+        await tracker.startFile(name: "x.bin")
+        await tracker.add(bytes: 100)
+        try await Task.sleep(for: .milliseconds(1_100))
+        await tracker.flush()
+        try await Task.sleep(for: .milliseconds(1_100))
+        await tracker.flush()
+
+        #expect(sink.ticks.count >= 2)
+    }
+
     @Test func throughputUsesSlidingWindowAfterOneSecond() async throws {
         let sink = TickSink()
         let tracker = DownloadProgressTracker(
