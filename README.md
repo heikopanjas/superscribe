@@ -31,7 +31,7 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **1.0.4**).
+Check the version with `superscribe --version` (currently **1.0.5**).
 
 ## Speech detection and time-sliced transcription
 
@@ -467,7 +467,7 @@ The first transcription with a newly installed Core ML encoder bundle may be slo
 
 Signing follows `heikopanjas/aranet-kit` and uses these repository secrets: `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`, and `APPSTORE_CONNECT_KEY_P8_BASE64`. They are available only to the main-push signing step. `_scripts/sign-release.sh` imports the certificate into a temporary keychain, signs with hardened runtime and a secure timestamp, verifies the signature, and requires an accepted Apple notarization result before packaging. Temporary credentials are cleaned up on exit. The bare CLI executable cannot have a notarization ticket stapled to it.
 
-Both workflows run `bash _scripts/test-sign-release.sh` with fake signing/notarization tools and dummy credentials to check orchestration and cleanup. Real signing and notarization are validated by the main-push workflow.
+Signing-orchestration tests are optional local checks: run `/bin/bash _scripts/test-sign-release.sh`. They use fake tools and dummy credentials to check failure handling and cleanup, and are not part of CI. The signer and stubs use the harness's selected Bash, with explicit stub failure exits for compatibility with macOS Bash 3.2. Real signing and notarization are validated by the main-push workflow.
 
 Both workflows use the macOS 26 ARM64 runner with Xcode 26.2. The shared `.github/actions/setup-build/action.yml` installs missing CMake, Ninja, and ripgrep tools, then runs `_scripts/bootstrap.sh` before SwiftPM. Only the finished whisper xcframework is cached, with an exact key covering runner image, architecture, Xcode build, and bootstrap-script contents; changes rebuild the combined Metal/Core ML library. Unit tests use stubs and require no downloaded ASR models.
 

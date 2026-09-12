@@ -9,9 +9,9 @@ case "$tool" in
         echo "security $1" >> "$SIGN_TEST_LOG"
         case "$1" in
             create-keychain) touch "${@: -1}" ;;
-            import) [[ "$SIGN_TEST_CASE" != import-failure ]] ;;
+            import) [[ "$SIGN_TEST_CASE" != import-failure ]] || exit 1 ;;
             delete-keychain)
-                [[ "$SIGN_TEST_CASE" != cleanup-failure ]]
+                [[ "$SIGN_TEST_CASE" != cleanup-failure ]] || exit 1
                 rm -f "${@: -1}"
                 ;;
         esac
@@ -20,11 +20,11 @@ case "$tool" in
     codesign)
         echo "codesign $1" >> "$SIGN_TEST_LOG"
         if [[ "$1" == --force ]]; then
-            [[ "$*" == *'--options runtime --timestamp --keychain'* ]]
-            [[ "$SIGN_TEST_CASE" != sign-failure ]]
+            [[ "$*" == *'--options runtime --timestamp --keychain'* ]] || exit 1
+            [[ "$SIGN_TEST_CASE" != sign-failure ]] || exit 1
         else
-            [[ "$*" == *'--verify --strict'* ]]
-            [[ "$SIGN_TEST_CASE" != verify-failure ]]
+            [[ "$*" == *'--verify --strict'* ]] || exit 1
+            [[ "$SIGN_TEST_CASE" != verify-failure ]] || exit 1
         fi
         exit 0
         ;;
@@ -33,7 +33,7 @@ case "$tool" in
         if [[ "$2" == log ]]; then
             echo 'stub notarization log'
         else
-            [[ "$*" == *'--wait --timeout 30m --output-format json'* ]]
+            [[ "$*" == *'--wait --timeout 30m --output-format json'* ]] || exit 1
             case "$SIGN_TEST_CASE" in
                 rejected) echo '{"id":"stub-id","status":"Invalid"}' ;;
                 timeout) echo '{"id":"stub-id","status":"In Progress"}'; exit 1 ;;
@@ -50,6 +50,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 test_dir="$(mktemp -d "${TMPDIR:-/tmp}/superscribe-signing-tests.XXXXXX")"
 trap 'rm -rf "$test_dir"' EXIT
 mkdir "$test_dir/tools" "$test_dir/runner"
+# Keep the signer and env-based stub shebangs on the harness's selected Bash.
+ln -s "$BASH" "$test_dir/tools/bash"
 for tool in security codesign xcrun; do
     ln -s "$script_dir/test-sign-release.sh" "$test_dir/tools/$tool"
 done
@@ -71,7 +73,7 @@ run_case() {
     shift 2
     : > "$SIGN_TEST_LOG"
     local result=0
-    bash "$script_dir/sign-release.sh" "$@" > "$test_dir/output.log" 2>&1 || result=$?
+    "$BASH" "$script_dir/sign-release.sh" "$@" > "$test_dir/output.log" 2>&1 || result=$?
     if [[ "$result" -ne "$expected_exit" ]]; then
         cat "$test_dir/output.log" >&2
         echo "FAIL: $SIGN_TEST_CASE returned $result, expected $expected_exit" >&2

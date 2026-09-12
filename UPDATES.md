@@ -4,6 +4,17 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-09-12 (v1.0.5, 21:11 optional local signing tests)
+
+- removed signing-orchestration tests from both ci workflows at the user's request; retained the corrected harness for optional local checks
+- rationale: keep simulated signing checks outside ci while main pushes still perform and verify real signing and notarization
+
+### 2026-09-12 (v1.0.5, 21:09 bash-compatible signing tests)
+
+- made signing-stub failures explicit and kept signer/stub processes on the harness's selected bash; ci invokes `/bin/bash`
+- rationale: eliminate bash 3.2 versus 5.3 errexit differences while retaining credential-free checks that failed signing stops packaging and cleans temporary credentials
+- version bump: 1.0.4 to 1.0.5 (PATCH - test-harness compatibility fix)
+
 ### 2026-09-12 (v1.0.4, 20:59 signed release artifacts)
 
 - added developer id signing and notarization on main pushes using the existing six aranet-kit secret names; pr artifacts remain explicitly unsigned
