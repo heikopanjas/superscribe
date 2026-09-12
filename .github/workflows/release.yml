@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-build
+      - name: Test and enforce 100 percent coverage
+        run: _scripts/coverage.sh --run-tests
+      - name: Build release with strict concurrency
+        run: swift build -c release -Xswiftc -strict-concurrency=complete
+      - name: Smoke test and package release
+        run: |
+          release_dir="$(swift build -c release --show-bin-path)"
+          "$release_dir/superscribe" --version
+          "$release_dir/superscribe" --help
+          tar -czf superscribe-macos-arm64.tar.gz -C "$release_dir" superscribe
+      - name: Upload release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: superscribe-macos-arm64
+          path: superscribe-macos-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 14

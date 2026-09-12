@@ -4,6 +4,14 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-09-12 (v1.0.2, 20:10 github ci workflows)
+
+- added build checks for pushes and prs targeting `develop` or `feature/**`, and release validation for prs targeting `main`
+- shared macos 26 arm64 and xcode 26.2 setup installs missing tools and bootstraps whisper before swiftpm, caching only the finished xcframework by exact image, architecture, toolchain, and script hash
+- both workflows enforce 100 percent line and region coverage; release validation builds and smoke-tests the optimized cli and retains a tar artifact for 14 days
+- rationale: validate on compatible apple hardware, reuse the combined metal/core ml build, and provide reviewable release candidates without publishing from prs
+- version bump: 1.0.1 to 1.0.2 (PATCH - ci tooling with no public api changes)
+
 ### 2026-09-12 (v1.0.1, 19:41 bootstrap script rename)
 
 - renamed the whisper xcframework build entry point to `_scripts/bootstrap.sh`

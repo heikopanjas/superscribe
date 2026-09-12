@@ -31,7 +31,7 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **1.0.1**).
+Check the version with `superscribe --version` (currently **1.0.2**).
 
 ## Speech detection and time-sliced transcription
 
@@ -456,6 +456,14 @@ The xcframework is not in the repository (gitignored). Build it once before the 
 The script downloads whisper.cpp v1.7.5, compiles with CMake/Ninja for `arm64` with **Metal and Core ML in a single static archive**, and produces `whisper-build/whisper.xcframework`. Re-running is a no-op if the xcframework already exists. After upgrading superscribe when the whisper build changes, delete `whisper-build/` and re-run.
 
 The first transcription with a newly installed Core ML encoder bundle may be slow while macOS compiles the graph for the Neural Engine.
+
+## GitHub Actions
+
+`.github/workflows/build.yml` builds and runs the 100% line and region coverage gate on pushes to, and pull requests targeting, `develop` or `feature/**`.
+
+`.github/workflows/release.yml` runs on pull requests targeting `main`. It runs the same coverage gate, builds the optimized CLI, checks `--version` and `--help`, and uploads `superscribe-macos-arm64.tar.gz` as a release-candidate artifact retained for 14 days. It does not publish a GitHub Release or create tags.
+
+Both workflows use the macOS 26 ARM64 runner with Xcode 26.2. The shared `.github/actions/setup-build/action.yml` installs missing CMake, Ninja, and ripgrep tools, then runs `_scripts/bootstrap.sh` before SwiftPM. Only the finished whisper xcframework is cached, with an exact key covering runner image, architecture, Xcode build, and bootstrap-script contents; changes rebuild the combined Metal/Core ML library. Unit tests use stubs and require no downloaded ASR models.
 
 ## Project structure
 

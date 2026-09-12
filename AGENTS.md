@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-09-12 (v1.0.1 — bootstrap script renamed)
+**Last updated:** 2026-09-12 (v1.0.2 — GitHub CI workflows)
 
 <!-- {mission} -->
 
@@ -53,7 +53,7 @@ _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v1.0.1)
+## Subcommand Surface (v1.0.2)
 
 | Subcommand | Purpose |
 |---|---|
@@ -154,6 +154,12 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 - **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusions: `WhisperLiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk), `AppleSpeechLiveAPI.swift` and `AppleSpeechTranscriberBridge.swift` (the same Speech framework calls and availability bridge previously housed together; unit tests use stub hooks in `AppleSpeechBackend.swift` and `AppleSpeechSupport.swift`).
 - If coverage drops, add tests or refactor untestable code into an excluded shim — never weaken the gate.
 
+### GitHub CI
+
+- `.github/workflows/build.yml` runs on pushes and PRs targeting `develop` or `feature/**`; `.github/workflows/release.yml` runs on PRs targeting `main`.
+- Both use macOS 26 ARM64 with Xcode 26.2 and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. Release CI also builds and smoke-tests the optimized CLI, then uploads a tar archive for 14 days; publishing and tagging are not part of PR validation.
+- `.github/actions/setup-build/action.yml` owns shared tool setup and whisper bootstrapping before SwiftPM. Cache only the finished xcframework using an exact runner-image, architecture, Xcode-build, and bootstrap-script hash key; do not restore incompatible fallback keys or cache downloaded ASR models.
+
 ### Audio preparation and execution
 
 - `StreamingAudioConverter` is the single finite-input converter for files and Speech buffers. Input errors fail conversion; output is drained through end of stream.
@@ -239,6 +245,13 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-09-12 (v1.0.2 — 20:10 GitHub CI workflows)
+
+- Added branch-filtered build and release PR validation with the mandatory coverage gate.
+- Shared ARM64/Xcode setup bootstraps and caches whisper's combined Metal/Core ML xcframework before SwiftPM; release PRs produce an optimized CLI artifact.
+- Rationale: validate changes on compatible Apple hardware while avoiding repeated native dependency builds.
+- Version bump: 1.0.1 to 1.0.2 (PATCH — CI tooling, no public API changes).
 
 ### 2026-09-12 (v1.0.1 — bootstrap script rename)
 
