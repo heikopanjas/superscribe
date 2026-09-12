@@ -4,6 +4,13 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-09-12 (v1.0.1, 19:41 bootstrap script rename)
+
+- renamed the whisper xcframework build entry point to `_scripts/bootstrap.sh`
+- updated build documentation and generated-artifact metadata to use the new path
+- rationale: the bootstrap name describes the script's role in preparing the local binary dependency
+- version bump: 1.0.0 to 1.0.1 (PATCH - documented build tooling change)
+
 ### 2026-09-12 (v1.0.0, 19:14 final unit and sanitizer verification)
 
 - consolidated duplicate counters, Parakeet session stubs, ZIP builders, and audio fixtures

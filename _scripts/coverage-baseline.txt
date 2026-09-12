@@ -1,4 +1,4 @@
-SuperscribeKit code coverage baseline — 1.0.0
+SuperscribeKit code coverage baseline — 1.0.1
 Recorded: 2026-09-12
 Toolchain: Swift 6.4, strict concurrency, arm64, macOS 14 deployment target
 

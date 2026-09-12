@@ -16,7 +16,7 @@ Core logic lives in **SuperscribeKit**, a Swift library you can import from your
 
 ```sh
 # 1. Build the whisper.cpp static xcframework (one-time, ~2 min)
-./_scripts/build-whisper.sh
+./_scripts/bootstrap.sh
 
 # 2. Build superscribe
 swift build -c release
@@ -31,7 +31,7 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **1.0.0**).
+Check the version with `superscribe --version` (currently **1.0.1**).
 
 ## Speech detection and time-sliced transcription
 
@@ -450,7 +450,7 @@ let vtt = try TranscriptRenderer.render(
 The xcframework is not in the repository (gitignored). Build it once before the first `swift build`:
 
 ```sh
-./_scripts/build-whisper.sh
+./_scripts/bootstrap.sh
 ```
 
 The script downloads whisper.cpp v1.7.5, compiles with CMake/Ninja for `arm64` with **Metal and Core ML in a single static archive**, and produces `whisper-build/whisper.xcframework`. Re-running is a no-op if the xcframework already exists. After upgrading superscribe when the whisper build changes, delete `whisper-build/` and re-run.
@@ -478,7 +478,7 @@ Sources/
     BackendManager.swift, ModelManager.swift, Options.swift, ...
 Tests/superscribeTests/    Swift Testing suite
 _scripts/
-  build-whisper.sh         xcframework build (one-time)
+  bootstrap.sh             xcframework build (one-time)
   test.sh                  Serial test runner (recommended)
   coverage.sh              100% SuperscribeKit line + region coverage gate
 ```

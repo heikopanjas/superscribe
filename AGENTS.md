@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-09-12 (v1.0.0 — unit and sanitizer verification complete)
+**Last updated:** 2026-09-12 (v1.0.1 — bootstrap script renamed)
 
 <!-- {mission} -->
 
@@ -20,7 +20,7 @@ Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Si
 - **Platform:** macOS 14+, Apple Silicon (arm64) only
 - **Package Manager:** Swift Package Manager
 - **Build dependencies (one-time):** `cmake`, `ninja` (for the whisper.cpp xcframework build script)
-- **Runtime dependencies:** swift-argument-parser, FluidAudio, whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/build-whisper.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
+- **Runtime dependencies:** swift-argument-parser, FluidAudio, whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/bootstrap.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
 - **Version Control:** Git
 - **License:** MIT
 
@@ -48,12 +48,12 @@ Sources/
   superscribe/             CLI executable (thin wrapper over SuperscribeKit)
     TranscribeCommand.swift, RunCommand.swift, MergeCommand.swift, …
 Tests/superscribeTests/    Isolated Swift Testing unit suite
-_scripts/build-whisper.sh  One-time xcframework build (cmake + ninja)
+_scripts/bootstrap.sh      One-time xcframework build (cmake + ninja)
 _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v1.0.0)
+## Subcommand Surface (v1.0.1)
 
 | Subcommand | Purpose |
 |---|---|
@@ -240,6 +240,12 @@ Automatically bump the project version after every code change and include it in
 
 ## Recent Updates & Decisions
 
+### 2026-09-12 (v1.0.1 — bootstrap script rename)
+
+- **Whisper bootstrap command renamed.** `_scripts/bootstrap.sh` is the one-time xcframework build entry point.
+- **Rationale.** A concise bootstrap name better reflects that the script prepares the required local binary dependency.
+- **Version bump.** 1.0.0 to 1.0.1 (PATCH — documented build tooling change).
+
 ### 2026-06-11 (v0.8.0 — appleSpeech backend)
 
 - **Apple Speech backend implemented.** `AppleSpeechBackend` actor conforms to `Transcriber`; models are BCP-47 locales (e.g. `en-US`); default from `Locale.current` with `en-US` fallback. No Hugging Face downloads — `AppleSpeechAssetInstaller` uses `AssetInventory.reserve` + `assetInstallationRequest`.
@@ -329,7 +335,7 @@ Automatically bump the project version after every code change and include it in
 
 ### 2026-05-19 (v0.7.0 — whisper Core ML encoder / ANE)
 
-- **Unified whisper xcframework (Metal + Core ML).** `_scripts/build-whisper.sh` enables `WHISPER_COREML=1` and `WHISPER_COREML_ALLOW_FALLBACK=1` in the same CMake configure as `GGML_METAL`; merges `libwhisper.coreml.a` into the single static archive. `Package.swift` links `CoreML` and `Foundation`. Must rebuild `whisper-build/` after pull — never link a second Core-ML-only library.
+- **Unified whisper xcframework (Metal + Core ML).** `_scripts/bootstrap.sh` enables `WHISPER_COREML=1` and `WHISPER_COREML_ALLOW_FALLBACK=1` in the same CMake configure as `GGML_METAL`; merges `libwhisper.coreml.a` into the single static archive. `Package.swift` links `CoreML` and `Foundation`. Must rebuild `whisper-build/` after pull — never link a second Core-ML-only library.
 - **Encoder bundle install.** `WhisperEncoderInstaller` auto-downloads `ggml-<base>-encoder.mlmodelc.zip` from Hugging Face alongside the `.bin`; installed as `{cache}/<base>-encoder.mlmodelc/`. Quantized model ids strip `-q5_0` etc. for encoder base name (matches whisper.cpp path logic).
 - **Metal preserved.** Decoder and encoder fallback remain on Metal/GGML when the Core ML bundle is absent.
 
@@ -363,11 +369,11 @@ Automatically bump the project version after every code change and include it in
 
 ### 2026-05-18 (whisper.cpp migration)
 
-- **Whisper backend: migrated to whisper.cpp static xcframework (v0.5.0).** Replaced the `argmax-oss-swift` Swift package dependency with a static arm64 xcframework built from whisper.cpp v1.7.5 source. The xcframework is built once by `_scripts/build-whisper.sh` (requires cmake + ninja), output to `whisper-build/whisper.xcframework` (gitignored), and consumed via SPM `.binaryTarget(path:)`. `SuperscribeKit` gains `linkerSettings` for `Metal`, `MetalKit`, `Accelerate`, and `c++`. This pins the whisper.cpp C API version the user runs against regardless of their system state — API breakage is only ever visible when we deliberately upgrade the xcframework. Drops 6 transitive Swift deps (swift-transformers, swift-jinja, yyjson, swift-crypto, swift-asn1, swift-collections).
+- **Whisper backend: migrated to whisper.cpp static xcframework (v0.5.0).** Replaced the `argmax-oss-swift` Swift package dependency with a static arm64 xcframework built from whisper.cpp v1.7.5 source. The xcframework is built once by `_scripts/bootstrap.sh` (requires cmake + ninja), output to `whisper-build/whisper.xcframework` (gitignored), and consumed via SPM `.binaryTarget(path:)`. `SuperscribeKit` gains `linkerSettings` for `Metal`, `MetalKit`, `Accelerate`, and `c++`. This pins the whisper.cpp C API version the user runs against regardless of their system state — API breakage is only ever visible when we deliberately upgrade the xcframework. Drops 6 transitive Swift deps (swift-transformers, swift-jinja, yyjson, swift-crypto, swift-asn1, swift-collections).
 - **Model catalog changed.** Whisper models are now single GGML `.bin` files from `ggerganov/whisper.cpp` on HuggingFace. `defaultModelId = "large-v3-turbo"` (hyphen, not underscore). Install path changed from `~/Documents/huggingface/.../openai_whisper-<id>/` (old convention) to `~/Library/Caches/superscribe/whisper/<id>.bin`. Old model folders are orphaned; user can delete manually.
 - **ModelInstaller single-file support.** `isInstalled(at:backend:)` for `.whisper` now checks for a regular file (not a directory + `.mlmodelc`). Staging uses a sibling `.bin.staging-<uuid>` file path (not a staging directory). `ModelDownloader.downloadFile(model:into:onProgress:)` added for single-file downloads.
 - **WhisperBridge.swift deleted.** Bridging helpers (`extractWords`, `WKWord`) are no longer needed; whisper.cpp token data is read directly via C API in `WhisperBackend.extractTimedWords`.
-- **Build integration.** `_scripts/build-whisper.sh` handles: prerequisite check (cmake/ninja), download of v1.7.5 tarball, cmake configure (arm64, Metal embedded, no examples/tests), ninja build, libtool combine of all `libggml*.a` + `libwhisper.a`, xcodebuild xcframework creation, module.modulemap injection.
+- **Build integration.** `_scripts/bootstrap.sh` handles: prerequisite check (cmake/ninja), download of v1.7.5 tarball, cmake configure (arm64, Metal embedded, no examples/tests), ninja build, libtool combine of all `libggml*.a` + `libwhisper.a`, xcodebuild xcframework creation, module.modulemap injection.
 
 ### 2026-05-02 (audio cache)
 
