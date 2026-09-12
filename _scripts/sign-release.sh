@@ -20,9 +20,19 @@ do
 done
 
 umask 077
+# Preserve the caller's keychains while adding the temporary signing keychain.
+original_keychains=()
+keychain_list="$(security list-keychains -d user)"
+while IFS= read -r existing_keychain; do
+    [[ -n "$existing_keychain" ]] || continue
+    existing_keychain="${existing_keychain#*\"}"
+    existing_keychain="${existing_keychain%\"*}"
+    original_keychains+=("$existing_keychain")
+done <<< "$keychain_list"
 signing_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/superscribe-signing.XXXXXX")"
 keychain="$signing_dir/release.keychain-db"
 cleanup() {
+    security list-keychains -d user -s ${original_keychains[@]+"${original_keychains[@]}"} >/dev/null 2>&1 || true
     security delete-keychain "$keychain" >/dev/null 2>&1 || true
     rm -f "$signing_dir/certificate.p12" "$signing_dir/AuthKey.p8" \
         "$signing_dir/notarization.zip" "$signing_dir/result.json" \
@@ -41,12 +51,21 @@ security create-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
 security import "$signing_dir/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
-    -t cert -f pkcs12 -k "$keychain" -T /usr/bin/codesign
+    -A -t cert -f pkcs12 -k "$keychain" -T /usr/bin/codesign
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
     -k "$keychain_password" "$keychain" >/dev/null
+security list-keychains -d user -s "$keychain" ${original_keychains[@]+"${original_keychains[@]}"}
 
-codesign --force --options runtime --timestamp --keychain "$keychain" \
-    --sign "$APPLE_SIGNING_IDENTITY" "$binary"
+signing_identities="$(security find-identity -v -p codesigning "$keychain")"
+if ! printf '%s\n' "$signing_identities" | grep -Eq '^[[:space:]]*[0-9]+\) [[:xdigit:]]{40} '; then
+    echo 'error: the imported P12 has no valid code-signing identity; check that it includes the private key and a valid Developer ID Application certificate and chain' >&2
+    exit 1
+fi
+
+if ! codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$binary"; then
+    echo 'error: signing failed; verify APPLE_SIGNING_IDENTITY matches the imported certificate name or SHA-1 fingerprint' >&2
+    exit 1
+fi
 codesign --verify --strict --verbose=2 "$binary"
 
 ditto -c -k --keepParent "$binary" "$signing_dir/notarization.zip"

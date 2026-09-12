@@ -31,7 +31,7 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **1.0.5**).
+Check the version with `superscribe --version` (currently **1.0.6**).
 
 ## Speech detection and time-sliced transcription
 
@@ -465,7 +465,7 @@ The first transcription with a newly installed Core ML encoder bundle may be slo
 
 `.github/workflows/release.yml` runs on pull requests targeting `main` and pushes to `main`. It runs the same coverage gate, builds the optimized CLI, checks `--version` and `--help`, and uploads `superscribe-macos-arm64.tar.gz` for 14 days. PR artifacts are named `superscribe-macos-arm64-unsigned`; main-push artifacts are named `superscribe-macos-arm64` and contain a Developer ID-signed, notarized executable. It does not publish a GitHub Release or create tags.
 
-Signing follows `heikopanjas/aranet-kit` and uses these repository secrets: `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`, and `APPSTORE_CONNECT_KEY_P8_BASE64`. They are available only to the main-push signing step. `_scripts/sign-release.sh` imports the certificate into a temporary keychain, signs with hardened runtime and a secure timestamp, verifies the signature, and requires an accepted Apple notarization result before packaging. Temporary credentials are cleaned up on exit. The bare CLI executable cannot have a notarization ticket stapled to it.
+Signing follows `heikopanjas/aranet-kit` and uses these repository secrets: `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`, and `APPSTORE_CONNECT_KEY_P8_BASE64`. They are available only to the main-push signing step. `_scripts/sign-release.sh` creates and unlocks a temporary keychain, imports the P12 with the reference workflow's access settings, and adds the keychain to the user's search list. It checks for a valid code-signing identity, signs with hardened runtime and a secure timestamp, verifies the signature, and requires an accepted Apple notarization result before packaging. Cleanup restores the previous keychain search list and removes temporary credentials. The bare CLI executable cannot have a notarization ticket stapled to it.
 
 Signing-orchestration tests are optional local checks: run `/bin/bash _scripts/test-sign-release.sh`. They use fake tools and dummy credentials to check failure handling and cleanup, and are not part of CI. The signer and stubs use the harness's selected Bash, with explicit stub failure exits for compatibility with macOS Bash 3.2. Real signing and notarization are validated by the main-push workflow.
 
