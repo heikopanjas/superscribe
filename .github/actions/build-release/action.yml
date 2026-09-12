@@ -1,0 +1,29 @@
+name: Build release binary
+description: Build and smoke-test the optimized ARM64 CLI and expose its version.
+
+outputs:
+  path:
+    description: Path to the staged executable.
+    value: ${{ steps.binary.outputs.path }}
+  version:
+    description: Product version reported by the executable.
+    value: ${{ steps.binary.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build and smoke-test release with strict concurrency
+      id: binary
+      shell: bash
+      run: |
+        source _scripts/release-common.sh
+        swift build -c release -Xswiftc -strict-concurrency=complete
+        release_dir="$(swift build -c release --show-bin-path)"
+        binary="$RUNNER_TEMP/superscribe"
+        install -m 755 "$release_dir/superscribe" "$binary"
+        test "$(lipo -archs "$binary")" = arm64
+        version="$("$binary" --version)"
+        version="$(release_version "$version")"
+        "$binary" --help
+        echo "path=$binary" >> "$GITHUB_OUTPUT"
+        echo "version=$version" >> "$GITHUB_OUTPUT"

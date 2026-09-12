@@ -31,7 +31,7 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **1.0.6**).
+Check the version with `superscribe --version` (currently **1.0.7**).
 
 ## Speech detection and time-sliced transcription
 
@@ -461,9 +461,15 @@ The first transcription with a newly installed Core ML encoder bundle may be slo
 
 ## GitHub Actions
 
-`.github/workflows/build.yml` builds and runs the 100% line and region coverage gate on pushes to, and pull requests targeting, `develop` or `feature/**`.
+`.github/workflows/build.yml` builds and runs the 100% line and region coverage gate on pushes to, and pull requests targeting, `develop` or `feature/**`. After successful push builds, it publishes an unsigned GitHub pre-release containing the optimized `superscribe` executable. PRs never publish releases or tags.
 
-`.github/workflows/release.yml` runs on pull requests targeting `main` and pushes to `main`. It runs the same coverage gate, builds the optimized CLI, checks `--version` and `--help`, and uploads `superscribe-macos-arm64.tar.gz` for 14 days. PR artifacts are named `superscribe-macos-arm64-unsigned`; main-push artifacts are named `superscribe-macos-arm64` and contain a Developer ID-signed, notarized executable. It does not publish a GitHub Release or create tags.
+`.github/workflows/release.yml` runs on pull requests targeting `main` and pushes to `main`. It runs the same coverage gate, builds the optimized CLI, checks `--version` and `--help`, and packages `superscribe-<version>-macos-arm64.tar.gz` plus `SHA256SUMS.txt`. The archive contains a matching versioned directory with the executable, README, and license. PR Actions artifacts are named `superscribe-macos-arm64-unsigned`; main-push artifacts are named `superscribe-macos-arm64` and contain a Developer ID-signed, notarized executable. Actions artifacts are retained for 14 days; successful main pushes also publish a stable GitHub Release.
+
+Naming matches [aranet-kit](https://github.com/heikopanjas/aranet-kit): pre-release tags are `R<version>_BUILD_<run-number>_<YYYYMMDD>_<HHMMSS>`, with titles `superscribe-build-<run-number>-<YYYYMMDD>-<HHMMSS>` (UTC). Stable tags and titles are `v<version>`. Pre-releases never become Latest. Tags target the exact tested commit, not a moving branch tip, and existing tags/releases are never overwritten; each new stable release needs a new product version. Release notes are generated automatically. Version metadata comes from the built CLI's `--version`, backed by `SuperscribeVersion.current`.
+
+`.github/actions/build-release/action.yml` owns the shared optimized build and smoke checks. `_scripts/package-release.sh` owns archive layout/checksums; `_scripts/publish-release.sh` owns naming and publication. Only separate push-only publishing jobs receive `contents: write`, after their build jobs succeed. Publishing reuses the tested artifacts without rebuilding. Push runs are not cancelled in progress by newer pushes; superseded PR checks may be cancelled.
+
+Run `ruby _scripts/test-release-workflows.rb /bin/bash` for local packaging and publication checks with fake GitHub tools. These verify names, commit targets, PR/branch guards, existing-tag protection, archive contents, and checksum failures without publishing anything. `_scripts/release-common.sh` keeps product-version validation and archive naming shared across the release tools.
 
 Signing follows `heikopanjas/aranet-kit` and uses these repository secrets: `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`, and `APPSTORE_CONNECT_KEY_P8_BASE64`. They are available only to the main-push signing step. `_scripts/sign-release.sh` creates and unlocks a temporary keychain, imports the P12 with the reference workflow's access settings, and adds the keychain to the user's search list. It checks for a valid code-signing identity, signs with hardened runtime and a secure timestamp, verifies the signature, and requires an accepted Apple notarization result before packaging. Cleanup restores the previous keychain search list and removes temporary credentials. The bare CLI executable cannot have a notarization ticket stapled to it.
 

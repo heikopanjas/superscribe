@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-09-12 (v1.0.6 — signing keychain registration)
+**Last updated:** 2026-09-12 (v1.0.7 — GitHub release publication)
 
 <!-- {mission} -->
 
@@ -53,7 +53,7 @@ _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v1.0.6)
+## Subcommand Surface (v1.0.7)
 
 | Subcommand | Purpose |
 |---|---|
@@ -157,7 +157,10 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 ### GitHub CI
 
 - `.github/workflows/build.yml` runs on pushes and PRs targeting `develop` or `feature/**`; `.github/workflows/release.yml` runs on PRs targeting `main` and pushes to `main`.
-- Both use macOS 26 ARM64 with Xcode 26.2 and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. Release CI builds and smoke-tests the optimized CLI, then uploads a tar archive for 14 days; publishing GitHub Releases and tagging are not part of these workflows.
+- Both use macOS 26 ARM64 with Xcode 26.2 and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. `.github/actions/build-release/action.yml` owns optimized ARM64 builds, smoke tests, and version metadata from the CLI. Push builds upload artifacts for separate publishing jobs; release PRs upload unsigned archive/checksum artifacts for 14 days without publishing.
+- Successful pushes to `develop` and `feature/**` publish unsigned pre-releases containing the raw CLI, matching aranet-kit: tag `R<version>_BUILD_<run-number>_<YYYYMMDD>_<HHMMSS>`, title `superscribe-build-<run-number>-<YYYYMMDD>-<HHMMSS>` (UTC). Main pushes publish signed/notarized stable releases with tag and title `v<version>`, `superscribe-<version>-macos-arm64.tar.gz`, and `SHA256SUMS.txt`. The archive contains a versioned directory with the CLI, README, and license.
+- `_scripts/package-release.sh` owns packaging; `_scripts/publish-release.sh` owns naming and publication. Only push-only publisher jobs receive `contents: write`, depend on successful builds, and reuse their artifacts. Tags target the exact tested SHA; existing tags/releases are never overwritten, so each stable release requires a new version. Pre-releases cannot become Latest. Push runs are not cancelled in progress by newer pushes; PR checks remain cancellable.
+- `_scripts/release-common.sh` shares product-version validation and archive naming. Local checks use `ruby _scripts/test-release-workflows.rb /bin/bash` with fake GitHub tools; validate release tooling under Bash 3.2 and the developer's Bash without publishing test releases.
 - Release PRs produce explicitly named unsigned artifacts without signing credentials. Main pushes sign with Developer ID, hardened runtime, and a secure timestamp, then require Apple notarization acceptance before packaging. The six signing/notarization secret names match `heikopanjas/aranet-kit` and are exposed only to the signing step.
 - `_scripts/sign-release.sh` owns certificate import into a temporary keychain, signature verification, notarization, and exit cleanup. `_scripts/test-sign-release.sh` provides optional local checks with fake tools and credentials; do not run it in CI. Bare executables cannot be stapled; the notarization ticket is associated with the signature.
 - Match aranet-kit's keychain setup: create and unlock the temporary keychain, import the P12 with `-A` and codesign access, set key partitions, and register it in the user search list before signing. Check for a valid code-signing identity after import; restore the prior search list on exit. Passing `codesign --keychain` alone does not replace search-list registration.
@@ -250,6 +253,13 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-09-12 (v1.0.7 — 22:09 GitHub release publication)
+
+- Matched aranet-kit's pre-release/stable tag, title, and asset conventions; extended pre-release publication to feature branches as requested.
+- Shared optimized build checks and reused successful artifacts in push-only publishing jobs. Stable assets remain signed/notarized; PRs never publish and development binaries remain unsigned.
+- Rationale: make successful builds downloadable as GitHub Releases while binding tags to tested commits and preserving existing releases.
+- Version bump: 1.0.6 to 1.0.7 (PATCH — release tooling, no public API changes).
 
 ### 2026-09-12 (v1.0.6 — 21:27 signing keychain registration)
 
