@@ -4,6 +4,13 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-09-12 (v1.0.3, 20:37 portable whisper cpu build)
+
+- disabled ggml native cpu probing and selected `armv8.4-a+dotprod+fp16`, preserving metal and core ml
+- rationale: fix the hosted runner's contradictory i8mm settings and keep release binaries compatible with the m1 cpu baseline
+- require fresh native compilation when verifying bootstrap changes; script changes invalidate the exact ci cache key
+- version bump: 1.0.2 to 1.0.3 (PATCH - native dependency build fix)
+
 ### 2026-09-12 (v1.0.2, 20:10 github ci workflows)
 
 - added build checks for pushes and prs targeting `develop` or `feature/**`, and release validation for prs targeting `main`

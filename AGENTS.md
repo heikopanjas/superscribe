@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-09-12 (v1.0.2 — GitHub CI workflows)
+**Last updated:** 2026-09-12 (v1.0.3 — portable whisper CPU build)
 
 <!-- {mission} -->
 
@@ -53,7 +53,7 @@ _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v1.0.2)
+## Subcommand Surface (v1.0.3)
 
 | Subcommand | Purpose |
 |---|---|
@@ -159,6 +159,7 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 - `.github/workflows/build.yml` runs on pushes and PRs targeting `develop` or `feature/**`; `.github/workflows/release.yml` runs on PRs targeting `main`.
 - Both use macOS 26 ARM64 with Xcode 26.2 and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. Release CI also builds and smoke-tests the optimized CLI, then uploads a tar archive for 14 days; publishing and tagging are not part of PR validation.
 - `.github/actions/setup-build/action.yml` owns shared tool setup and whisper bootstrapping before SwiftPM. Cache only the finished xcframework using an exact runner-image, architecture, Xcode-build, and bootstrap-script hash key; do not restore incompatible fallback keys or cache downloaded ASR models.
+- `_scripts/bootstrap.sh` disables host-specific GGML tuning with `GGML_NATIVE=OFF` and targets `armv8.4-a+dotprod+fp16` for M1-compatible CPU code. Keep Metal and Core ML enabled. Verify bootstrap changes with a fresh native build; an existing xcframework bypasses compilation and cannot validate changed flags.
 
 ### Audio preparation and execution
 
@@ -245,6 +246,13 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-09-12 (v1.0.3 — 20:37 portable whisper CPU build)
+
+- Disabled GGML native CPU probing and selected an explicit M1-compatible ARMv8.4 target with dot-product and FP16 support.
+- Rationale: GitHub's native probe disabled i8mm while the compiler still selected i8mm intrinsics; release CPU code must not depend on the build host. Metal and Core ML remain enabled.
+- Bootstrap verification now requires a fresh native build. The script hash automatically invalidates the CI xcframework cache.
+- Version bump: 1.0.2 to 1.0.3 (PATCH — native dependency build fix).
 
 ### 2026-09-12 (v1.0.2 — 20:10 GitHub CI workflows)
 

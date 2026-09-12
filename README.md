@@ -31,7 +31,7 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **1.0.2**).
+Check the version with `superscribe --version` (currently **1.0.3**).
 
 ## Speech detection and time-sliced transcription
 
@@ -454,6 +454,8 @@ The xcframework is not in the repository (gitignored). Build it once before the 
 ```
 
 The script downloads whisper.cpp v1.7.5, compiles with CMake/Ninja for `arm64` with **Metal and Core ML in a single static archive**, and produces `whisper-build/whisper.xcframework`. Re-running is a no-op if the xcframework already exists. After upgrading superscribe when the whisper build changes, delete `whisper-build/` and re-run.
+
+CPU compilation uses `GGML_NATIVE=OFF` and an explicit M1-compatible `armv8.4-a+dotprod+fp16` target. This keeps binaries independent of the build host and avoids GGML's inconsistent native `i8mm` detection on GitHub runners. Metal and Core ML remain enabled. Bootstrap changes must be verified with a fresh whisper build, not just the existing-xcframework fast path.
 
 The first transcription with a newly installed Core ML encoder bundle may be slow while macOS compiles the graph for the Neural Engine.
 
