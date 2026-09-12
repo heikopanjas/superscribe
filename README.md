@@ -16,7 +16,7 @@ Core logic lives in **SuperscribeKit**, a Swift library you can import from your
 
 ```sh
 # 1. Build the whisper.cpp static xcframework (one-time, ~2 min)
-./_scripts/build-whisper.sh
+./_scripts/bootstrap.sh
 
 # 2. Build superscribe
 swift build -c release
@@ -31,7 +31,7 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **1.0.0**).
+Check the version with `superscribe --version` (currently **1.0.5**).
 
 ## Speech detection and time-sliced transcription
 
@@ -450,12 +450,26 @@ let vtt = try TranscriptRenderer.render(
 The xcframework is not in the repository (gitignored). Build it once before the first `swift build`:
 
 ```sh
-./_scripts/build-whisper.sh
+./_scripts/bootstrap.sh
 ```
 
 The script downloads whisper.cpp v1.7.5, compiles with CMake/Ninja for `arm64` with **Metal and Core ML in a single static archive**, and produces `whisper-build/whisper.xcframework`. Re-running is a no-op if the xcframework already exists. After upgrading superscribe when the whisper build changes, delete `whisper-build/` and re-run.
 
+CPU compilation uses `GGML_NATIVE=OFF` and an explicit M1-compatible `armv8.4-a+dotprod+fp16` target. This keeps binaries independent of the build host and avoids GGML's inconsistent native `i8mm` detection on GitHub runners. Metal and Core ML remain enabled. Bootstrap changes must be verified with a fresh whisper build, not just the existing-xcframework fast path.
+
 The first transcription with a newly installed Core ML encoder bundle may be slow while macOS compiles the graph for the Neural Engine.
+
+## GitHub Actions
+
+`.github/workflows/build.yml` builds and runs the 100% line and region coverage gate on pushes to, and pull requests targeting, `develop` or `feature/**`.
+
+`.github/workflows/release.yml` runs on pull requests targeting `main` and pushes to `main`. It runs the same coverage gate, builds the optimized CLI, checks `--version` and `--help`, and uploads `superscribe-macos-arm64.tar.gz` for 14 days. PR artifacts are named `superscribe-macos-arm64-unsigned`; main-push artifacts are named `superscribe-macos-arm64` and contain a Developer ID-signed, notarized executable. It does not publish a GitHub Release or create tags.
+
+Signing follows `heikopanjas/aranet-kit` and uses these repository secrets: `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`, and `APPSTORE_CONNECT_KEY_P8_BASE64`. They are available only to the main-push signing step. `_scripts/sign-release.sh` imports the certificate into a temporary keychain, signs with hardened runtime and a secure timestamp, verifies the signature, and requires an accepted Apple notarization result before packaging. Temporary credentials are cleaned up on exit. The bare CLI executable cannot have a notarization ticket stapled to it.
+
+Signing-orchestration tests are optional local checks: run `/bin/bash _scripts/test-sign-release.sh`. They use fake tools and dummy credentials to check failure handling and cleanup, and are not part of CI. The signer and stubs use the harness's selected Bash, with explicit stub failure exits for compatibility with macOS Bash 3.2. Real signing and notarization are validated by the main-push workflow.
+
+Both workflows use the macOS 26 ARM64 runner with Xcode 26.2. The shared `.github/actions/setup-build/action.yml` installs missing CMake, Ninja, and ripgrep tools, then runs `_scripts/bootstrap.sh` before SwiftPM. Only the finished whisper xcframework is cached, with an exact key covering runner image, architecture, Xcode build, and bootstrap-script contents; changes rebuild the combined Metal/Core ML library. Unit tests use stubs and require no downloaded ASR models.
 
 ## Project structure
 
@@ -478,7 +492,7 @@ Sources/
     BackendManager.swift, ModelManager.swift, Options.swift, ...
 Tests/superscribeTests/    Swift Testing suite
 _scripts/
-  build-whisper.sh         xcframework build (one-time)
+  bootstrap.sh             xcframework build (one-time)
   test.sh                  Serial test runner (recommended)
   coverage.sh              100% SuperscribeKit line + region coverage gate
 ```

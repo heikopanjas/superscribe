@@ -4,6 +4,47 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-09-12 (v1.0.5, 21:11 optional local signing tests)
+
+- removed signing-orchestration tests from both ci workflows at the user's request; retained the corrected harness for optional local checks
+- rationale: keep simulated signing checks outside ci while main pushes still perform and verify real signing and notarization
+
+### 2026-09-12 (v1.0.5, 21:09 bash-compatible signing tests)
+
+- made signing-stub failures explicit and kept signer/stub processes on the harness's selected bash; ci invokes `/bin/bash`
+- rationale: eliminate bash 3.2 versus 5.3 errexit differences while retaining credential-free checks that failed signing stops packaging and cleans temporary credentials
+- version bump: 1.0.4 to 1.0.5 (PATCH - test-harness compatibility fix)
+
+### 2026-09-12 (v1.0.4, 20:59 signed release artifacts)
+
+- added developer id signing and notarization on main pushes using the existing six aranet-kit secret names; pr artifacts remain explicitly unsigned
+- isolated credentials to the signing step and a temporary keychain with exit cleanup; require signature verification and accepted notarization before packaging
+- added credential-free orchestration tests for failure handling, notarization status, and cleanup
+- rationale: follow the reference repository's pr/main split and distribute verifiable artifacts without exposing signing credentials to pr builds
+- version bump: 1.0.3 to 1.0.4 (PATCH - release tooling without public api changes)
+
+### 2026-09-12 (v1.0.3, 20:37 portable whisper cpu build)
+
+- disabled ggml native cpu probing and selected `armv8.4-a+dotprod+fp16`, preserving metal and core ml
+- rationale: fix the hosted runner's contradictory i8mm settings and keep release binaries compatible with the m1 cpu baseline
+- require fresh native compilation when verifying bootstrap changes; script changes invalidate the exact ci cache key
+- version bump: 1.0.2 to 1.0.3 (PATCH - native dependency build fix)
+
+### 2026-09-12 (v1.0.2, 20:10 github ci workflows)
+
+- added build checks for pushes and prs targeting `develop` or `feature/**`, and release validation for prs targeting `main`
+- shared macos 26 arm64 and xcode 26.2 setup installs missing tools and bootstraps whisper before swiftpm, caching only the finished xcframework by exact image, architecture, toolchain, and script hash
+- both workflows enforce 100 percent line and region coverage; release validation builds and smoke-tests the optimized cli and retains a tar artifact for 14 days
+- rationale: validate on compatible apple hardware, reuse the combined metal/core ml build, and provide reviewable release candidates without publishing from prs
+- version bump: 1.0.1 to 1.0.2 (PATCH - ci tooling with no public api changes)
+
+### 2026-09-12 (v1.0.1, 19:41 bootstrap script rename)
+
+- renamed the whisper xcframework build entry point to `_scripts/bootstrap.sh`
+- updated build documentation and generated-artifact metadata to use the new path
+- rationale: the bootstrap name describes the script's role in preparing the local binary dependency
+- version bump: 1.0.0 to 1.0.1 (PATCH - documented build tooling change)
+
 ### 2026-09-12 (v1.0.0, 19:14 final unit and sanitizer verification)
 
 - consolidated duplicate counters, Parakeet session stubs, ZIP builders, and audio fixtures

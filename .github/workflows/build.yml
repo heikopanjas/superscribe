@@ -1,0 +1,28 @@
+name: Build
+
+on:
+  push:
+    branches: [develop, 'feature/**']
+  pull_request:
+    branches: [develop, 'feature/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-build
+      - name: Build with strict concurrency
+        run: swift build -Xswiftc -strict-concurrency=complete
+      - name: Test and enforce 100 percent coverage
+        run: _scripts/coverage.sh --run-tests

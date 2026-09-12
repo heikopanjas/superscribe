@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-build
+      - name: Test and enforce 100 percent coverage
+        run: _scripts/coverage.sh --run-tests
+      - name: Build release with strict concurrency
+        id: binary
+        run: |
+          swift build -c release -Xswiftc -strict-concurrency=complete
+          release_dir="$(swift build -c release --show-bin-path)"
+          install -m 755 "$release_dir/superscribe" "$RUNNER_TEMP/superscribe"
+          echo "path=$RUNNER_TEMP/superscribe" >> "$GITHUB_OUTPUT"
+      - name: Sign and notarize main artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          BINARY_PATH: ${{ steps.binary.outputs.path }}
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPSTORE_CONNECT_KEY_ID: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+          APPSTORE_CONNECT_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
+          APPSTORE_CONNECT_KEY_P8_BASE64: ${{ secrets.APPSTORE_CONNECT_KEY_P8_BASE64 }}
+        run: bash _scripts/sign-release.sh "$BINARY_PATH"
+      - name: Smoke test and package release
+        env:
+          BINARY_PATH: ${{ steps.binary.outputs.path }}
+        run: |
+          "$BINARY_PATH" --version
+          "$BINARY_PATH" --help
+          tar -czf superscribe-macos-arm64.tar.gz -C "$RUNNER_TEMP" superscribe
+      - name: Upload release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: superscribe-macos-arm64${{ github.event_name == 'pull_request' && '-unsigned' || '' }}
+          path: superscribe-macos-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 14

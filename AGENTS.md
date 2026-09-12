@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-09-12 (v1.0.0 — unit and sanitizer verification complete)
+**Last updated:** 2026-09-12 (v1.0.5 — optional local signing tests)
 
 <!-- {mission} -->
 
@@ -20,7 +20,7 @@ Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Si
 - **Platform:** macOS 14+, Apple Silicon (arm64) only
 - **Package Manager:** Swift Package Manager
 - **Build dependencies (one-time):** `cmake`, `ninja` (for the whisper.cpp xcframework build script)
-- **Runtime dependencies:** swift-argument-parser, FluidAudio, whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/build-whisper.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
+- **Runtime dependencies:** swift-argument-parser, FluidAudio, whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/bootstrap.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
 - **Version Control:** Git
 - **License:** MIT
 
@@ -48,12 +48,12 @@ Sources/
   superscribe/             CLI executable (thin wrapper over SuperscribeKit)
     TranscribeCommand.swift, RunCommand.swift, MergeCommand.swift, …
 Tests/superscribeTests/    Isolated Swift Testing unit suite
-_scripts/build-whisper.sh  One-time xcframework build (cmake + ninja)
+_scripts/bootstrap.sh      One-time xcframework build (cmake + ninja)
 _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v1.0.0)
+## Subcommand Surface (v1.0.5)
 
 | Subcommand | Purpose |
 |---|---|
@@ -154,6 +154,16 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 - **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusions: `WhisperLiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk), `AppleSpeechLiveAPI.swift` and `AppleSpeechTranscriberBridge.swift` (the same Speech framework calls and availability bridge previously housed together; unit tests use stub hooks in `AppleSpeechBackend.swift` and `AppleSpeechSupport.swift`).
 - If coverage drops, add tests or refactor untestable code into an excluded shim — never weaken the gate.
 
+### GitHub CI
+
+- `.github/workflows/build.yml` runs on pushes and PRs targeting `develop` or `feature/**`; `.github/workflows/release.yml` runs on PRs targeting `main` and pushes to `main`.
+- Both use macOS 26 ARM64 with Xcode 26.2 and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. Release CI builds and smoke-tests the optimized CLI, then uploads a tar archive for 14 days; publishing GitHub Releases and tagging are not part of these workflows.
+- Release PRs produce explicitly named unsigned artifacts without signing credentials. Main pushes sign with Developer ID, hardened runtime, and a secure timestamp, then require Apple notarization acceptance before packaging. The six signing/notarization secret names match `heikopanjas/aranet-kit` and are exposed only to the signing step.
+- `_scripts/sign-release.sh` owns certificate import into a temporary keychain, signature verification, notarization, and exit cleanup. `_scripts/test-sign-release.sh` provides optional local checks with fake tools and credentials; do not run it in CI. Bare executables cannot be stapled; the notarization ticket is associated with the signature.
+- Run optional signing tests with `/bin/bash`; the signer and stubs inherit the harness's selected interpreter. Stub failures and argument checks must exit explicitly rather than rely on `set -e` behavior across Bash versions. Validate harness changes with macOS Bash 3.2 as well as the developer's selected Bash.
+- `.github/actions/setup-build/action.yml` owns shared tool setup and whisper bootstrapping before SwiftPM. Cache only the finished xcframework using an exact runner-image, architecture, Xcode-build, and bootstrap-script hash key; do not restore incompatible fallback keys or cache downloaded ASR models.
+- `_scripts/bootstrap.sh` disables host-specific GGML tuning with `GGML_NATIVE=OFF` and targets `armv8.4-a+dotprod+fp16` for M1-compatible CPU code. Keep Metal and Core ML enabled. Verify bootstrap changes with a fresh native build; an existing xcframework bypasses compilation and cannot validate changed flags.
+
 ### Audio preparation and execution
 
 - `StreamingAudioConverter` is the single finite-input converter for files and Speech buffers. Input errors fail conversion; output is drained through end of stream.
@@ -239,6 +249,45 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-09-12 (v1.0.5 — 21:11 optional local signing tests)
+
+- Removed signing-orchestration tests from both CI workflows at the user's request; the Bash-compatible harness remains available for optional local checks.
+- Rationale: keep simulated signing checks outside CI. Main pushes still perform and verify real signing and notarization before packaging.
+
+### 2026-09-12 (v1.0.5 — 21:09 Bash-compatible signing tests)
+
+- Made signing-stub failure exits explicit and kept the signer and stubs on the harness's chosen Bash interpreter; CI explicitly invokes `/bin/bash`.
+- Rationale: Bash 3.2 continued past failed stub conditions where local Bash 5.3 exited, causing the import-failure regression test to fail in CI. These tests validate release failure handling and cleanup without Apple credentials.
+- Version bump: 1.0.4 to 1.0.5 (PATCH — test-harness compatibility fix).
+
+### 2026-09-12 (v1.0.4 — 20:59 signed release artifacts)
+
+- Added Developer ID signing and Apple notarization for main-push artifacts, using the six existing secret names from aranet-kit. PR artifacts remain explicitly unsigned.
+- Isolated signing credentials to one step and a temporary keychain with exit cleanup; verify the signature and require notarization acceptance before uploading.
+- Added credential-free orchestration tests for signing failures, rejected or timed-out notarization, and cleanup.
+- Rationale: follow the reference repository's PR/main split while producing verifiable binary artifacts without exposing credentials to PR builds.
+- Version bump: 1.0.3 to 1.0.4 (PATCH — release tooling, no public API changes).
+
+### 2026-09-12 (v1.0.3 — 20:37 portable whisper CPU build)
+
+- Disabled GGML native CPU probing and selected an explicit M1-compatible ARMv8.4 target with dot-product and FP16 support.
+- Rationale: GitHub's native probe disabled i8mm while the compiler still selected i8mm intrinsics; release CPU code must not depend on the build host. Metal and Core ML remain enabled.
+- Bootstrap verification now requires a fresh native build. The script hash automatically invalidates the CI xcframework cache.
+- Version bump: 1.0.2 to 1.0.3 (PATCH — native dependency build fix).
+
+### 2026-09-12 (v1.0.2 — 20:10 GitHub CI workflows)
+
+- Added branch-filtered build and release PR validation with the mandatory coverage gate.
+- Shared ARM64/Xcode setup bootstraps and caches whisper's combined Metal/Core ML xcframework before SwiftPM; release PRs produce an optimized CLI artifact.
+- Rationale: validate changes on compatible Apple hardware while avoiding repeated native dependency builds.
+- Version bump: 1.0.1 to 1.0.2 (PATCH — CI tooling, no public API changes).
+
+### 2026-09-12 (v1.0.1 — bootstrap script rename)
+
+- **Whisper bootstrap command renamed.** `_scripts/bootstrap.sh` is the one-time xcframework build entry point.
+- **Rationale.** A concise bootstrap name better reflects that the script prepares the required local binary dependency.
+- **Version bump.** 1.0.0 to 1.0.1 (PATCH — documented build tooling change).
 
 ### 2026-06-11 (v0.8.0 — appleSpeech backend)
 
@@ -329,7 +378,7 @@ Automatically bump the project version after every code change and include it in
 
 ### 2026-05-19 (v0.7.0 — whisper Core ML encoder / ANE)
 
-- **Unified whisper xcframework (Metal + Core ML).** `_scripts/build-whisper.sh` enables `WHISPER_COREML=1` and `WHISPER_COREML_ALLOW_FALLBACK=1` in the same CMake configure as `GGML_METAL`; merges `libwhisper.coreml.a` into the single static archive. `Package.swift` links `CoreML` and `Foundation`. Must rebuild `whisper-build/` after pull — never link a second Core-ML-only library.
+- **Unified whisper xcframework (Metal + Core ML).** `_scripts/bootstrap.sh` enables `WHISPER_COREML=1` and `WHISPER_COREML_ALLOW_FALLBACK=1` in the same CMake configure as `GGML_METAL`; merges `libwhisper.coreml.a` into the single static archive. `Package.swift` links `CoreML` and `Foundation`. Must rebuild `whisper-build/` after pull — never link a second Core-ML-only library.
 - **Encoder bundle install.** `WhisperEncoderInstaller` auto-downloads `ggml-<base>-encoder.mlmodelc.zip` from Hugging Face alongside the `.bin`; installed as `{cache}/<base>-encoder.mlmodelc/`. Quantized model ids strip `-q5_0` etc. for encoder base name (matches whisper.cpp path logic).
 - **Metal preserved.** Decoder and encoder fallback remain on Metal/GGML when the Core ML bundle is absent.
 
@@ -363,11 +412,11 @@ Automatically bump the project version after every code change and include it in
 
 ### 2026-05-18 (whisper.cpp migration)
 
-- **Whisper backend: migrated to whisper.cpp static xcframework (v0.5.0).** Replaced the `argmax-oss-swift` Swift package dependency with a static arm64 xcframework built from whisper.cpp v1.7.5 source. The xcframework is built once by `_scripts/build-whisper.sh` (requires cmake + ninja), output to `whisper-build/whisper.xcframework` (gitignored), and consumed via SPM `.binaryTarget(path:)`. `SuperscribeKit` gains `linkerSettings` for `Metal`, `MetalKit`, `Accelerate`, and `c++`. This pins the whisper.cpp C API version the user runs against regardless of their system state — API breakage is only ever visible when we deliberately upgrade the xcframework. Drops 6 transitive Swift deps (swift-transformers, swift-jinja, yyjson, swift-crypto, swift-asn1, swift-collections).
+- **Whisper backend: migrated to whisper.cpp static xcframework (v0.5.0).** Replaced the `argmax-oss-swift` Swift package dependency with a static arm64 xcframework built from whisper.cpp v1.7.5 source. The xcframework is built once by `_scripts/bootstrap.sh` (requires cmake + ninja), output to `whisper-build/whisper.xcframework` (gitignored), and consumed via SPM `.binaryTarget(path:)`. `SuperscribeKit` gains `linkerSettings` for `Metal`, `MetalKit`, `Accelerate`, and `c++`. This pins the whisper.cpp C API version the user runs against regardless of their system state — API breakage is only ever visible when we deliberately upgrade the xcframework. Drops 6 transitive Swift deps (swift-transformers, swift-jinja, yyjson, swift-crypto, swift-asn1, swift-collections).
 - **Model catalog changed.** Whisper models are now single GGML `.bin` files from `ggerganov/whisper.cpp` on HuggingFace. `defaultModelId = "large-v3-turbo"` (hyphen, not underscore). Install path changed from `~/Documents/huggingface/.../openai_whisper-<id>/` (old convention) to `~/Library/Caches/superscribe/whisper/<id>.bin`. Old model folders are orphaned; user can delete manually.
 - **ModelInstaller single-file support.** `isInstalled(at:backend:)` for `.whisper` now checks for a regular file (not a directory + `.mlmodelc`). Staging uses a sibling `.bin.staging-<uuid>` file path (not a staging directory). `ModelDownloader.downloadFile(model:into:onProgress:)` added for single-file downloads.
 - **WhisperBridge.swift deleted.** Bridging helpers (`extractWords`, `WKWord`) are no longer needed; whisper.cpp token data is read directly via C API in `WhisperBackend.extractTimedWords`.
-- **Build integration.** `_scripts/build-whisper.sh` handles: prerequisite check (cmake/ninja), download of v1.7.5 tarball, cmake configure (arm64, Metal embedded, no examples/tests), ninja build, libtool combine of all `libggml*.a` + `libwhisper.a`, xcodebuild xcframework creation, module.modulemap injection.
+- **Build integration.** `_scripts/bootstrap.sh` handles: prerequisite check (cmake/ninja), download of v1.7.5 tarball, cmake configure (arm64, Metal embedded, no examples/tests), ninja build, libtool combine of all `libggml*.a` + `libwhisper.a`, xcodebuild xcframework creation, module.modulemap injection.
 
 ### 2026-05-02 (audio cache)
 

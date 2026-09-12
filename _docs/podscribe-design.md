@@ -707,7 +707,7 @@ The original design listed `whisper` (whisper.cpp), `mlx`, `speech` (Apple), and
 - MIT, mature C library, OpenAI Whisper GGML models.
 - Supports prompt tokens, word timestamps, Metal GPU via embedded shaders.
 - Generally slower than Parakeet on ANE but often more robust on noisy / accented audio.
-- Integrated as a static arm64 xcframework built by `_scripts/build-whisper.sh`; models are single `.bin` files from HuggingFace.
+- Integrated as a static arm64 xcframework built by `_scripts/bootstrap.sh`; models are single `.bin` files from HuggingFace.
 
 ### Apple `SpeechAnalyzer` / `SpeechTranscriber` — deferred (macOS 26)
 

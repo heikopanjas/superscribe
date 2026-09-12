@@ -61,12 +61,16 @@ fi
 
 # ── cmake configure ────────────────────────────────────────────────────────────
 # Metal + Core ML in one tree (see upstream build-xcframework.sh combine_static_libraries).
+# Target the M1-compatible CPU baseline instead of probing the build host. GGML's
+# native probe can select i8mm intrinsics while disabling i8mm on hosted runners.
 echo "==> Configuring (CMake + Ninja, arm64, Release, Metal + Core ML)..."
 cmake -B "$BUILD_DIR" -S "$SRC_DIR" \
     -G Ninja \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
     -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_NATIVE=OFF \
+    -DGGML_CPU_ARM_ARCH=armv8.4-a+dotprod+fp16 \
     -DGGML_METAL=ON \
     -DGGML_METAL_EMBED_LIBRARY=ON \
     -DWHISPER_COREML=1 \

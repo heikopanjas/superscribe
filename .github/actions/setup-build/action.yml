@@ -1,0 +1,38 @@
+name: Set up superscribe build
+description: Select Xcode and prepare the cached Metal and Core ML whisper xcframework.
+
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode and identify toolchain
+      id: toolchain
+      shell: bash
+      run: |
+        test "$(uname -m)" = arm64
+        export DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer
+        echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+        xcodebuild -version
+        swift --version
+        echo "id=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+        echo "image=$(printenv ImageOS)-$(printenv ImageVersion)" >> "$GITHUB_OUTPUT"
+
+    - name: Install missing build and coverage tools
+      shell: bash
+      run: |
+        missing=()
+        command -v cmake >/dev/null || missing+=(cmake)
+        command -v ninja >/dev/null || missing+=(ninja)
+        command -v rg >/dev/null || missing+=(ripgrep)
+        if (( ${#missing[@]} > 0 )); then
+          brew install "${missing[@]}"
+        fi
+
+    - name: Cache whisper xcframework
+      uses: actions/cache@v4
+      with:
+        path: whisper-build/whisper.xcframework
+        key: whisper-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.image }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('_scripts/bootstrap.sh') }}
+
+    - name: Bootstrap whisper with Metal and Core ML
+      shell: bash
+      run: _scripts/bootstrap.sh
