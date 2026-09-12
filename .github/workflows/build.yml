@@ -11,12 +11,14 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 45
+    outputs:
+      version: ${{ steps.binary.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,3 +28,34 @@ jobs:
         run: swift build -Xswiftc -strict-concurrency=complete
       - name: Test and enforce 100 percent coverage
         run: _scripts/coverage.sh --run-tests
+      - uses: ./.github/actions/build-release
+        id: binary
+      - name: Upload pre-release binary
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: superscribe-macos-arm64-unsigned
+          path: ${{ steps.binary.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14
+
+  pre-release:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/feature/'))
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: superscribe-macos-arm64-unsigned
+          path: dist
+      - name: Create GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: bash _scripts/publish-release.sh "$VERSION" dist

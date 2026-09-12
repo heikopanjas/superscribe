@@ -17,6 +17,8 @@ jobs:
   release:
     runs-on: macos-26
     timeout-minutes: 45
+    outputs:
+      version: ${{ steps.binary.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,13 +26,8 @@ jobs:
       - uses: ./.github/actions/setup-build
       - name: Test and enforce 100 percent coverage
         run: _scripts/coverage.sh --run-tests
-      - name: Build release with strict concurrency
+      - uses: ./.github/actions/build-release
         id: binary
-        run: |
-          swift build -c release -Xswiftc -strict-concurrency=complete
-          release_dir="$(swift build -c release --show-bin-path)"
-          install -m 755 "$release_dir/superscribe" "$RUNNER_TEMP/superscribe"
-          echo "path=$RUNNER_TEMP/superscribe" >> "$GITHUB_OUTPUT"
       - name: Sign and notarize main artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -45,14 +42,36 @@ jobs:
       - name: Smoke test and package release
         env:
           BINARY_PATH: ${{ steps.binary.outputs.path }}
+          VERSION: ${{ steps.binary.outputs.version }}
         run: |
           "$BINARY_PATH" --version
           "$BINARY_PATH" --help
-          tar -czf superscribe-macos-arm64.tar.gz -C "$RUNNER_TEMP" superscribe
+          bash _scripts/package-release.sh "$VERSION" "$BINARY_PATH" "$RUNNER_TEMP/dist"
       - name: Upload release candidate
         uses: actions/upload-artifact@v4
         with:
           name: superscribe-macos-arm64${{ github.event_name == 'pull_request' && '-unsigned' || '' }}
-          path: superscribe-macos-arm64.tar.gz
+          path: ${{ runner.temp }}/dist/
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: superscribe-macos-arm64
+          path: dist
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: bash _scripts/publish-release.sh "$VERSION" dist

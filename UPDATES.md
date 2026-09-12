@@ -4,6 +4,14 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-09-12 (v1.0.7, 22:09 github release publication)
+
+- adopted aranet-kit's exact pre-release and stable naming/tagging conventions, with unsigned pre-releases on develop and feature pushes and signed/notarized stable releases on main
+- matched raw pre-release assets and versioned stable archives with readme, license, and sha256 checksums; shared optimized builds and reused artifacts in separate push-only publishing jobs
+- pinned tags to tested commits, rejected existing tags, and kept pre-releases out of latest; prs remain validation-only
+- rationale: publish successful builds as github releases without changing the verified signing setup or exposing publication credentials to pr builds
+- version bump: 1.0.6 to 1.0.7 (PATCH - release tooling, no public API changes)
+
 ### 2026-09-12 (v1.0.6, 21:27 signing keychain registration)
 
 - matched aranet-kit's p12 access settings and registered the temporary keychain in the user's search list before signing; cleanup restores the original search list
