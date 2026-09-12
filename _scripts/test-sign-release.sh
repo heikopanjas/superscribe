@@ -8,8 +8,31 @@ case "$tool" in
     security)
         echo "security $1" >> "$SIGN_TEST_LOG"
         case "$1" in
+            list-keychains)
+                if [[ $# -eq 3 ]]; then
+                    cat "$SIGN_TEST_SEARCH_LIST"
+                else
+                    [[ "$SIGN_TEST_CASE" != search-list-failure ]] || exit 1
+                    shift 4
+                    : > "$SIGN_TEST_SEARCH_LIST"
+                    if [[ $# -gt 0 ]]; then
+                        printf '    "%s"\n' "$@" > "$SIGN_TEST_SEARCH_LIST"
+                    fi
+                fi
+                ;;
+            find-identity)
+                grep -q 'superscribe-signing.*release.keychain-db' "$SIGN_TEST_SEARCH_LIST" || exit 1
+                if [[ "$SIGN_TEST_CASE" == no-identity ]]; then
+                    echo '0 valid identities found'
+                else
+                    echo '  1) 0123456789ABCDEF0123456789ABCDEF01234567 "stub-identity"'
+                fi
+                ;;
             create-keychain) touch "${@: -1}" ;;
-            import) [[ "$SIGN_TEST_CASE" != import-failure ]] || exit 1 ;;
+            import)
+                [[ " $* " == *' -A '* ]] || exit 1
+                [[ "$SIGN_TEST_CASE" != import-failure ]] || exit 1
+                ;;
             delete-keychain)
                 [[ "$SIGN_TEST_CASE" != cleanup-failure ]] || exit 1
                 rm -f "${@: -1}"
@@ -20,7 +43,8 @@ case "$tool" in
     codesign)
         echo "codesign $1" >> "$SIGN_TEST_LOG"
         if [[ "$1" == --force ]]; then
-            [[ "$*" == *'--options runtime --timestamp --keychain'* ]] || exit 1
+            [[ "$*" == *'--options runtime --timestamp --sign'* ]] || exit 1
+            grep -q 'superscribe-signing.*release.keychain-db' "$SIGN_TEST_SEARCH_LIST" || exit 1
             [[ "$SIGN_TEST_CASE" != sign-failure ]] || exit 1
         else
             [[ "$*" == *'--verify --strict'* ]] || exit 1
@@ -58,6 +82,8 @@ done
 export PATH="$test_dir/tools:$PATH"
 export RUNNER_TEMP="$test_dir/runner"
 export SIGN_TEST_LOG="$test_dir/calls.log"
+export SIGN_TEST_SEARCH_LIST="$test_dir/search-list.txt"
+printf '    "%s"\n' '/tmp/stub login.keychain-db' '/tmp/stub-other.keychain-db' > "$test_dir/original-search-list.txt"
 export APPLE_CERTIFICATE_P12_BASE64=c3R1Yg==
 export APPLE_CERTIFICATE_PASSWORD=stub-password
 export APPLE_SIGNING_IDENTITY=stub-identity
@@ -72,6 +98,11 @@ run_case() {
     local expected_exit="$2"
     shift 2
     : > "$SIGN_TEST_LOG"
+    cp "$test_dir/original-search-list.txt" "$SIGN_TEST_SEARCH_LIST"
+    if [[ "$SIGN_TEST_CASE" == empty-search-list ]]; then
+        : > "$SIGN_TEST_SEARCH_LIST"
+    fi
+    cp "$SIGN_TEST_SEARCH_LIST" "$test_dir/expected-search-list.txt"
     local result=0
     "$BASH" "$script_dir/sign-release.sh" "$@" > "$test_dir/output.log" 2>&1 || result=$?
     if [[ "$result" -ne "$expected_exit" ]]; then
@@ -81,6 +112,10 @@ run_case() {
     fi
     if [[ -n "$(ls -A "$RUNNER_TEMP")" ]]; then
         echo "FAIL: $SIGN_TEST_CASE left signing material behind" >&2
+        exit 1
+    fi
+    if ! cmp -s "$test_dir/expected-search-list.txt" "$SIGN_TEST_SEARCH_LIST"; then
+        echo "FAIL: $SIGN_TEST_CASE did not restore the original keychain search list" >&2
         exit 1
     fi
     echo "PASS: $SIGN_TEST_CASE"
@@ -94,7 +129,7 @@ run_case missing-secret 1 "$test_dir/binary"
 [[ ! -s "$SIGN_TEST_LOG" ]]
 export APPLE_CERTIFICATE_PASSWORD="$saved_password"
 
-for failure in import-failure sign-failure verify-failure; do
+for failure in import-failure search-list-failure no-identity sign-failure verify-failure; do
     run_case "$failure" 1 "$test_dir/binary"
     if grep -q 'notarytool submit' "$SIGN_TEST_LOG"; then
         echo "FAIL: notarization ran after $failure" >&2
@@ -109,6 +144,7 @@ done
 run_case malformed 5 "$test_dir/binary"
 run_case cancelled 143 "$test_dir/binary"
 run_case cleanup-failure 0 "$test_dir/binary"
+run_case empty-search-list 0 "$test_dir/binary"
 run_case accepted 0 "$test_dir/binary"
 grep -q 'codesign --verify' "$SIGN_TEST_LOG"
 grep -q 'notarytool submit' "$SIGN_TEST_LOG"
