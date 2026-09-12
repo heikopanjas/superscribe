@@ -31,7 +31,7 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **1.0.3**).
+Check the version with `superscribe --version` (currently **1.0.4**).
 
 ## Speech detection and time-sliced transcription
 
@@ -463,7 +463,11 @@ The first transcription with a newly installed Core ML encoder bundle may be slo
 
 `.github/workflows/build.yml` builds and runs the 100% line and region coverage gate on pushes to, and pull requests targeting, `develop` or `feature/**`.
 
-`.github/workflows/release.yml` runs on pull requests targeting `main`. It runs the same coverage gate, builds the optimized CLI, checks `--version` and `--help`, and uploads `superscribe-macos-arm64.tar.gz` as a release-candidate artifact retained for 14 days. It does not publish a GitHub Release or create tags.
+`.github/workflows/release.yml` runs on pull requests targeting `main` and pushes to `main`. It runs the same coverage gate, builds the optimized CLI, checks `--version` and `--help`, and uploads `superscribe-macos-arm64.tar.gz` for 14 days. PR artifacts are named `superscribe-macos-arm64-unsigned`; main-push artifacts are named `superscribe-macos-arm64` and contain a Developer ID-signed, notarized executable. It does not publish a GitHub Release or create tags.
+
+Signing follows `heikopanjas/aranet-kit` and uses these repository secrets: `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`, and `APPSTORE_CONNECT_KEY_P8_BASE64`. They are available only to the main-push signing step. `_scripts/sign-release.sh` imports the certificate into a temporary keychain, signs with hardened runtime and a secure timestamp, verifies the signature, and requires an accepted Apple notarization result before packaging. Temporary credentials are cleaned up on exit. The bare CLI executable cannot have a notarization ticket stapled to it.
+
+Both workflows run `bash _scripts/test-sign-release.sh` with fake signing/notarization tools and dummy credentials to check orchestration and cleanup. Real signing and notarization are validated by the main-push workflow.
 
 Both workflows use the macOS 26 ARM64 runner with Xcode 26.2. The shared `.github/actions/setup-build/action.yml` installs missing CMake, Ninja, and ripgrep tools, then runs `_scripts/bootstrap.sh` before SwiftPM. Only the finished whisper xcframework is cached, with an exact key covering runner image, architecture, Xcode build, and bootstrap-script contents; changes rebuild the combined Metal/Core ML library. Unit tests use stubs and require no downloaded ASR models.
 

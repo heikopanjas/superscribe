@@ -22,6 +22,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-build
+      - name: Test signing orchestration without credentials
+        run: bash _scripts/test-sign-release.sh
       - name: Build with strict concurrency
         run: swift build -Xswiftc -strict-concurrency=complete
       - name: Test and enforce 100 percent coverage

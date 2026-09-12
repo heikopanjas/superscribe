@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-09-12 (v1.0.3 — portable whisper CPU build)
+**Last updated:** 2026-09-12 (v1.0.4 — signed release artifacts)
 
 <!-- {mission} -->
 
@@ -53,7 +53,7 @@ _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v1.0.3)
+## Subcommand Surface (v1.0.4)
 
 | Subcommand | Purpose |
 |---|---|
@@ -156,8 +156,10 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 
 ### GitHub CI
 
-- `.github/workflows/build.yml` runs on pushes and PRs targeting `develop` or `feature/**`; `.github/workflows/release.yml` runs on PRs targeting `main`.
-- Both use macOS 26 ARM64 with Xcode 26.2 and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. Release CI also builds and smoke-tests the optimized CLI, then uploads a tar archive for 14 days; publishing and tagging are not part of PR validation.
+- `.github/workflows/build.yml` runs on pushes and PRs targeting `develop` or `feature/**`; `.github/workflows/release.yml` runs on PRs targeting `main` and pushes to `main`.
+- Both use macOS 26 ARM64 with Xcode 26.2 and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. Release CI builds and smoke-tests the optimized CLI, then uploads a tar archive for 14 days; publishing GitHub Releases and tagging are not part of these workflows.
+- Release PRs produce explicitly named unsigned artifacts without signing credentials. Main pushes sign with Developer ID, hardened runtime, and a secure timestamp, then require Apple notarization acceptance before packaging. The six signing/notarization secret names match `heikopanjas/aranet-kit` and are exposed only to the signing step.
+- `_scripts/sign-release.sh` owns certificate import into a temporary keychain, signature verification, notarization, and exit cleanup. `_scripts/test-sign-release.sh` tests this orchestration with fake tools and credentials in both workflows. Bare executables cannot be stapled; the notarization ticket is associated with the signature.
 - `.github/actions/setup-build/action.yml` owns shared tool setup and whisper bootstrapping before SwiftPM. Cache only the finished xcframework using an exact runner-image, architecture, Xcode-build, and bootstrap-script hash key; do not restore incompatible fallback keys or cache downloaded ASR models.
 - `_scripts/bootstrap.sh` disables host-specific GGML tuning with `GGML_NATIVE=OFF` and targets `armv8.4-a+dotprod+fp16` for M1-compatible CPU code. Keep Metal and Core ML enabled. Verify bootstrap changes with a fresh native build; an existing xcframework bypasses compilation and cannot validate changed flags.
 
@@ -246,6 +248,14 @@ Automatically bump the project version after every code change and include it in
 <!-- {changelog} -->
 
 ## Recent Updates & Decisions
+
+### 2026-09-12 (v1.0.4 — 20:59 signed release artifacts)
+
+- Added Developer ID signing and Apple notarization for main-push artifacts, using the six existing secret names from aranet-kit. PR artifacts remain explicitly unsigned.
+- Isolated signing credentials to one step and a temporary keychain with exit cleanup; verify the signature and require notarization acceptance before uploading.
+- Added credential-free orchestration tests for signing failures, rejected or timed-out notarization, and cleanup.
+- Rationale: follow the reference repository's PR/main split while producing verifiable binary artifacts without exposing credentials to PR builds.
+- Version bump: 1.0.3 to 1.0.4 (PATCH — release tooling, no public API changes).
 
 ### 2026-09-12 (v1.0.3 — 20:37 portable whisper CPU build)
 

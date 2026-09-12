@@ -4,6 +4,14 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-09-12 (v1.0.4, 20:59 signed release artifacts)
+
+- added developer id signing and notarization on main pushes using the existing six aranet-kit secret names; pr artifacts remain explicitly unsigned
+- isolated credentials to the signing step and a temporary keychain with exit cleanup; require signature verification and accepted notarization before packaging
+- added credential-free orchestration tests for failure handling, notarization status, and cleanup
+- rationale: follow the reference repository's pr/main split and distribute verifiable artifacts without exposing signing credentials to pr builds
+- version bump: 1.0.3 to 1.0.4 (PATCH - release tooling without public api changes)
+
 ### 2026-09-12 (v1.0.3, 20:37 portable whisper cpu build)
 
 - disabled ggml native cpu probing and selected `armv8.4-a+dotprod+fp16`, preserving metal and core ml
