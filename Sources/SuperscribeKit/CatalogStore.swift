@@ -1,66 +1,32 @@
 import Foundation
 
-/// One backend's entry inside the on-disk model catalog.
-public struct CatalogEntry: Sendable, Codable, Hashable {
-    public let fetchedAt: Date
-    public let models: [RemoteModelInfo]
-
-    public init(fetchedAt: Date, models: [RemoteModelInfo]) {
-        self.fetchedAt = fetchedAt
-        self.models = models
-    }
-}
-
-/// On-disk model catalog persisted at `~/.cache/superscribe/catalog.json`.
-///
-/// Schema:
-/// ```json
-/// {
-///   "version": 1,
-///   "entries": { "<backend>": { "fetchedAt": <ISO date>, "models": [...] } }
-/// }
-/// ```
-///
-/// Unknown backends are preserved on round-trip so older binaries don't
-/// destroy entries written by newer ones.
-public struct Catalog: Sendable, Codable {
-    public static let currentVersion = 1
-
-    public var version: Int
-    public var entries: [String: CatalogEntry]
-
-    public init(version: Int = Catalog.currentVersion, entries: [String: CatalogEntry] = [:]) {
-        self.version = version
-        self.entries = entries
-    }
-
-    public func entry(for backend: Backend) -> CatalogEntry? {
-        entries[backend.rawValue]
-    }
-
-    public mutating func update(_ entry: CatalogEntry, for backend: Backend) {
-        entries[backend.rawValue] = entry
-    }
-}
-
 /// Reads and writes the shared catalog file.
 public enum CatalogStore {
+    @TaskLocal internal static var testState = TestDependencyStorage(TestState())
+
+    internal struct TestState {
+        var overrideURL: URL?
+    }
+
     /// Override for testing; nil means use the user's real cache directory.
-    nonisolated(unsafe) static var overrideURL: URL?
+    internal static var overrideURL: URL? {
+        get { return Self.testState[\.overrideURL] }
+        set { Self.testState[\.overrideURL] = newValue }
+    }
 
     public static var fileURL: URL {
-        if let overrideURL { return overrideURL }
-        return defaultCacheDirectory().appendingPathComponent("catalog.json")
+        if let overrideURL = Self.overrideURL { return overrideURL }
+        return Self.defaultCacheDirectory().appendingPathComponent("catalog.json")
     }
 
     static func defaultCacheDirectory() -> URL {
-        SuperscribePaths.catalogCacheDirectory()
+        return SuperscribePaths.catalogCacheDirectory()
     }
 
     /// Loads the catalog from disk. Returns an empty catalog if the file is
     /// missing. Throws if the file exists but cannot be parsed.
     public static func load() throws -> Catalog {
-        let url = fileURL
+        let url = Self.fileURL
         guard FileManager.default.fileExists(atPath: url.path) == true else {
             return Catalog()
         }
@@ -70,8 +36,8 @@ public enum CatalogStore {
 
     /// Atomically writes the catalog to disk, creating parent directories
     /// as needed.
-    public static func save(_ catalog: Catalog) throws {
-        let url = fileURL
+    public static func save(_ catalog: Catalog) throws -> Void {
+        let url = Self.fileURL
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -81,9 +47,21 @@ public enum CatalogStore {
     }
 
     /// Convenience: load → mutate one entry → save.
-    public static func update(_ entry: CatalogEntry, for backend: Backend) throws {
-        var catalog = (try? load()) ?? Catalog()
-        catalog.update(entry, for: backend)
-        try save(catalog)
+    public static func update(_ entry: CatalogEntry, for backend: Backend) throws -> Void {
+        try FileTransaction.withLock(for: Self.fileURL) {
+            var catalog = try Self.load()
+            catalog.update(entry, for: backend)
+            try Self.save(catalog)
+        }
     }
+    public static func updateAsync(_ entry: CatalogEntry, for backend: Backend) async throws -> Void {
+        let dependencies = Self.testState
+        let locks = FileTransaction.lockOperation
+        try await FileTransaction.worker.run { _ in
+            try Self.$testState.withValue(dependencies) {
+                try FileTransaction.$lockOperation.withValue(locks) { try Self.update(entry, for: backend) }
+            }
+        }
+    }
+
 }

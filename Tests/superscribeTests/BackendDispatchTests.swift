@@ -5,24 +5,24 @@ import Testing
 
 @Suite("Backend dispatch", .serialized, ResetSharedStateTrait())
 struct BackendDispatchTests {
-    @Test func registryDefaultModelIds() {
+    @Test func registryDefaultModelIds() -> Void {
         #expect(Backend.parakeet.registryDefaultModelId == ParakeetBackend.defaultModelId)
         #expect(Backend.whisperCpp.registryDefaultModelId == WhisperBackend.defaultModelId)
         #expect(Backend.appleSpeech.registryDefaultModelId == AppleSpeechSupport.defaultLocaleId)
     }
 
-    @Test func installPathForWhisper() throws {
+    @Test func installPathForWhisper() throws -> Void {
         let path = try Backend.whisperCpp.installPath(for: "base")
         #expect(path.lastPathComponent == "base.bin")
         #expect(path.path.contains("whisper"))
     }
 
-    @Test func installPathForParakeet() throws {
+    @Test func installPathForParakeet() throws -> Void {
         let path = try Backend.parakeet.installPath(for: "v3")
         #expect(path.lastPathComponent.contains("v3") || path.path.contains("v3"))
     }
 
-    @Test func installPathForAppleSpeechWhenUnavailable() {
+    @Test func installPathForAppleSpeechWhenUnavailable() -> Void {
         if AppleSpeechSupport.isRuntimeAvailable() == false {
             #expect(throws: ModelInstallationError.self) {
                 _ = try Backend.appleSpeech.installPath(for: "en-US")
@@ -30,13 +30,13 @@ struct BackendDispatchTests {
         }
     }
 
-    @Test func installedModelsEmptyForAppleSpeechWhenUnavailable() async throws {
+    @Test func installedModelsEmptyForAppleSpeechWhenUnavailable() async throws -> Void {
         if AppleSpeechSupport.isRuntimeAvailable() == false {
             #expect(try await Backend.appleSpeech.installedModels().isEmpty == true)
         }
     }
 
-    @Test func installedModelsDispatchesToAppleSpeechWhenAvailable() async throws {
+    @Test func installedModelsDispatchesToAppleSpeechWhenAvailable() async throws -> Void {
         if #available(macOS 26, *) {
             if AppleSpeechSupport.isRuntimeAvailable() == true {
                 AppleSpeechLiveAPI.testInstalledLocaleIds = ["en-US"]
@@ -47,7 +47,7 @@ struct BackendDispatchTests {
         }
     }
 
-    @Test func makeTranscriberReturnsParakeetOnArm64() throws {
+    @Test func makeTranscriberReturnsParakeetOnArm64() throws -> Void {
         #if arch(arm64)
         let t = try Backend.parakeet.makeTranscriber(model: "v3")
         #expect(t.capabilities.defaultModelId == ParakeetBackend.defaultModelId)
@@ -56,7 +56,7 @@ struct BackendDispatchTests {
         #endif
     }
 
-    @Test func makeTranscriberAppleSpeechUnavailableWhenForced() {
+    @Test func makeTranscriberAppleSpeechUnavailableWhenForced() -> Void {
         let prior = AppleSpeechSupport.testForceRuntimeUnavailable
         AppleSpeechSupport.testForceRuntimeUnavailable = true
         defer { AppleSpeechSupport.testForceRuntimeUnavailable = prior }
@@ -65,7 +65,7 @@ struct BackendDispatchTests {
         }
     }
 
-    @Test func makeTranscriberAppleSpeechUnavailableBelowMacOS26() {
+    @Test func makeTranscriberAppleSpeechUnavailableBelowMacOS26() -> Void {
         let priorVersion = AppleSpeechSupport.testOSMajorVersionOverride
         AppleSpeechSupport.testOSMajorVersionOverride = 25
         defer { AppleSpeechSupport.testOSMajorVersionOverride = priorVersion }
@@ -74,7 +74,7 @@ struct BackendDispatchTests {
         }
     }
 
-    @Test func makeTranscriberAppleSpeechUnavailableWhenAPIForcedOff() {
+    @Test func makeTranscriberAppleSpeechUnavailableWhenAPIForcedOff() -> Void {
         let prior = AppleSpeechSupport.testForceAPIAvailabilityFalse
         AppleSpeechSupport.testForceAPIAvailabilityFalse = true
         defer { AppleSpeechSupport.testForceAPIAvailabilityFalse = prior }
@@ -83,14 +83,14 @@ struct BackendDispatchTests {
         }
     }
 
-    @Test func makeTranscriberReturnsAppleSpeechOnMacOS26() throws {
+    @Test func makeTranscriberReturnsAppleSpeechOnMacOS26() throws -> Void {
         if #available(macOS 26, *) {
             let t = try Backend.appleSpeech.makeTranscriber(model: "en-US")
             #expect(t.capabilities.displayName == "Apple Speech")
         }
     }
 
-    @Test func makeTranscriberParakeetUnavailableWhenForced() {
+    @Test func makeTranscriberParakeetUnavailableWhenForced() -> Void {
         let prior = ParakeetBackend.testForceUnavailable
         ParakeetBackend.testForceUnavailable = true
         defer { ParakeetBackend.testForceUnavailable = prior }
@@ -99,7 +99,7 @@ struct BackendDispatchTests {
         }
     }
 
-    @Test func makeTranscriberWhisperUnavailableWhenForced() {
+    @Test func makeTranscriberWhisperUnavailableWhenForced() -> Void {
         let prior = WhisperBackend.testForceUnavailable
         WhisperBackend.testForceUnavailable = true
         defer { WhisperBackend.testForceUnavailable = prior }
@@ -108,7 +108,7 @@ struct BackendDispatchTests {
         }
     }
 
-    @Test func remoteModelsDispatchesToWhisper() async throws {
+    @Test func remoteModelsDispatchesToWhisper() async throws -> Void {
         let info = """
             {"id":"ggerganov/whisper.cpp","lastModified":"2024-01-01T00:00:00Z","siblings":[
               {"rfilename":"ggml-tiny.bin","size":1000}
@@ -117,7 +117,7 @@ struct BackendDispatchTests {
         try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
-                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                 return (resp, Data(info.utf8))
             },
             { session in
@@ -129,7 +129,7 @@ struct BackendDispatchTests {
         )
     }
 
-    @Test func remoteModelsDispatchesToParakeet() async throws {
+    @Test func remoteModelsDispatchesToParakeet() async throws -> Void {
         let payload = """
             [{"id":"FluidInference/parakeet-tdt-0.6b-v3-coreml","lastModified":"2024-01-01T00:00:00Z"}]
             """
@@ -138,7 +138,7 @@ struct BackendDispatchTests {
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
                 if s.contains("/api/models?") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data(payload.utf8))
                 }
                 if s.contains("/api/models/FluidInference/parakeet-tdt-0.6b-v3-coreml") == true {
@@ -147,7 +147,7 @@ struct BackendDispatchTests {
                           {"rfilename":"model.mlmodelc/x","size":100}
                         ]}
                         """
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data(info.utf8))
                 }
                 throw URLError(.unsupportedURL)

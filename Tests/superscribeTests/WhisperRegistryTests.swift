@@ -6,7 +6,7 @@ import Testing
 @Suite("WhisperBackend.filterGGMLSiblings", .serialized, ResetSharedStateTrait())
 struct WhisperRegistryTests {
 
-    @Test func extractsGGMLBinFiles() throws {
+    @Test func extractsGGMLBinFiles() throws -> Void {
         let siblings: [HuggingFaceHub.HFSibling] = [
             .init(rfilename: "ggml-base.bin", size: 100_000_000),
             .init(rfilename: "ggml-large-v3-turbo.bin", size: 1_500_000_000),
@@ -17,7 +17,7 @@ struct WhisperRegistryTests {
             .init(rfilename: "config.json", size: 256)
         ]
 
-        let result = WhisperBackend.filterGGMLSiblings(siblings)
+        let result = try WhisperBackend.filterGGMLSiblings(siblings)
         let byId = Dictionary(uniqueKeysWithValues: result.map { ($0.id, $0) })
 
         #expect(result.count == 2)
@@ -33,46 +33,46 @@ struct WhisperRegistryTests {
         #expect(turbo.fileCount == 1)
     }
 
-    @Test func returnsEmptyWhenNoMatches() {
-        #expect(WhisperBackend.filterGGMLSiblings([]).isEmpty)
+    @Test func returnsEmptyWhenNoMatches() throws -> Void {
+        #expect(try WhisperBackend.filterGGMLSiblings([]).isEmpty)
         #expect(
-            WhisperBackend.filterGGMLSiblings([
+            try WhisperBackend.filterGGMLSiblings([
                 .init(rfilename: "README.md", size: 100)
             ]).isEmpty
         )
     }
 
-    @Test func handlesNilSizes() {
+    @Test func handlesNilSizes() throws -> Void {
         let siblings: [HuggingFaceHub.HFSibling] = [
             .init(rfilename: "ggml-tiny.bin", size: nil)
         ]
-        let result = WhisperBackend.filterGGMLSiblings(siblings)
+        let result = try WhisperBackend.filterGGMLSiblings(siblings)
         #expect(result.count == 1)
         #expect(result[0].id == "tiny")
         #expect(result[0].totalSizeBytes == nil)
     }
 
-    @Test func resultsAreSortedById() {
+    @Test func resultsAreSortedById() throws -> Void {
         let siblings: [HuggingFaceHub.HFSibling] = [
             .init(rfilename: "ggml-tiny.bin", size: 1),
             .init(rfilename: "ggml-base.bin", size: 1),
             .init(rfilename: "ggml-medium.bin", size: 1)
         ]
-        let result = WhisperBackend.filterGGMLSiblings(siblings)
+        let result = try WhisperBackend.filterGGMLSiblings(siblings)
         #expect(result.map(\.id) == ["base", "medium", "tiny"])
     }
 
-    @Test func defaultModelId() {
+    @Test func defaultModelId() -> Void {
         #expect(WhisperBackend.defaultModelId == "large-v3-turbo")
     }
 
-    @Test func encoderBaseIdStripsQuantSuffix() {
+    @Test func encoderBaseIdStripsQuantSuffix() -> Void {
         #expect(WhisperBackend.encoderBaseId(for: "large-v3-turbo") == "large-v3-turbo")
         #expect(WhisperBackend.encoderBaseId(for: "medium-q5_0") == "medium")
         #expect(WhisperBackend.encoderBaseId(for: "tiny-q8_0") == "tiny")
     }
 
-    @Test func encoderInstallPathAndZipName() {
+    @Test func encoderInstallPathAndZipName() -> Void {
         #expect(
             WhisperBackend.encoderInstallPath(for: "large-v3-turbo").lastPathComponent
                 == "large-v3-turbo-encoder.mlmodelc"
@@ -83,7 +83,7 @@ struct WhisperRegistryTests {
         )
     }
 
-    @Test func encoderZipSiblingLookup() {
+    @Test func encoderZipSiblingLookup() -> Void {
         let siblings: [HuggingFaceHub.HFSibling] = [
             .init(rfilename: "ggml-tiny.bin", size: 1),
             .init(rfilename: "ggml-tiny-encoder.mlmodelc.zip", size: 2),
@@ -94,12 +94,12 @@ struct WhisperRegistryTests {
         #expect(WhisperBackend.encoderZipSibling(for: "large-v3-turbo", in: siblings) == nil)
     }
 
-    @Test func filterGGMLIgnoresEmptyModelId() {
+    @Test func filterGGMLIgnoresEmptyModelId() throws -> Void {
         let siblings: [HuggingFaceHub.HFSibling] = [
             .init(rfilename: "ggml-.bin", size: 1),
             .init(rfilename: "ggml-tiny.bin", size: 2)
         ]
-        let result = WhisperBackend.filterGGMLSiblings(siblings)
+        let result = try WhisperBackend.filterGGMLSiblings(siblings)
         #expect(result.count == 1)
         #expect(result[0].id == "tiny")
     }

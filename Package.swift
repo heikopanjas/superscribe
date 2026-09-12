@@ -1,6 +1,7 @@
 // swift-tools-version: 6.2
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
+import Foundation
 import PackageDescription
 
 let package = Package(
@@ -48,7 +49,15 @@ let package = Package(
             dependencies: [
                 "SuperscribeKit",
                 "superscribe"
-            ]
+            ],
+            resources: [.copy("Fixtures")]
         )
     ]
 )
+
+// Hardware tests are absent from the default test graph.
+if ProcessInfo.processInfo.environment["SUPERSCRIBE_INTEGRATION_TESTS"] == "1" {
+    package.targets.append(
+        .testTarget(name: "superscribeIntegrationTests", dependencies: ["SuperscribeKit"])
+    )
+}

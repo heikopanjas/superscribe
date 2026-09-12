@@ -1,16 +1,6 @@
 import FluidAudio
 import Foundation
 
-/// Test seam over FluidAudio's `AsrManager` for unit tests without on-disk models.
-internal protocol ParakeetASRSession: Sendable {
-    var decoderLayerCount: Int { get async }
-    func transcribe(
-        _ samples: [Float],
-        decoderState: inout TdtDecoderState,
-        language: Language?
-    ) async throws -> ASRResult
-}
-
 extension AsrManager: ParakeetASRSession {}
 
 /// Maps FluidAudio ASR output to superscribe segment transcriptions.
@@ -22,7 +12,7 @@ enum ParakeetResultMapping {
         let words: [TimedWord]
 
         if let timings = asr.tokenTimings, timings.isEmpty == false {
-            words = mergeTokensIntoWords(timings, segmentOffset: segment.start)
+            words = Self.mergeTokensIntoWords(timings, segmentOffset: segment.start)
         }
         else {
             let text = asr.text.trimmingCharacters(in: .whitespacesAndNewlines)

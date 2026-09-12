@@ -6,43 +6,43 @@ import Testing
 
 @Suite("BackendManager", .serialized, ResetSharedStateTrait())
 struct BackendManagerTests {
-    @Test func cliBackendOverridesConfig() {
+    @Test func cliBackendOverridesConfig() throws -> Void {
         let config = UserConfig(defaultBackend: Backend.whisperCpp.rawValue)
-        let backend = BackendManager.resolveBackend(cliBackend: .parakeet, config: config)
+        let backend = try BackendManager.resolveBackend(cliBackend: .parakeet, config: config)
         #expect(backend == .parakeet)
     }
 
-    @Test func configBackendWhenCLINil() {
+    @Test func configBackendWhenCLINil() throws -> Void {
         let config = UserConfig(defaultBackend: Backend.whisperCpp.rawValue)
-        let backend = BackendManager.resolveBackend(cliBackend: nil, config: config)
+        let backend = try BackendManager.resolveBackend(cliBackend: nil, config: config)
         #expect(backend == .whisperCpp)
     }
 
-    @Test func builtInDefaultWhenConfigUnset() {
+    @Test func builtInDefaultWhenConfigUnset() throws -> Void {
         let config = UserConfig()
-        let backend = BackendManager.resolveBackend(cliBackend: nil, config: config)
+        let backend = try BackendManager.resolveBackend(cliBackend: nil, config: config)
         #expect(backend == .parakeet)
     }
 
-    @Test func explicitModelOverridesConfig() {
+    @Test func explicitModelOverridesConfig() throws -> Void {
         let config = UserConfig(defaultModels: [Backend.parakeet.rawValue: "v2"])
-        let (_, model) = BackendManager.resolveBackendAndModel(
+        let (_, model) = try BackendManager.resolveBackendAndModel(
             cliBackend: .parakeet, cliModel: "v3", config: config
         )
         #expect(model == "v3")
     }
 
-    @Test func configModelWhenCLINil() {
+    @Test func configModelWhenCLINil() throws -> Void {
         let config = UserConfig(defaultModels: [Backend.parakeet.rawValue: "v2"])
-        let (_, model) = BackendManager.resolveBackendAndModel(
+        let (_, model) = try BackendManager.resolveBackendAndModel(
             cliBackend: .parakeet, cliModel: nil, config: config
         )
         #expect(model == "v2")
     }
 
-    @Test func builtInDefaultModelWhenNothingSet() {
+    @Test func builtInDefaultModelWhenNothingSet() throws -> Void {
         let config = UserConfig()
-        let (_, model) = BackendManager.resolveBackendAndModel(
+        let (_, model) = try BackendManager.resolveBackendAndModel(
             cliBackend: .parakeet, cliModel: nil, config: config
         )
         #expect(model == ParakeetBackend.defaultModelId)

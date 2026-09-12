@@ -4,6 +4,12 @@ import Foundation
 ///
 /// Stored as JSON at `~/.config/superscribe/config.json`.
 public struct UserConfig: Codable, Sendable {
+    @TaskLocal internal static var testState = TestDependencyStorage(TestState())
+
+    internal struct TestState {
+        var overrideConfigFileURL: URL?
+    }
+
     /// Per-backend default model overrides (keyed by `Backend.rawValue`).
     public var defaultModels: [String: String]
     /// User's preferred default backend (nil = built-in default `.parakeet`).
@@ -19,32 +25,49 @@ public struct UserConfig: Codable, Sendable {
     public static let configDirectory: URL = SuperscribePaths.userConfigDirectory()
 
     /// Override for unit tests (nil = default `~/.config/superscribe/config.json`).
-    nonisolated(unsafe) static var overrideConfigFileURL: URL?
+    internal static var overrideConfigFileURL: URL? {
+        get { return Self.testState[\.overrideConfigFileURL] }
+        set { Self.testState[\.overrideConfigFileURL] = newValue }
+    }
     /// Task-local override (parallel-safe); checked before the static override.
     @TaskLocal static var taskOverrideConfigFileURL: URL?
 
     public static var configFileURL: URL {
-        if let taskOverrideConfigFileURL {
+        if let taskOverrideConfigFileURL = Self.taskOverrideConfigFileURL {
             return taskOverrideConfigFileURL
         }
-        if let overrideConfigFileURL {
+        if let overrideConfigFileURL = Self.overrideConfigFileURL {
             return overrideConfigFileURL
         }
-        return configDirectory.appendingPathComponent("config.json")
+        return Self.configDirectory.appendingPathComponent("config.json")
     }
 
-    public static func load() -> UserConfig {
-        guard let data = try? Data(contentsOf: configFileURL),
-            let config = try? JSONCoding.catalogDecoder().decode(UserConfig.self, from: data)
-        else {
-            return UserConfig()
+    public static func load() throws -> UserConfig {
+        guard FileManager.default.fileExists(atPath: Self.configFileURL.path) == true else { return UserConfig() }
+        let data = try Data(contentsOf: Self.configFileURL)
+        return try JSONCoding.catalogDecoder().decode(UserConfig.self, from: data)
+    }
+
+    /// Updates preferences under a cross-process lock without losing other writers' fields.
+    public static func update(_ mutation: @Sendable @escaping (inout UserConfig) throws -> Void) async throws -> Void {
+        let url = Self.configFileURL
+        let locks = FileTransaction.lockOperation
+        try await FileTransaction.worker.run { _ in
+            try Self.$taskOverrideConfigFileURL.withValue(url) {
+                try FileTransaction.$lockOperation.withValue(locks) {
+                    try FileTransaction.withLock(for: url) {
+                        var configuration = try Self.load()
+                        try mutation(&configuration)
+                        try configuration.save()
+                    }
+                }
+            }
         }
-        return config
     }
 
-    public func save() throws {
+    public func save() throws -> Void {
         try FileManager.default.createDirectory(
-            at: Self.configDirectory, withIntermediateDirectories: true
+            at: Self.configFileURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
         let data = try JSONCoding.configEncoder().encode(self)
         try data.write(to: Self.configFileURL, options: .atomic)
@@ -53,24 +76,26 @@ public struct UserConfig: Codable, Sendable {
     /// Returns the user's chosen default model for a backend, or `nil`
     /// if no override is set.
     public func defaultModel(for backend: Backend) -> String? {
-        defaultModels[backend.rawValue]
+        return self.defaultModels[backend.rawValue]
     }
 
     /// Sets the default model for a backend.
-    public mutating func setDefaultModel(_ model: String, for backend: Backend) {
-        defaultModels[backend.rawValue] = model
+    public mutating func setDefaultModel(_ model: String, for backend: Backend) -> Void {
+        self.defaultModels[backend.rawValue] = model
+        return
     }
 
     /// Returns the user's preferred backend, or the built-in default.
     public func resolvedDefaultBackend() -> Backend {
-        if let raw = defaultBackend, let backend = Backend(rawValue: raw) {
+        if let raw = self.defaultBackend, let backend = Backend(rawValue: raw) {
             return backend
         }
         return .parakeet
     }
 
     /// Sets the user's preferred default backend.
-    public mutating func setDefaultBackend(_ backend: Backend) {
-        defaultBackend = backend.rawValue
+    public mutating func setDefaultBackend(_ backend: Backend) -> Void {
+        self.defaultBackend = backend.rawValue
+        return
     }
 }

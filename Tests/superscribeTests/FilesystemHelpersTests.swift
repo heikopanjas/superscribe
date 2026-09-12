@@ -5,14 +5,14 @@ import Testing
 
 @Suite("SuperscribeFS", .serialized, ResetSharedStateTrait())
 struct FilesystemHelpersTests {
-    @Test func stagingURLUsesBasenameAndUUID() {
+    @Test func stagingURLUsesBasenameAndUUID() -> Void {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("model.bin")
         let staging = SuperscribeFS.stagingURL(beside: base)
         #expect(staging.deletingLastPathComponent() == base.deletingLastPathComponent())
         #expect(staging.lastPathComponent.hasPrefix("model.bin.staging-"))
     }
 
-    @Test func isExistingFileAndDirectory() throws {
+    @Test func isExistingFileAndDirectory() throws -> Void {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("fs-dir-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -26,7 +26,7 @@ struct FilesystemHelpersTests {
         #expect(SuperscribeFS.isExistingFile(at: dir) == false)
     }
 
-    @Test func containsCompiledCoreMLBundle() throws {
+    @Test func containsCompiledCoreMLBundle() throws -> Void {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ml-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -38,7 +38,7 @@ struct FilesystemHelpersTests {
         #expect(SuperscribeFS.containsCompiledCoreMLBundle(at: dir) == true)
     }
 
-    @Test func atomicReplaceRemoveFinalThenMove() throws {
+    @Test func atomicReplaceRemoveFinalThenMove() throws -> Void {
         let parent = FileManager.default.temporaryDirectory
             .appendingPathComponent("atomic-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -52,12 +52,12 @@ struct FilesystemHelpersTests {
         try SuperscribeFS.atomicReplace(
             staging: staging,
             final: final,
-            policy: .removeFinalThenMove
+            policy: .replaceExisting
         )
         #expect(String(data: try Data(contentsOf: final), encoding: .utf8) == "new")
     }
 
-    @Test func atomicReplaceDiscardsStagingWhenFinalExists() throws {
+    @Test func atomicReplaceDiscardsStagingWhenFinalExists() throws -> Void {
         let parent = FileManager.default.temporaryDirectory
             .appendingPathComponent("atomic2-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)

@@ -11,9 +11,10 @@ actor DownloadProgressTracker {
     private var bytesCompleted: Int64 = 0
     private var filesCompleted: Int = 0
     private var currentFile: String = ""
-    private var lastEmitAt: Date = .distantPast
-    private var startedAt: Date = .distantPast
-    private var windowStart: Date = .distantPast
+    private let now: @Sendable () -> TimeInterval
+    private var lastEmitAt: TimeInterval = -.infinity
+    private var startedAt: TimeInterval
+    private var windowStart: TimeInterval
     private var windowStartBytes: Int64 = 0
     private var lastThroughput: Double?
 
@@ -22,66 +23,68 @@ actor DownloadProgressTracker {
         backend: Backend,
         filesTotal: Int,
         bytesTotal: Int64?,
-        onProgress: @Sendable @escaping (DownloadProgress) -> Void
+        onProgress: @Sendable @escaping (DownloadProgress) -> Void,
+        now: @Sendable @escaping () -> TimeInterval = { return ProcessInfo.processInfo.systemUptime }
     ) {
         self.modelId = modelId
         self.backend = backend
         self.filesTotal = filesTotal
         self.bytesTotal = bytesTotal
         self.onProgress = onProgress
-        let now = Date()
-        self.startedAt = now
-        self.windowStart = now
+        self.now = now
+        self.startedAt = now()
+        self.windowStart = self.startedAt
     }
 
-    func startFile(name: String) {
-        currentFile = name
+    func startFile(name: String) -> Void {
+        self.currentFile = name
+        return
     }
 
-    func add(bytes: Int64) {
-        bytesCompleted += bytes
-        emit(force: false)
+    func add(bytes: Int64) -> Void {
+        self.bytesCompleted += bytes
+        self.emit(force: false)
     }
 
-    func completeFile() {
-        filesCompleted += 1
-        emit(force: true)
+    func completeFile() -> Void {
+        self.filesCompleted += 1
+        self.emit(force: true)
     }
 
-    func flush() {
-        emit(force: true)
+    func flush() -> Void {
+        self.emit(force: true)
     }
 
-    private func emit(force: Bool) {
-        let now = Date()
-        if force == false && now.timeIntervalSince(lastEmitAt) < ProgressReporting.throttleInterval {
+    private func emit(force: Bool) -> Void {
+        let now = self.now()
+        if force == false && (now - self.lastEmitAt) < ProgressReporting.throttleInterval {
             return
         }
-        let windowElapsed = now.timeIntervalSince(windowStart)
+        let windowElapsed = (now - self.windowStart)
         if windowElapsed >= 1.0 {
-            let delta = bytesCompleted - windowStartBytes
+            let delta = self.bytesCompleted - self.windowStartBytes
             if delta > 0 {
-                lastThroughput = Double(delta) / windowElapsed
+                self.lastThroughput = Double(delta) / windowElapsed
             }
-            windowStart = now
-            windowStartBytes = bytesCompleted
+            self.windowStart = now
+            self.windowStartBytes = self.bytesCompleted
         }
         let reported: Double? = {
-            if let t = lastThroughput { return t }
-            let total = now.timeIntervalSince(startedAt)
-            guard total > 0, bytesCompleted > 0 else { return nil }
-            return Double(bytesCompleted) / total
+            if let t = self.lastThroughput { return t }
+            let total = (now - self.startedAt)
+            guard total > 0, self.bytesCompleted > 0 else { return nil }
+            return Double(self.bytesCompleted) / total
         }()
-        lastEmitAt = now
-        onProgress(
+        self.lastEmitAt = now
+        self.onProgress(
             DownloadProgress(
-                modelId: modelId,
-                backend: backend,
-                currentFile: currentFile,
-                filesCompleted: filesCompleted,
-                filesTotal: filesTotal,
-                bytesCompleted: bytesCompleted,
-                bytesTotal: bytesTotal,
+                modelId: self.modelId,
+                backend: self.backend,
+                currentFile: self.currentFile,
+                filesCompleted: self.filesCompleted,
+                filesTotal: self.filesTotal,
+                bytesCompleted: self.bytesCompleted,
+                bytesTotal: self.bytesTotal,
                 bytesPerSecond: reported
             )
         )

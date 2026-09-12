@@ -5,7 +5,7 @@ import Testing
 
 @Suite("LoadOnce", .serialized, ResetSharedStateTrait())
 struct LoadOnceTests {
-    @Test func coalescesConcurrentLoads() async throws {
+    @Test func coalescesConcurrentLoads() async throws -> Void {
         let loader = LoadOnce<Int>()
         let counter = Counter()
 
@@ -23,7 +23,7 @@ struct LoadOnceTests {
         #expect(await counter.value == 1)
     }
 
-    @Test func clearsInFlightTaskOnFailureAllowingRetry() async throws {
+    @Test func clearsInFlightTaskOnFailureAllowingRetry() async throws -> Void {
         let loader = LoadOnce<Int>()
         let counter = Counter()
 
@@ -45,7 +45,7 @@ struct LoadOnceTests {
         #expect(await counter.value == 2)
     }
 
-    @Test func requireInstalledThrowsWhenMissing() {
+    @Test func requireInstalledThrowsWhenMissing() -> Void {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("missing-\(UUID().uuidString)")
         #expect(throws: ModelInstallationError.self) {
@@ -55,19 +55,14 @@ struct LoadOnceTests {
         }
     }
 
-    @Test func requireInstalledPassesWhenPresent() throws {
+    @Test func requireInstalledPassesWhenPresent() throws -> Void {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("present-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
+        try TestHelpers.makeParakeetInstallation(at: dir)
         try ModelInstallSupport.requireInstalled(at: dir, modelId: "v3", backend: .parakeet)
+        #expect(throws: ModelInstallationError.self) { try ModelInstallSupport.requireInstalled(at: dir, modelId: "en-US", backend: .appleSpeech) }
     }
-}
-
-private enum TestError: Error { case fail }
-
-private actor Counter {
-    private(set) var value = 0
-    func increment() { value += 1 }
 }

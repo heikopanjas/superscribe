@@ -5,25 +5,25 @@ import Testing
 
 @Suite("ByteFormatting", .serialized, ResetSharedStateTrait())
 struct ByteFormattingTests {
-    @Test func formatsBytes() {
+    @Test func formatsBytes() -> Void {
         #expect(ByteFormatting.format(512) == "512 B")
         #expect(ByteFormatting.format(0) == "0 B")
     }
 
-    @Test func formatsKiB() {
+    @Test func formatsKiB() -> Void {
         #expect(ByteFormatting.format(1024) == "1.0 KiB")
         #expect(ByteFormatting.format(1536) == "1.5 KiB")
     }
 
-    @Test func formatsMiB() {
+    @Test func formatsMiB() -> Void {
         #expect(ByteFormatting.format(1024 * 1024) == "1.0 MiB")
     }
 
-    @Test func formatsGiB() {
+    @Test func formatsGiB() -> Void {
         #expect(ByteFormatting.format(1024 * 1024 * 1024) == "1.0 GiB")
     }
 
-    @Test func usedInInstallationError() {
+    @Test func usedInInstallationError() -> Void {
         let err = ModelInstallationError.insufficientDiskSpace(
             requiredBytes: 2048,
             availableBytes: 1024,

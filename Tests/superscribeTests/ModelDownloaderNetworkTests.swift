@@ -18,13 +18,13 @@ struct ModelDownloaderNetworkTests {
         var chunks: [(Int64, Int64?)] = []
     }
 
-    private func tearDown() {
+    private func tearDown() -> Void {
         MockURLSessionHelpers.reset()
     }
 
-    @Test func downloadMultiFileRespectsSubpath() async throws {
+    @Test func downloadMultiFileRespectsSubpath() async throws -> Void {
         let repoId = "FluidInference/subpath-demo"
-        let repoURL = URL(string: "https://huggingface.co/\(repoId)")!
+        let repoURL = (try #require(URL(string: "https://huggingface.co/\(repoId)")))
         let repoPayload = """
             {"id":"\(repoId)","lastModified":null,"siblings":[
               {"rfilename":"weights/a.bin","size":3},
@@ -38,17 +38,19 @@ struct ModelDownloaderNetworkTests {
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
                 if s.contains("/api/models/\(repoId)") == true {
-                    let resp = HTTPURLResponse(
-                        url: url, statusCode: 200, httpVersion: nil, headerFields: nil
-                    )!
+                    let resp =
+                        (try #require(
+                            HTTPURLResponse(
+                                url: url, statusCode: 200, httpVersion: nil, headerFields: nil
+                            )))
                     return (resp, Data(repoPayload.utf8))
                 }
                 if s.contains("/resolve/main/weights/a.bin") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data("AAA".utf8))
                 }
                 if s.contains("/resolve/main/weights/b.bin") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data("BBBB".utf8))
                 }
                 throw URLError(.unsupportedURL)
@@ -85,7 +87,7 @@ struct ModelDownloaderNetworkTests {
         )
     }
 
-    @Test func downloadFileWritesWhisperBin() async throws {
+    @Test func downloadFileWritesWhisperBin() async throws -> Void {
         let repoId = WhisperBackend.huggingFaceRepoId
         let repoPayload = """
             {"id":"\(repoId)","lastModified":null,"siblings":[
@@ -98,11 +100,11 @@ struct ModelDownloaderNetworkTests {
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
                 if s.contains("/api/models/\(repoId)") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data(repoPayload.utf8))
                 }
                 if s.contains("/resolve/main/ggml-tiny.bin") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data("hello".utf8))
                 }
                 throw URLError(.unsupportedURL)
@@ -117,7 +119,7 @@ struct ModelDownloaderNetworkTests {
                         totalSizeBytes: 5,
                         fileCount: 1,
                         lastModified: nil,
-                        repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                        repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
                     let lastBox = LastProgress()
                     try await ModelDownloader.downloadFile(
@@ -133,7 +135,7 @@ struct ModelDownloaderNetworkTests {
         )
     }
 
-    @Test func downloadRepoFileStreamsBytes() async throws {
+    @Test func downloadRepoFileStreamsBytes() async throws -> Void {
         let repoId = "org/enc-demo"
         let file = "bundle.zip"
         try await MockURLSessionHelpers.withMockHandler(
@@ -141,12 +143,14 @@ struct ModelDownloaderNetworkTests {
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
                 if s.contains("/resolve/main/\(file)") == true {
-                    let resp = HTTPURLResponse(
-                        url: url,
-                        statusCode: 200,
-                        httpVersion: nil,
-                        headerFields: nil
-                    )!
+                    let resp =
+                        (try #require(
+                            HTTPURLResponse(
+                                url: url,
+                                statusCode: 200,
+                                httpVersion: nil,
+                                headerFields: nil
+                            )))
                     return (resp, Data([0x50, 0x4B]))
                 }
                 throw URLError(.unsupportedURL)
@@ -172,7 +176,7 @@ struct ModelDownloaderNetworkTests {
         )
     }
 
-    @Test func downloadHttpErrorUsesHttpStatus() async throws {
+    @Test func downloadHttpErrorUsesHttpStatus() async throws -> Void {
         let repoId = "org/x"
         let repoPayload = """
             {"id":"\(repoId)","lastModified":null,"siblings":[
@@ -184,10 +188,10 @@ struct ModelDownloaderNetworkTests {
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
                 if s.contains("/api/models/\(repoId)") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data(repoPayload.utf8))
                 }
-                let resp = HTTPURLResponse(url: url, statusCode: 500, httpVersion: nil, headerFields: nil)!
+                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 500, httpVersion: nil, headerFields: nil)))
                 return (resp, Data())
             },
             { session in
@@ -196,7 +200,7 @@ struct ModelDownloaderNetworkTests {
                         id: "m",
                         repoId: repoId,
                         subpath: nil,
-                        repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                        repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
                     await #expect(throws: ModelInstallationError.self) {
                         try await ModelDownloader.download(
@@ -212,7 +216,7 @@ struct ModelDownloaderNetworkTests {
         )
     }
 
-    @Test func downloadEmptyFilteredFileListThrows() async throws {
+    @Test func downloadEmptyFilteredFileListThrows() async throws -> Void {
         let repoId = "org/empty-filter"
         let repoPayload = """
             {"id":"\(repoId)","lastModified":null,"siblings":[
@@ -222,7 +226,7 @@ struct ModelDownloaderNetworkTests {
         try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
-                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                 return (resp, Data(repoPayload.utf8))
             },
             { session in
@@ -231,7 +235,7 @@ struct ModelDownloaderNetworkTests {
                         id: "m",
                         repoId: repoId,
                         subpath: "missing-prefix/",
-                        repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                        repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
                     await #expect(throws: ModelInstallationError.self) {
                         try await ModelDownloader.download(

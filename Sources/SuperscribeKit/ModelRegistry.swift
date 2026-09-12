@@ -14,5 +14,5 @@ public protocol ModelRegistry {
     static func remoteModels() async throws -> [RemoteModelInfo]
 
     /// Enumerates the models that are currently installed on disk.
-    static func installedModels() throws -> [InstalledModelInfo]
+    static func installedModels() async throws -> [InstalledModelInfo]
 }

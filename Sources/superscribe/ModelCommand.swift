@@ -35,59 +35,62 @@ struct ModelCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Emit machine-readable JSON (only with --list).")
     var json: Bool = false
 
-    mutating func validate() throws {
+    mutating func validate() throws -> Void {
         try assertMutuallyExclusive([
-            ("--list", list),
-            ("--set-default", setDefault != nil),
-            ("--download", download != nil),
-            ("--rm", rm != nil)
+            ("--list", self.list),
+            ("--set-default", self.setDefault != nil),
+            ("--download", self.download != nil),
+            ("--rm", self.rm != nil)
         ])
-        if (download != nil || rm != nil) && refresh == true {
-            throw ValidationError("--refresh cannot be combined with --download or --rm.")
+        if (self.download != nil || self.rm != nil || self.setDefault != nil) && self.refresh == true {
+            throw ValidationError("--refresh cannot be combined with --download, --rm, or --set-default.")
         }
-        if remote == true && (setDefault != nil || download != nil || rm != nil) {
+        if self.yes == true && self.rm == nil { throw ValidationError("--yes requires --rm.") }
+        if self.refresh == true && self.list == true && self.remote == false { throw ValidationError("--refresh with --list requires --remote.") }
+        if self.refresh == true && self.json == true && self.remote == false { throw ValidationError("--json with --refresh requires --remote.") }
+        if self.remote == true && (self.setDefault != nil || self.download != nil || self.rm != nil) {
             throw ValidationError("--remote applies only to --list.")
         }
-        if json == true && (setDefault != nil || download != nil || rm != nil) {
+        if self.json == true && (self.setDefault != nil || self.download != nil || self.rm != nil) {
             throw ValidationError("--json applies only to --list.")
         }
     }
 
-    mutating func run() async throws {
-        let backend = BackendManager.resolveBackend(cliBackend: backend)
+    mutating func run() async throws -> Void {
+        let backend = try BackendManager.resolveBackend(cliBackend: self.backend)
 
-        if let modelId = download {
-            try await runDownload(modelId, backend: backend)
+        if let modelId = self.download {
+            try await self.runDownload(modelId, backend: backend)
             return
         }
-        if let modelId = rm {
-            try await runRemove(modelId, backend: backend)
+        if let modelId = self.rm {
+            try await self.runRemove(modelId, backend: backend)
             return
         }
-        if let modelId = setDefault {
-            try await runSetDefault(modelId, backend: backend)
+        if let modelId = self.setDefault {
+            try await self.runSetDefault(modelId, backend: backend)
             return
         }
-        if refresh == true && list == false {
-            try await runRefresh(backend: backend)
+        if self.refresh == true && self.list == false && self.remote == false {
+            try await self.runRefresh(backend: backend)
             return
         }
         // Default verb is --list (with optional --remote and/or --refresh).
-        try await runList(backend: backend)
+        try await self.runList(backend: backend)
     }
 
     // MARK: - Verbs
 
-    private func runList(backend: Backend) async throws {
-        if remote == true {
-            let (entry, refreshed) = try await ModelManager.catalog(for: backend, forceRefresh: refresh)
+    private func runList(backend: Backend) async throws -> Void {
+        if self.remote == true {
+            let (entry, refreshed) = try await ModelManager.catalog(for: backend, forceRefresh: self.refresh || self.list == false)
             let installed = (try? await ModelManager.installedModels(for: backend)) ?? []
             let installedIds = Set(installed.map(\.id))
-            if json == true {
-                printJSON(entry.models)
+            if self.json == true {
+                try self.printJSON(entry.models)
             }
             else {
-                renderRemoteList(
+                try self.renderRemoteList(
                     entry,
                     installedIds: installedIds,
                     backend: backend,
@@ -99,27 +102,22 @@ struct ModelCommand: AsyncParsableCommand {
 
         // Local install scan.
         let installed = try await ModelManager.installedModels(for: backend)
-        if json == true {
-            printJSON(installed)
+        if self.json == true {
+            try self.printJSON(installed)
         }
         else {
-            renderInstalledList(installed, backend: backend)
+            try self.renderInstalledList(installed, backend: backend)
         }
     }
 
-    private func runRefresh(backend: Backend) async throws {
+    private func runRefresh(backend: Backend) async throws -> Void {
         let (entry, _) = try await ModelManager.catalog(for: backend, forceRefresh: true)
         print(
             "Refreshed \(backend.rawValue) catalog: \(entry.models.count) model(s), fetched \(formatDate(entry.fetchedAt))."
         )
     }
 
-    private func runDownload(_ modelId: String, backend: Backend) async throws {
-        let installPath = try ModelInstaller.installPath(for: modelId, backend: backend)
-        if await ModelInstaller.isInstalled(at: installPath, backend: backend) == true {
-            print("Already installed at \(installPath.path)")
-            return
-        }
+    private func runDownload(_ modelId: String, backend: Backend) async throws -> Void {
         // Always refresh before downloading to avoid stale repoId / repoURL
         // from a previously cached catalog entry.
         let (entry, _) = try await ModelManager.catalog(for: backend, forceRefresh: true)
@@ -139,7 +137,7 @@ struct ModelCommand: AsyncParsableCommand {
         print("Installed at \(final.path)")
     }
 
-    private func runRemove(_ modelId: String, backend: Backend) async throws {
+    private func runRemove(_ modelId: String, backend: Backend) async throws -> Void {
         let installed = (try? await ModelManager.installedModels(for: backend)) ?? []
         guard installed.contains(where: { $0.id == modelId }) == true else {
             let valid = installed.map(\.id).joined(separator: ", ")
@@ -154,7 +152,7 @@ struct ModelCommand: AsyncParsableCommand {
                 "Model '\(modelId)' has no files to remove for backend '\(backend.rawValue)'."
             )
         }
-        if yes == false {
+        if self.yes == false {
             let listing = paths.map(\.path).joined(separator: "\n  ")
             guard confirm(prompt: "Remove '\(modelId)'?\n  \(listing)\n[y/N] ", skip: false) == true else {
                 print("Aborted.")
@@ -163,11 +161,11 @@ struct ModelCommand: AsyncParsableCommand {
         }
         try await ModelInstaller.removeInstalled(modelId: modelId, backend: backend)
         for path in paths {
-            print("Removed \(path.path)")
+            print(backend == .appleSpeech ? "Released reservation for \(modelId)" : "Removed \(path.path)")
         }
     }
 
-    private func runSetDefault(_ modelId: String, backend: Backend) async throws {
+    private func runSetDefault(_ modelId: String, backend: Backend) async throws -> Void {
         let (entry, _) = try await ModelManager.catalog(for: backend, forceRefresh: false)
         guard entry.models.contains(where: { $0.id == modelId }) == true else {
             let valid = entry.models.map(\.id).joined(separator: ", ")
@@ -175,16 +173,14 @@ struct ModelCommand: AsyncParsableCommand {
                 "Unknown model '\(modelId)' for backend '\(backend.rawValue)'. Available: \(valid)"
             )
         }
-        var config = UserConfig.load()
-        config.setDefaultModel(modelId, for: backend)
-        try config.save()
+        try await UserConfig.update { $0.setDefaultModel(modelId, for: backend) }
         print("Default model for '\(backend.rawValue)' set to '\(modelId)'.")
     }
 
     // MARK: - Rendering
 
-    private func renderInstalledList(_ models: [InstalledModelInfo], backend: Backend) {
-        let userDefault = UserConfig.load().defaultModel(for: backend)
+    private func renderInstalledList(_ models: [InstalledModelInfo], backend: Backend) throws -> Void {
+        let userDefault = try UserConfig.load().defaultModel(for: backend)
         let builtinDefault = BackendManager.builtInDefaultModel(for: backend)
         if models.isEmpty == true {
             print("No models installed for backend '\(backend.rawValue)'.")
@@ -193,7 +189,7 @@ struct ModelCommand: AsyncParsableCommand {
         }
         let idWidth = max(8, models.map(\.id.count).max() ?? 0)
         for m in models {
-            let marker = defaultMarker(
+            let marker = self.defaultMarker(
                 id: m.id, userDefault: userDefault, builtinDefault: builtinDefault
             )
             let size = m.sizeBytes.map(formatBytes) ?? "—"
@@ -207,8 +203,8 @@ struct ModelCommand: AsyncParsableCommand {
         installedIds: Set<String>,
         backend: Backend,
         refreshed: Bool
-    ) {
-        let userDefault = UserConfig.load().defaultModel(for: backend)
+    ) throws -> Void {
+        let userDefault = try UserConfig.load().defaultModel(for: backend)
         let builtinDefault = BackendManager.builtInDefaultModel(for: backend)
         if entry.models.isEmpty == true {
             print("Remote catalog for '\(backend.rawValue)' is empty.")
@@ -216,17 +212,21 @@ struct ModelCommand: AsyncParsableCommand {
         }
         let idWidth = max(8, entry.models.map(\.id.count).max() ?? 0)
         for m in entry.models {
-            let marker = defaultMarker(
+            let marker = self.defaultMarker(
                 id: m.id, userDefault: userDefault, builtinDefault: builtinDefault
             )
-            let installedTag = installedIds.contains(m.id) ? " (installed)" : ""
+            let installedTag =
+                if installedIds.contains(m.id) == true { " (installed)" }
+                else { "" }
             let size = m.totalSizeBytes.map(formatBytes) ?? "—"
             let updated = m.lastModified.map(formatDate) ?? "—"
             let paddedId = m.id.padding(toLength: idWidth, withPad: " ", startingAt: 0)
             print("  \(paddedId)  \(size.leftPad(toLength: 10))  \(updated)\(installedTag)\(marker)")
         }
         let stamp = formatDate(entry.fetchedAt)
-        let suffix = refreshed ? " (refreshed)" : ""
+        let suffix =
+            if refreshed == true { " (refreshed)" }
+            else { "" }
         print("\nfetched \(stamp)\(suffix)")
     }
 
@@ -238,12 +238,8 @@ struct ModelCommand: AsyncParsableCommand {
         return ""
     }
 
-    private func printJSON<T: Encodable>(_ value: T) {
-        let encoder = JSONCoding.catalogEncoder()
-        if let data = try? encoder.encode(value),
-            let s = String(data: data, encoding: .utf8)
-        {
-            print(s)
-        }
+    private func printJSON<T: Encodable>(_ value: T) throws -> Void {
+        let data = try JSONCoding.catalogEncoder().encode(value)
+        print(String(decoding: data, as: UTF8.self))
     }
 }

@@ -3,25 +3,18 @@ import Testing
 
 @testable import SuperscribeKit
 
-/// Resets process-wide test doubles before and after every test.
-///
-/// Swift Testing runs tests in parallel by default (even when SPM's `--no-parallel`
-/// is the default). Shared hooks and path overrides require serial execution —
-/// use `swift test --no-parallel` or `_scripts/test.sh`.
-struct ResetSharedStateTrait: SuiteTrait, TestTrait, TestScoping {
-    func provideScope(
-        for test: Test,
-        testCase: Test.Case?,
-        performing function: @Sendable () async throws -> Void
-    ) async throws {
-        TestIsolation.resetSharedState()
-        defer { TestIsolation.resetSharedState() }
-        try await function()
-    }
-}
-
 enum TestIsolation {
-    static func resetSharedState() {
+    static func runInTemporaryStorage(_ function: @Sendable () async throws -> Void) async throws -> Void {
+        try await TestHelpers.withTempDirectory(prefix: "test-scope") { root in
+            SuperscribePaths.overrideFluidAudioModelsDirectory = root.appendingPathComponent("parakeet")
+            SuperscribePaths.overrideWhisperModelCacheDirectory = root.appendingPathComponent("whisper")
+            CatalogStore.overrideURL = root.appendingPathComponent("catalog.json")
+            UserConfig.overrideConfigFileURL = root.appendingPathComponent("config.json")
+            try await function()
+        }
+    }
+
+    static func resetSharedState() -> Void {
         SuperscribeKitTestHooks.resetAll()
         SuperscribePaths.overrideFluidAudioModelsDirectory = nil
         SuperscribePaths.overrideWhisperModelCacheDirectory = nil
@@ -50,9 +43,10 @@ enum TestIsolation {
         if #available(macOS 26, *) {
             AppleSpeechBackend.testForceUnavailable = false
             AppleSpeechBackend.testLoadHook = nil
-            AppleSpeechLiveAPI.testSupportedLocaleIds = nil
-            AppleSpeechLiveAPI.testInstalledLocaleIds = nil
-            AppleSpeechLiveAPI.testTranscriptionSpans = nil
+            AppleSpeechLiveAPI.testSupportedLocaleIds = ["en-US"]
+            AppleSpeechLiveAPI.testInstalledLocaleIds = []
+            AppleSpeechLiveAPI.testReservedLocaleIds = []
+            AppleSpeechLiveAPI.testTranscriptionSpans = []
             AppleSpeechLiveAPI.testForceInstallFailure = false
             AppleSpeechLiveAPI.testForceTranscriptionFailure = false
             AppleSpeechLiveAPI.testSkipLiveTranscription = false

@@ -1,6 +1,6 @@
 # superscribe
 
-Transcribe multi-track podcast recordings into a single time-aligned VTT file (SRT, JSON, and TXT planned). Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a subtitle file ready for editing or publishing.
+Transcribe multi-track podcast recordings into time-aligned VTT, SRT, JSON, or TXT output. Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a subtitle file ready for editing or publishing.
 
 Core logic lives in **SuperscribeKit**, a Swift library you can import from your own macOS apps; the `superscribe` CLI is a thin wrapper around it.
 
@@ -9,7 +9,7 @@ Core logic lives in **SuperscribeKit**, a Swift library you can import from your
 - macOS 14 or later
 - Apple Silicon (M1 or later) — Parakeet and whisper.cpp use Neural Engine / Metal GPU acceleration
 - macOS 26 or later — required only for the **Apple Speech** backend (`appleSpeech`); Parakeet and whisper.cpp run on macOS 14+
-- Swift 6.2 (Xcode 16.3 or later)
+- Swift 6.2 or later (Xcode 26 or later)
 - `cmake` and `ninja` — required once to build the whisper.cpp xcframework (`brew install cmake ninja`)
 
 ## Quick start
@@ -22,7 +22,7 @@ Core logic lives in **SuperscribeKit**, a Swift library you can import from your
 swift build -c release
 
 # 3. Transcribe two tracks and produce a VTT file
-.build/release/superscribe run \
+"$(swift build -c release --show-bin-path)/superscribe" run \
   --track Alice=alice.wav \
   --track Bob=bob.wav \
   --language en \
@@ -31,7 +31,7 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **0.8.0**).
+Check the version with `superscribe --version` (currently **1.0.0**).
 
 ## Speech detection and time-sliced transcription
 
@@ -43,9 +43,9 @@ The second major difference is **silence-aware time slicing.** Long stretches of
 
 ```mermaid
 flowchart TB
-  subgraph per_track ["Per track (parallel)"]
+  subgraph per_track ["Per track (bounded conversion)"]
     A[Source file] --> B[Convert to 16 kHz mono f32 PCM]
-    B --> C[Silence detection on PCM buffer]
+    B --> C[Windowed silence detection on PCM file]
     C --> D["List of SpeechSegment start/end"]
   end
   subgraph transcribe ["Per speech segment (bounded parallel)"]
@@ -56,16 +56,16 @@ flowchart TB
   subgraph merge_phase ["All tracks"]
     G --> H[Intermediate JSON per track]
     H --> I[Flatten + sort by time]
-    I --> J[Merge → VTT]
+    I --> J[Merge → VTT / SRT / JSON / TXT]
   end
 ```
 
 1. **Convert** — Each track is read through AVFoundation and normalized to the backend format (today: **16 kHz, mono, 32-bit float PCM**). Conversion can be cached under `~/.cache/superscribe/audio/` so repeat runs skip re-decoding.
-2. **Detect** — The same PCM buffer is analyzed for speech spans (`Analyzer` in `Sources/SuperscribeKit/Analyzer.swift`). Boundaries are in **seconds on the full track timeline**, not relative to each slice.
-3. **Slice and transcribe** — For each span, `AudioPreparer` copies the sample range, the backend runs inference on that chunk only, and token/word times are shifted by the segment’s `start` so they line up with the original recording.
+2. **Detect** — The prepared PCM file is analyzed in bounded windows for speech spans (`Analyzer` in `Sources/SuperscribeKit/Analyzer.swift`). Boundaries are in **seconds on the full track timeline**, not relative to each slice.
+3. **Slice and transcribe** — For each span, `AudioPreparer` reads only the active segment samples, the backend runs inference on that chunk only, and token/word times are shifted by the segment’s `start` so they line up with the original recording.
 4. **Merge** — Per-track JSON is combined chronologically across speakers (overlap policies, paragraph breaks, cue formatting). Silence detection does not run again at merge time.
 
-Tracks are processed independently in phase 1 (conversion + detection). Phase 2 transcribes segments with bounded concurrency (default **2** concurrent ASR calls) to stay within Neural Engine / GPU limits.
+Conversion and detection use at most **2** workers by default. PCM lives in cache files or temporary files that are removed when the pipeline exits. Segments across all tracks share one global limit of **2** concurrent ASR calls. A Whisper context has exclusive access on its own serial worker; it is never shared by concurrent C inference calls.
 
 ### Why isolated tracks plus slicing matters
 
@@ -96,7 +96,7 @@ The result is an ordered list of `SpeechSegment` values `{ start, end }` in seco
 
 For each `SpeechSegment`:
 
-1. **Slice** — `AudioPreparer.slice` maps `start`/`end` to sample indices at 16 kHz and copies that subrange from the full-track buffer.
+1. **Slice** — `PreparedAudio.samples(in:)` maps `start`/`end` to sample indices and reads that subrange from the prepared file.
 2. **Transcribe** — The backend receives only those samples. All backends return token- or word-level times **relative to the start of the slice** (offset 0).
 3. **Re-anchor** — Superscribe adds the segment’s `start` time to every word (via `TokenAccumulator` / result mapping) so the intermediate file uses **absolute** times on the track clock — the same clock used when merging multiple speakers into one timeline.
 
@@ -109,7 +109,7 @@ After transcription, the pipeline drops:
 - **Segments with no words** — e.g. breath, FX, or music that crossed the RMS threshold but produced no ASR output.
 - **Entire tracks with no surviving segments** — typical for FX or noise-only stems.
 
-Those tracks do not appear in the intermediate transcript. This keeps merge output clean but means very quiet speech or heavily compressed audio may need a lower `--silence-threshold` (less negative, e.g. `−35`) or more `--padding`.
+Those tracks do not appear in the intermediate transcript. This keeps merge output clean but means very quiet speech or heavily compressed audio may need a lower `--silence-threshold` (more negative, e.g. `−50`) or more `--padding`.
 
 ### Tuning flags (`transcribe` / `run`)
 
@@ -133,7 +133,7 @@ Studio vocals on isolated tracks often work well at the defaults. Noisy rooms, d
 | `TranscribePipeline` | Orchestrates detect → slice → transcribe |
 | `Merger` | Cross-speaker timeline (separate from detection) |
 
-Implementations: `Sources/SuperscribeKit/Analyzer.swift`, `AudioPreparer.swift`, `Pipeline.swift`, `Merger.swift`.
+Implementations: `Sources/SuperscribeKit/Analyzer.swift`, `AudioPreparer.swift`, `TranscribePipeline.swift`, `Merger.swift`.
 
 ## Backends
 
@@ -159,7 +159,7 @@ superscribe model --set-default large-v3-turbo --backend whisper.cpp
 | `tdt-ctc-110m` | Compact 110M CTC model |
 | `tdt-ja` | Japanese |
 
-`superscribe model --list --remote --backend parakeet` may show additional compatible Hugging Face repos beyond this curated set.
+The descriptor table is authoritative: unknown repositories and model identifiers are rejected.
 
 ### whisper.cpp models
 
@@ -167,7 +167,7 @@ Any `ggml-<name>.bin` from the [whisper.cpp Hugging Face repo](https://huggingfa
 
 ### Apple Speech locales
 
-Models are **BCP-47 locale ids** (e.g. `en-US`, `de-DE`). The default follows `Locale.current` with an `en-US` fallback. Locale is selected with `--model`, not `--language`. Apple manages assets via `AssetInventory`; superscribe auto-installs missing locales on first `transcribe` / `run`, and the `model` subcommand can pre-install or release them explicitly:
+Models are **BCP-47 locale ids** (e.g. `en-US`, `de-DE`). The default resolves `Locale.current` to a supported equivalent locale, then falls back to supported `en-US`. Locale is selected with `--model`, not `--language`. Apple manages assets via `AssetInventory`; superscribe auto-installs missing locales on first `transcribe` / `run`, and the `model` subcommand can pre-install or release them explicitly:
 
 ```sh
 superscribe model --download en-US --backend appleSpeech
@@ -267,13 +267,25 @@ superscribe merge transcript.superscribe.whisper.cpp.json \
 
 | Option | Default | Description |
 |---|---|---|
-| `--format` | `vtt` | Only `vtt` is implemented today; `srt`, `json`, and `txt` are planned but not yet usable |
+| `--format` | `vtt` | `vtt`, `srt`, `json`, or `txt` |
 | `--merge-output` | stdout | Output file path |
-| `--overlap-policy` | `preserve` | `preserve`, `trim`, or `interleave` |
+| `--overlap-policy` | format-dependent | `preserve` for VTT/SRT/JSON; `interleave` for TXT. Explicit `preserve` is invalid for TXT |
 | `--gap-threshold` | `3.0` s | Paragraph breaks at longer pauses |
 | `--max-cue-duration` | — | Split cues longer than this |
-| `--max-line-length` | — | Accepted by the CLI but not yet implemented |
-| `--include-words` | off | Embed word-level timestamps in VTT |
+| `--max-line-length` | — | Greedy VTT/SRT wrapping by Swift character count; long words stay intact |
+| `--include-words` | off | VTT inline timestamps, SRT word cues, or timestamped TXT words. JSON always keeps word timings |
+
+### Output behavior
+
+- **Preserve** retains overlapping segments in stable chronological order.
+- **Trim** ends the earlier speaker's segment when the next competing speaker starts; crossing words are clamped and words starting beyond the boundary are dropped.
+- **Interleave** orders every timed word exactly once, breaking ties by track, segment, and word input order, then groups consecutive same-speaker runs.
+- Cue splitting prefers the latest sentence boundary within the duration limit, then the latest word boundary. An indivisible timed word/span may exceed the limit; no timing is fabricated.
+- VTT escapes text and voice annotations and restricts inline timestamps to increasing times inside the cue. SRT uses numbered cues, comma milliseconds, and `[Speaker]` labels. Quantized cues always have positive duration.
+- TXT writes `Speaker: text` runs with blank lines at paragraph breaks. With word output, each word is prefixed by `[HH:MM:SS.mmm]`.
+- JSON emits a version-1 document with a `segments` array. Each segment has `speaker`, numeric-second `start`/`end`, `text`, `paragraphBreak`, `overlap`, and complete `words`. Keys are sorted deterministically.
+
+`merge` and `run` use the same renderer. Invalid transcript versions, nonfinite timestamps, reversed intervals, and invalid numeric options throw before rendering. Absolute track mapping paths stay absolute; relative paths resolve against the current working directory.
 
 ### `run`
 
@@ -294,7 +306,7 @@ superscribe run \
 | (merge options) | — | `--format`, `--overlap-policy`, `--gap-threshold`, `--include-words`, `--merge-output`, etc. |
 | `--keep-intermediate` | off | Also write `transcript.superscribe.<backend>.json` (discarded by default) |
 
-On `run`, `--output` only affects the intermediate JSON path when `--keep-intermediate` is set. Use `--merge-output <file>` to write the final VTT without shell redirection.
+On `run`, `--output` only affects the intermediate JSON path when `--keep-intermediate` is set. Use `--merge-output <file>` to write the final rendered output without shell redirection.
 
 ### `model`
 
@@ -304,7 +316,7 @@ List, download, and manage models (or Apple Speech locales). `--list` is the def
 # Installed models for the configured backend
 superscribe model
 
-# Remote catalog — Parakeet/whisper: Hugging Face (cached in catalog.json)
+# Remote catalog — Parakeet/whisper: Hugging Face (standalone --remote refreshes catalog.json)
 superscribe model --remote --backend whisper.cpp
 
 # Remote catalog — Apple Speech: system-supported locales (also cached)
@@ -412,12 +424,12 @@ Add the package to your `Package.swift` and import `SuperscribeKit`:
 import SuperscribeKit
 
 // Library callers are responsible for installing or preflighting models first.
-// The CLI does this automatically before constructing the transcriber.
+// The CLI installs missing assets automatically before transcription.
 let transcriber = try Backend.parakeet.makeTranscriber(model: "v3")
 let config = PipelineConfig(
     tracks: [TrackInput(speaker: "Alice", file: audioURL)],
     backend: .parakeet,
-    transcriptionConfig: TranscriptionConfig(language: "en", model: "v3", prompt: nil)
+    transcriptionConfig: TranscriptionConfig(language: "en", prompt: nil)
 )
 let pipeline = TranscribePipeline(
     transcriber: transcriber,
@@ -426,8 +438,9 @@ let pipeline = TranscribePipeline(
 )
 let transcript = try await pipeline.run()
 
-let merged = Merger(config: MergerConfig()).merge(transcript)
-let vtt = VTTFormatter().render(merged)
+let vtt = try TranscriptRenderer.render(
+    transcript, configuration: RenderConfiguration(format: .vtt)
+)
 ```
 
 `audioCache` is opt-in for library callers; pass `ConvertedAudioCache()` to match the CLI default. See `Sources/SuperscribeKit/` for `TranscribePipeline`, `Analyzer`, `Merger`, and backends. The CLI under `Sources/superscribe/` demonstrates model install, `BackendManager`, and formatters.
@@ -451,13 +464,13 @@ Sources/
   SuperscribeKit/          Core library (importable by Swift apps)
     Backends/              ParakeetBackend, WhisperBackend, AppleSpeechBackend (+ registries, LiveAPI)
     AppleSpeechAssetInstaller.swift  Locale install via AssetInventory
-    Format/                VTTFormatter
+    Format/                VTT/SRT/TXT/JSON formatters and shared cue utilities
     Analyzer.swift         Silence detection
     AudioPreparer.swift    Audio conversion + slicing (16 kHz mono f32 PCM)
     ConvertedAudioCache.swift
     ModelDownloader.swift  Hugging Face downloads with progress
     ModelInstaller.swift   Atomic install + whisper encoder bundles + Apple Speech locales
-    Pipeline.swift         TranscribePipeline orchestration
+    TranscribePipeline.swift  File-backed preparation and global scheduling
     ...
   superscribe/             CLI executable (one file per subcommand)
     TranscribeCommand.swift, MergeCommand.swift, RunCommand.swift
@@ -488,8 +501,73 @@ Coverage gate (SuperscribeKit line **and** region coverage must stay at 100%):
 _scripts/coverage.sh --run-tests
 ```
 
-The gate excludes `WhisperBackend+LiveAPI.swift` and `AppleSpeechBackend+LiveAPI.swift`; those files isolate live C/Speech framework paths that require real models, macOS 26+ APIs, or system-managed assets. Unit tests exercise the coverable shims and stubs around them.
+The gate excludes `WhisperLiveAPI.swift`, `AppleSpeechLiveAPI.swift`, and `AppleSpeechTranscriberBridge.swift`; those files isolate live C/Speech framework paths that require real models, macOS 26+ APIs, or system-managed assets. Unit tests exercise the coverable shims and stubs around them.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Migration to 1.0
+
+Parakeet construction validates model identifiers and now throws:
+
+```swift
+let backend = try ParakeetBackend(model: "v3")
+```
+
+Unknown models throw `UnsupportedModelError` instead of silently selecting v3.
+Only supported Parakeet models are advertised in the remote catalog. The existing
+short aliases remain accepted.
+
+Unit tests run with `_scripts/coverage.sh --run-tests`, which records and verifies
+the binary/profile pair and owned source inputs before enforcing 100% line and region coverage.
+Hardware tests require an already installed model and an explicit audio fixture:
+
+```sh
+SUPERSCRIBE_INTEGRATION_TESTS=1 \
+SUPERSCRIBE_INTEGRATION_AUDIO=/absolute/path/to/speech.wav \
+SUPERSCRIBE_INTEGRATION_MODEL=v3 \
+swift test --no-parallel --filter ParakeetIntegrationTests
+```
+
+Hardware results are separate from unit coverage. The default suite does not run
+inference, reserve/release system Speech assets, or download ASR models.
+
+Additional 1.0 API changes:
+
+```swift
+let configuration = try UserConfig.load()
+try await UserConfig.update { $0.setDefaultModel("v3", for: .parakeet) }
+try SuperscribeFS.atomicReplace(staging: stagingURL, final: finalURL, policy: .replaceExisting)
+```
+
+`ModelRegistry.installedModels()` is async when called through the protocol.
+Corrupt configuration is preserved and reported instead of replaced with defaults.
+
+Backend instances own model identity in 1.0. Remove the `model` argument from
+`TranscriptionConfig` and add `try` to validated backend constructors, analyzer
+entry points, merge/formatter calls, and model install-path resolution. Registry
+methods are async through `Backend` and `ModelRegistry`:
+
+```swift
+let model = try await Backend.appleSpeech.resolveModelId()
+let transcriber = try Backend.appleSpeech.makeTranscriber(model: model)
+let installed = try await Backend.appleSpeech.installedModels()
+let text = try TranscriptRenderer.render(transcript, configuration: .init(format: .txt))
+```
+
+Apple Speech registry entries distinguish installed assets from this application's
+reservations using `ModelInstallationState`. Removing a locale releases the
+reservation, including an incomplete installation; it does not delete system assets.
+
+Use `AudioPreparer.prepare(url:)` and `PreparedAudio.samples(in:)` for bounded
+file-backed audio. `loadAndConvert(url:)` remains an explicit whole-array convenience.
+Set `PipelineConfig.maxConcurrentConversions` and `maxConcurrentTranscriptions`
+to positive limits. The sample-array API requires mono audio and positive rates.
+
+Explicit Whisper downloads repair missing published encoders and incomplete model
+files. Existing installed binary transcription remains usable offline through
+Metal fallback. Shared encoders remain until their last installed variant is removed.
+Filesystem publication is atomic; configuration and cache/catalog transactions use
+process-wide file locks. Unreadable audio caches are reconverted; corrupt user
+configuration is preserved and reported.

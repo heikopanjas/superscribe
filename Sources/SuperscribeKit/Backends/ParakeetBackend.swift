@@ -8,47 +8,56 @@ import Foundation
 /// Models are downloaded automatically on first use and cached at
 /// `~/.cache/fluidaudio/Models/`.
 public actor ParakeetBackend: Transcriber {
+    @TaskLocal internal static var testState = TestDependencyStorage(TestState())
+
+    internal struct TestState {
+        var overrideRemoteModelsSession: URLSession?
+        var defaultRemoteModelsSession: URLSession = .shared
+        var testLoadHook: (@Sendable () async throws -> any ParakeetASRSession)?
+        var testForceUnavailable = false
+    }
+
     /// Test hook for `ensureLoaded()` disk path without FluidAudio on disk.
-    nonisolated(unsafe) internal static var testLoadHook: (@Sendable () async throws -> any ParakeetASRSession)?
+    internal static var testLoadHook: (@Sendable () async throws -> any ParakeetASRSession)? {
+        get { return Self.testState[\.testLoadHook] }
+        set { Self.testState[\.testLoadHook] = newValue }
+    }
     /// When `true`, `isAvailable` reports unavailable (for dispatch tests).
-    nonisolated(unsafe) internal static var testForceUnavailable = false
+    internal static var testForceUnavailable: Bool {
+        get { return Self.testState[\.testForceUnavailable] }
+        set { Self.testState[\.testForceUnavailable] = newValue }
+    }
 
     public nonisolated static var isAvailable: Bool {
-        if testForceUnavailable == true { return false }
+        if Self.testForceUnavailable == true { return false }
         return true
     }
 
     private let loader = LoadOnce<any ParakeetASRSession>()
-    private let modelVersion: AsrModelVersion
+    private let descriptor: ModelDescriptor
+    private nonisolated var modelVersion: AsrModelVersion { return self.descriptor.version }
     private let injectedSession: (any ParakeetASRSession)?
 
+    /// - Throws: `UnsupportedModelError` for an unknown model.
     /// - Parameter model: Model version string. Accepted values:
     ///   `"v3"` (multilingual, default), `"v2"` (English-only),
     ///   `"tdt-ctc-110m"`, `"tdt-ja"`.
-    public init(model: String = "v3") {
-        self.init(model: model, injectedSession: nil)
+    public init(model: String = "v3") throws {
+        try self.init(model: model, injectedSession: nil)
     }
 
     /// Test-only injection point for `ParakeetASRSession` (skips disk load).
-    internal init(model: String, injectedSession: (any ParakeetASRSession)?) {
-        self.modelVersion = Self.parseModelVersion(model)
+    internal init(model: String, injectedSession: (any ParakeetASRSession)?) throws {
+        self.descriptor = try Self.descriptor(for: model)
         self.injectedSession = injectedSession
     }
 
-    private static func parseModelVersion(_ model: String) -> AsrModelVersion {
-        switch model.lowercased() {
-            case "v2": return .v2
-            case "v3": return .v3
-            case "tdt-ctc-110m", "tdtctc110m", "110m": return .tdtCtc110m
-            case "tdt-ja", "tdtja", "ja": return .tdtJa
-            default: return .v3
-        }
-    }
+    public nonisolated var modelId: String { return self.descriptor.id }
 
     public nonisolated var capabilities: BackendCapabilities {
-        BackendCapabilities(
+        return BackendCapabilities(
             requiredAudioFormat: .asr16kMono,
-            displayName: "Parakeet TDT \(modelVersion) (FluidAudio)",
+            displayName: "Parakeet TDT \(self.modelVersion) (FluidAudio)",
             defaultModelId: ParakeetBackend.defaultModelId
         )
     }
@@ -60,7 +69,7 @@ public actor ParakeetBackend: Transcriber {
         segment: SpeechSegment,
         config: TranscriptionConfig
     ) async throws -> SegmentTranscription {
-        let manager = try await ensureLoaded()
+        let manager = try await self.ensureLoaded()
 
         // Map config.language to FluidAudio's Language enum.
         let language: Language? = config.language.flatMap { Language(rawValue: $0) }
@@ -81,15 +90,16 @@ public actor ParakeetBackend: Transcriber {
     // MARK: - Private
 
     private func ensureLoaded() async throws -> any ParakeetASRSession {
-        if let injectedSession {
+        if let injectedSession = self.injectedSession {
             return injectedSession
         }
-        return try await loader.get { [modelVersion] in
+        return try await self.loader.get { [descriptor = self.descriptor] in
+            let modelVersion = descriptor.version
             if let testLoadHook = Self.testLoadHook {
                 return try await testLoadHook()
             }
-            let modelId = ParakeetBackend.shortIdForVersion(modelVersion)
-            let installDir = ParakeetBackend.installPath(for: modelId)
+            let modelId = descriptor.id
+            let installDir = try Self.installPath(for: modelId)
             try ModelInstallSupport.requireInstalled(
                 at: installDir, modelId: modelId, backend: .parakeet
             )
@@ -109,8 +119,7 @@ public actor ParakeetBackend: Transcriber {
         }
     }
 
-    /// Loads FluidAudio ASR models from `installDir`. Unit tests should set
-    /// `SuperscribeKitTestHooks.parakeetMaterializeFromDiskStub` to avoid HF downloads.
+    /// Loads a validated local installation. Unit tests inject storage-only model construction.
     internal static func materializeFromDisk(
         installDir: URL,
         modelVersion: AsrModelVersion
@@ -121,7 +130,7 @@ public actor ParakeetBackend: Transcriber {
         if let stub = SuperscribeKitTestHooks.parakeetMaterializeFromDiskStub {
             return try await stub(installDir, modelVersion)
         }
-        return try await materializeFromDiskUsingFluidAudio(
+        return try await Self.materializeFromDiskUsingFluidAudio(
             installDir: installDir,
             modelVersion: modelVersion
         )
@@ -133,11 +142,11 @@ public actor ParakeetBackend: Transcriber {
         modelVersion: AsrModelVersion
     ) async throws -> any ParakeetASRSession {
         let mgr = AsrManager()
-        let loadedModels = try await loadAsrModels(
+        let loadedModels = try await Self.loadAsrModels(
             installDir: installDir,
             modelVersion: modelVersion
         )
-        try await loadParakeetModelsIntoManager(mgr, models: loadedModels)
+        try await Self.loadParakeetModelsIntoManager(mgr, models: loadedModels)
         return mgr as any ParakeetASRSession
     }
 
@@ -153,7 +162,7 @@ public actor ParakeetBackend: Transcriber {
     internal static func loadParakeetModelsIntoManager(
         _ mgr: AsrManager,
         models: AsrModels
-    ) async throws {
+    ) async throws -> Void {
         if let mgrLoad = SuperscribeKitTestHooks.parakeetAsrManagerLoadModels {
             try await mgrLoad(mgr)
             return
@@ -168,19 +177,10 @@ public actor ParakeetBackend: Transcriber {
         if let load = SuperscribeKitTestHooks.parakeetAsrModelsLoad {
             return try await load(installDir, modelVersion)
         }
-        return try await loadAsrModelsFromFluidAudio(
+        return try await Self.loadAsrModelsFromFluidAudio(
             from: installDir,
             version: modelVersion
         )
     }
 
-    internal static func shortIdForVersion(_ v: AsrModelVersion) -> String {
-        switch v {
-            case .v2: return "v2"
-            case .v3: return "v3"
-            case .tdtCtc110m: return "tdt-ctc-110m"
-            case .tdtJa: return "tdt-ja"
-            case .ctcZhCn: return "v3"
-        }
-    }
 }

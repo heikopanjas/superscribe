@@ -1,101 +1,121 @@
 import Foundation
 import whisper
 
-/// Sendable box for a C `OpaquePointer` (whisper_context *).
-/// whisper_context is not thread-safe for writes, but we only read from it
-/// (via per-call whisper_state), so the isolation is safe.
-private final class WhisperContext: @unchecked Sendable {
-    let ptr: OpaquePointer
-    private let manageLifetime: Bool
-
-    init(_ ptr: OpaquePointer, manageLifetime: Bool = true) {
-        self.ptr = ptr
-        self.manageLifetime = manageLifetime
-    }
-
-    /// Unit-test placeholder; never passed to whisper C API release functions.
-    static func testStub() -> WhisperContext {
-        WhisperContext(OpaquePointer(bitPattern: 0x1)!, manageLifetime: false)
-    }
-
-    deinit {
-        if manageLifetime == true {
-            WhisperLiveAPI.releaseContext(ptr)
-        }
-    }
-}
-
-/// Synthetic whisper token for unit tests (avoids on-disk GGML models).
-internal struct WhisperTestToken: Sendable {
-    let token: String
-    let id: Int32
-    let t0: Int64
-    let t1: Int64
-}
-
 private func suppressLibraryLog(
     _ level: ggml_log_level,
     _ text: UnsafePointer<CChar>?,
     _ userData: UnsafeMutableRawPointer?
-) {}
+) -> Void {}
 
 /// whisper.cpp backend for on-device speech-to-text using OpenAI Whisper GGML
 /// models. Encoder runs on the Apple Neural Engine when a Core ML bundle is
 /// installed beside the `.bin`; otherwise Metal GPU. Decoder uses Metal.
 ///
 /// Each instance owns a single `whisper_context` loaded from a `.bin` model
-/// file on disk. A per-call `whisper_state` provides safe concurrent use
-/// across the two-track pipeline without sharing mutable state between tasks.
+/// file on disk. An owned serial worker performs initialization, inference,
+/// and destruction. Cancellation is bridged into whisper's abort callback.
 public actor WhisperBackend: Transcriber {
+    @TaskLocal internal static var testState = TestDependencyStorage(TestState())
+
+    internal struct TestState {
+        var testForceUnavailable = false
+        var testForceStateInitFailed = false
+        var testForceTranscriptionFailed = false
+        var testForceNilTokenText = false
+        var testNilTokenTextSkipsRemaining = 0
+        var testUseStubLoad = false
+        var testWhisperAPISegments: [[WhisperTestToken]]?
+        var testWhisperInitPointer: OpaquePointer?
+        var testWhisperStatePointer: OpaquePointer?
+        var overrideRemoteModelsSession: URLSession?
+        var defaultRemoteModelsSession: URLSession = .shared
+    }
+
     /// When `true`, `isAvailable` reports unavailable (for dispatch tests).
-    nonisolated(unsafe) internal static var testForceUnavailable = false
+    internal static var testForceUnavailable: Bool {
+        get { return Self.testState[\.testForceUnavailable] }
+        set { Self.testState[\.testForceUnavailable] = newValue }
+    }
     /// When `true`, `transcribe` throws `stateInitFailed` after load.
-    nonisolated(unsafe) internal static var testForceStateInitFailed = false
+    internal static var testForceStateInitFailed: Bool {
+        get { return Self.testState[\.testForceStateInitFailed] }
+        set { Self.testState[\.testForceStateInitFailed] = newValue }
+    }
     /// When `true`, `transcribe` throws `transcriptionFailed`.
-    nonisolated(unsafe) internal static var testForceTranscriptionFailed = false
+    internal static var testForceTranscriptionFailed: Bool {
+        get { return Self.testState[\.testForceTranscriptionFailed] }
+        set { Self.testState[\.testForceTranscriptionFailed] = newValue }
+    }
     /// When `true`, `extractTimedWords` skips tokens whose text pointer is nil.
-    nonisolated(unsafe) internal static var testForceNilTokenText = false
-    nonisolated(unsafe) internal static var testNilTokenTextSkipsRemaining = 0
+    internal static var testForceNilTokenText: Bool {
+        get { return Self.testState[\.testForceNilTokenText] }
+        set { Self.testState[\.testForceNilTokenText] = newValue }
+    }
+    internal static var testNilTokenTextSkipsRemaining: Int {
+        get { return Self.testState[\.testNilTokenTextSkipsRemaining] }
+        set { Self.testState[\.testNilTokenTextSkipsRemaining] = newValue }
+    }
     /// When `true`, `ensureLoaded` returns a stub context (no `.bin` on disk).
-    nonisolated(unsafe) internal static var testUseStubLoad = false
+    internal static var testUseStubLoad: Bool {
+        get { return Self.testState[\.testUseStubLoad] }
+        set { Self.testState[\.testUseStubLoad] = newValue }
+    }
     /// When set for `stub-*` model ids, simulates whisper token API results.
-    nonisolated(unsafe) internal static var testWhisperAPISegments: [[WhisperTestToken]]?
+    internal static var testWhisperAPISegments: [[WhisperTestToken]]? {
+        get { return Self.testState[\.testWhisperAPISegments] }
+        set { Self.testState[\.testWhisperAPISegments] = newValue }
+    }
     /// When set for `stub-*` model ids, bypasses `whisper_init_from_file_with_params`.
-    nonisolated(unsafe) internal static var testWhisperInitPointer: OpaquePointer?
+    internal static var testWhisperInitPointer: OpaquePointer? {
+        get { return Self.testState[\.testWhisperInitPointer] }
+        set { Self.testState[\.testWhisperInitPointer] = newValue }
+    }
     /// When set for `stub-*` model ids, bypasses `whisper_init_state`.
-    nonisolated(unsafe) internal static var testWhisperStatePointer: OpaquePointer?
+    internal static var testWhisperStatePointer: OpaquePointer? {
+        get { return Self.testState[\.testWhisperStatePointer] }
+        set { Self.testState[\.testWhisperStatePointer] = newValue }
+    }
 
     internal static func isStubModel(_ modelId: String) -> Bool {
-        modelId.hasPrefix("stub-")
+        return modelId.hasPrefix("stub-")
     }
 
     private static func shouldUseStubLoad(for modelId: String) -> Bool {
-        testUseStubLoad == true && isStubModel(modelId)
+        return Self.testUseStubLoad == true && Self.isStubModel(modelId)
     }
 
     private static func shouldUseStubAPI(for modelId: String) -> Bool {
-        testWhisperAPISegments != nil && isStubModel(modelId)
+        return Self.testWhisperAPISegments != nil && Self.isStubModel(modelId)
     }
 
     public nonisolated static var isAvailable: Bool {
-        if testForceUnavailable == true { return false }
+        if Self.testForceUnavailable == true { return false }
         return true
     }
 
-    private let loader = LoadOnce<WhisperContext>()
-    private let modelId: String
+    // Static initialization registers process-global C callbacks once, before any context starts.
+    private static let logSuppression: Void = {
+        ggml_log_set(suppressLibraryLog, nil)
+        whisper_log_set(suppressLibraryLog, nil)
+    }()
 
+    private let worker = BlockingWorker(label: "superscribe.whisper")
+    private let loader = LoadOnce<WhisperContext>()
+    public nonisolated let modelId: String
+
+    /// - Throws: An error if the model identifier is invalid.
     /// - Parameter model: GGML model variant, e.g. `"large-v3-turbo"`, `"base"`,
     ///   `"medium-q5_0"`. Defaults to `"large-v3-turbo"`.
-    public init(model: String = WhisperBackend.defaultModelId) {
+    public init(model: String = WhisperBackend.defaultModelId) throws {
+        try ModelPathValidation.identifier(model)
         self.modelId = model
     }
 
     public nonisolated var capabilities: BackendCapabilities {
-        BackendCapabilities(
+        return BackendCapabilities(
             requiredAudioFormat: .asr16kMono,
             displayName: "Whisper (whisper.cpp)",
-            defaultModelId: WhisperBackend.defaultModelId
+            defaultModelId: Self.defaultModelId
         )
     }
 
@@ -106,8 +126,30 @@ public actor WhisperBackend: Transcriber {
         segment: SpeechSegment,
         config: TranscriptionConfig
     ) async throws -> SegmentTranscription {
-        let context = try await ensureLoaded()
+        try config.validate()
+        if let language = config.language, language != "auto" {
+            guard language.withCString({ whisper_lang_id($0) }) >= 0 else {
+                throw WhisperError.unsupportedLanguage(language)
+            }
+        }
+        let context = try await self.ensureLoaded()
+        let dependencies = Self.testState
+        let liveDependencies = WhisperLiveAPI.testState
+        let invocation = WhisperLiveAPI.invocation
+        return try await self.worker.run { [modelId = self.modelId] cancellation in
+            return try Self.$testState.withValue(dependencies) {
+                return try WhisperLiveAPI.$testState.withValue(liveDependencies) {
+                    return try WhisperLiveAPI.$invocation.withValue(invocation) {
+                        return try Self.infer(context: context, modelId: modelId, samples: samples, segment: segment, config: config, cancellation: cancellation)
+                    }
+                }
+            }
+        }
+    }
 
+    private static func infer(
+        context: WhisperContext, modelId: String, samples: [Float], segment: SpeechSegment, config: TranscriptionConfig, cancellation: CancellationFlag
+    ) throws -> SegmentTranscription {
         let useStubAPI = Self.shouldUseStubAPI(for: modelId)
 
         let state: OpaquePointer?
@@ -131,44 +173,58 @@ public actor WhisperBackend: Transcriber {
         params.token_timestamps = true
         params.temperature_inc = 0.0
 
-        let languageCStr: [CChar]? = config.language.flatMap { $0.cString(using: .utf8) }
-        if languageCStr != nil {
-            params.language = languageCStr!.withUnsafeBufferPointer { $0.baseAddress }
+        var input = samples
+        let padded = samples.isEmpty == false && samples.count < 16_000
+        if padded == true {
+            input.append(contentsOf: repeatElement(0, count: 16_000 - input.count))
         }
-
-        let promptCStr: [CChar]? = config.prompt.flatMap { $0.cString(using: .utf8) }
-        if promptCStr != nil {
-            params.initial_prompt = promptCStr!.withUnsafeBufferPointer { $0.baseAddress }
+        params.abort_callback = { userData in
+            guard let userData else { return false }
+            return Unmanaged<CancellationFlag>.fromOpaque(userData).takeUnretainedValue().isCancelled
         }
-
-        let rc = WhisperLiveAPI.runFull(
-            context: context.ptr,
-            state: state,
-            params: params,
-            samples: samples,
-            useStubAPI: useStubAPI
-        )
+        params.abort_callback_user_data = Unmanaged.passUnretained(cancellation).toOpaque()
+        let rc = CStringScope.withCString(config.language) { language in
+            return CStringScope.withCString(config.prompt) { prompt in
+                params.language = language
+                params.initial_prompt = prompt
+                return WhisperLiveAPI.runFull(
+                    context: context.ptr,
+                    state: state,
+                    params: params,
+                    samples: input,
+                    useStubAPI: useStubAPI
+                )
+            }
+        }
+        try cancellation.check()
         guard rc == 0 else {
             throw WhisperError.transcriptionFailed(code: rc)
         }
 
-        let words = extractTimedWords(
+        let words = Self.extractTimedWords(
             ctx: context,
             state: state,
             segmentOffset: segment.start,
             modelId: modelId
         )
+        if padded == true {
+            let bounded = words.compactMap { word -> TimedWord? in
+                if word.start >= segment.end { return nil }
+                return TimedWord(text: word.text, start: word.start, end: min(word.end, segment.end))
+            }
+            return SegmentTranscription(segment: segment, words: bounded)
+        }
         return SegmentTranscription(segment: segment, words: words)
     }
 
     // MARK: - Private
 
     private func ensureLoaded() async throws -> WhisperContext {
-        try await loader.get { [modelId] in
+        return try await self.loader.get { [modelId = self.modelId, worker = self.worker] in
             if Self.shouldUseStubLoad(for: modelId) == true {
-                return WhisperContext.testStub()
+                return WhisperContext.testStub(worker: worker)
             }
-            let binURL = WhisperBackend.installPath(for: modelId)
+            let binURL = Self.installPath(for: modelId)
             try ModelInstallSupport.requireInstalled(
                 at: binURL, modelId: modelId, backend: .whisperCpp
             )
@@ -176,19 +232,26 @@ public actor WhisperBackend: Transcriber {
             FileHandle.standardError.write(
                 Data("Loading Whisper model \(modelId)...\n".utf8)
             )
-            return try Self.loadWhisperContext(from: binPath, modelId: modelId)
+            let dependencies = Self.testState
+            let liveDependencies = WhisperLiveAPI.testState
+            return try await worker.run { _ in
+                return try Self.$testState.withValue(dependencies) {
+                    return try WhisperLiveAPI.$testState.withValue(liveDependencies) {
+                        return try Self.loadWhisperContext(from: binPath, modelId: modelId, worker: worker)
+                    }
+                }
+            }
         }
     }
 
-    private static func loadWhisperContext(from binPath: String, modelId: String) throws -> WhisperContext {
+    private static func loadWhisperContext(from binPath: String, modelId: String, worker: BlockingWorker) throws -> WhisperContext {
         var ctxParams = whisper_context_default_params()
         ctxParams.use_gpu = true
         ctxParams.flash_attn = true
-        ggml_log_set(suppressLibraryLog, nil)
-        whisper_log_set(suppressLibraryLog, nil)
+        _ = Self.logSuppression
 
         let ptr: OpaquePointer?
-        if isStubModel(modelId), let injected = testWhisperInitPointer {
+        if (Self.isStubModel(modelId)) == true, let injected = Self.testWhisperInitPointer {
             ptr = injected
         }
         else {
@@ -197,11 +260,11 @@ public actor WhisperBackend: Transcriber {
         guard let ptr else {
             throw WhisperError.contextInitFailed(path: binPath)
         }
-        let manageLifetime = isStubModel(modelId) == false || testWhisperInitPointer == nil
-        return WhisperContext(ptr, manageLifetime: manageLifetime)
+        let manageLifetime = Self.isStubModel(modelId) == false || Self.testWhisperInitPointer == nil
+        return WhisperContext(ptr, worker: worker, manageLifetime: manageLifetime)
     }
 
-    private nonisolated func extractTimedWords(
+    private static func extractTimedWords(
         ctx: WhisperContext,
         state: OpaquePointer,
         segmentOffset: TimeInterval,
@@ -240,32 +303,17 @@ public actor WhisperBackend: Transcriber {
         return words
     }
 
-    internal static func invokeLogSuppressorsForTesting() {
+    internal static func invokeLogSuppressorsForTesting() -> Void {
         suppressLibraryLog(ggml_log_level(0), nil as UnsafePointer<CChar>?, nil)
     }
 
     /// Exercises managed `WhisperContext` deinit without a real GGML model.
-    internal static func exerciseManagedContextReleaseForTesting() {
+    internal static func exerciseManagedContextReleaseForTesting() -> Void {
         WhisperLiveAPI.testSkipContextRelease = true
         defer { WhisperLiveAPI.testSkipContextRelease = false }
         autoreleasepool {
-            _ = WhisperContext(OpaquePointer(bitPattern: 0x10)!, manageLifetime: true)
-        }
-    }
-}
-
-// MARK: - Errors
-
-enum WhisperError: Error, LocalizedError {
-    case contextInitFailed(path: String)
-    case stateInitFailed
-    case transcriptionFailed(code: Int32)
-
-    var errorDescription: String? {
-        switch self {
-            case .contextInitFailed(let p): return "whisper_context init failed for model at \(p)"
-            case .stateInitFailed: return "whisper_init_state returned nil"
-            case .transcriptionFailed(let c): return "whisper_full_with_state failed (code \(c))"
+            let worker = BlockingWorker(label: "superscribe.whisper.test")
+            _ = WhisperContext(OpaquePointer(Unmanaged.passUnretained(worker).toOpaque()), worker: worker, manageLifetime: true)
         }
     }
 }

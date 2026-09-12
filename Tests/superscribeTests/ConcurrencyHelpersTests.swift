@@ -5,25 +5,25 @@ import Testing
 
 @Suite("ConcurrencyHelpers", .serialized, ResetSharedStateTrait())
 struct ConcurrencyHelpersTests {
-    @Test func respectsConcurrencyLimit() async throws {
+    @Test func respectsConcurrencyLimit() async throws -> Void {
         let limit = 2
         let items = Array(0 ..< 6)
-        let gate = InFlightGate()
+        let gate = ConcurrentTestGate(batchSize: 2)
 
         _ = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(
             limit: limit,
             items: items
         ) { item in
             await gate.enter()
-            defer { Task { await gate.leave() } }
-            try await Task.sleep(for: .milliseconds(20))
+            await gate.leave()
             return item
         }
 
-        #expect(await gate.peak <= limit)
+        #expect(await gate.peak == limit)
+        #expect(await gate.current == 0)
     }
 
-    @Test func preservesResultOrder() async throws {
+    @Test func preservesResultOrder() async throws -> Void {
         let results = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(
             limit: 3,
             items: [1, 2, 3, 4]
@@ -33,7 +33,7 @@ struct ConcurrencyHelpersTests {
         #expect(results == [10, 20, 30, 40])
     }
 
-    @Test func propagatesErrors() async {
+    @Test func propagatesErrors() async -> Void {
         await #expect(throws: TestConcurrencyError.self) {
             _ = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(
                 limit: 2,
@@ -45,28 +45,12 @@ struct ConcurrencyHelpersTests {
         }
     }
 
-    @Test func rejectsNonPositiveLimit() async {
+    @Test func rejectsNonPositiveLimit() async -> Void {
         await #expect(throws: BoundedTaskGroupError.self) {
             _ = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(
                 limit: 0,
                 items: [1]
             ) { $0 }
         }
-    }
-}
-
-private enum TestConcurrencyError: Error { case fail }
-
-private actor InFlightGate {
-    private(set) var current = 0
-    private(set) var peak = 0
-
-    func enter() {
-        current += 1
-        peak = max(peak, current)
-    }
-
-    func leave() {
-        current -= 1
     }
 }

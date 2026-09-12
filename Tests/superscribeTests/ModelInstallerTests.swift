@@ -7,30 +7,23 @@ import Testing
 struct ModelInstallerTests {
 
     private func tempDir() throws -> URL {
-        try TestHelpers.makeTempDir(prefix: "superscribe-installer-tests")
+        return try TestHelpers.makeTempDir(prefix: "superscribe-installer-tests")
     }
 
-    private func makeMlmodelc(at dir: URL) throws {
-        try FileManager.default.createDirectory(
-            at: dir.appendingPathComponent("Encoder.mlmodelc"),
-            withIntermediateDirectories: true
-        )
-    }
-
-    @Test func isInstalledRecognisesMlmodelcDir() async throws {
-        let dir = try tempDir()
+    @Test func isInstalledRecognisesMlmodelcDir() async throws -> Void {
+        let dir = try self.tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // Parakeet: directory with .mlmodelc bundle.
         let parakeetModel = dir.appendingPathComponent("parakeet-v3", isDirectory: true)
         try FileManager.default.createDirectory(at: parakeetModel, withIntermediateDirectories: true)
-        #expect(await ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet) == false)
-        try makeMlmodelc(at: parakeetModel)
-        #expect(await ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet) == true)
+        #expect(await ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet, modelId: "v3") == false)
+        try TestHelpers.makeParakeetInstallation(at: parakeetModel)
+        #expect(await ModelInstaller.isInstalled(at: parakeetModel, backend: .parakeet, modelId: "v3") == true)
     }
 
-    @Test func isInstalledWhisperRequiresBinFile() async throws {
-        let dir = try tempDir()
+    @Test func isInstalledWhisperRequiresBinFile() async throws -> Void {
+        let dir = try self.tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let binPath = dir.appendingPathComponent("large-v3-turbo.bin")
@@ -45,8 +38,8 @@ struct ModelInstallerTests {
         #expect(await ModelInstaller.isInstalled(at: dirPath, backend: .whisperCpp) == false)
     }
 
-    @Test func preflightDiskSpacePassesWhenSizeUnknown() throws {
-        let dir = try tempDir()
+    @Test func preflightDiskSpacePassesWhenSizeUnknown() throws -> Void {
+        let dir = try self.tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         // Should not throw.
         try ModelInstaller.preflightDiskSpace(
@@ -59,7 +52,7 @@ struct ModelInstallerTests {
         )
     }
 
-    @Test func removeInstalledWhisperDeletesBinAndEncoderBundle() async throws {
+    @Test func removeInstalledWhisperDeletesBinAndEncoderBundle() async throws -> Void {
         let modelId = "test-rm-\(UUID().uuidString.prefix(8))"
         let bin = WhisperBackend.installPath(for: String(modelId))
         let encoder = WhisperBackend.encoderInstallPath(for: String(modelId))
@@ -81,8 +74,8 @@ struct ModelInstallerTests {
         #expect(WhisperBackend.isEncoderInstalled(modelId: String(modelId)) == false)
     }
 
-    @Test func preflightDiskSpaceRejectsImpossiblyLargeRequest() throws {
-        let dir = try tempDir()
+    @Test func preflightDiskSpaceRejectsImpossiblyLargeRequest() throws -> Void {
+        let dir = try self.tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         // Far larger than any plausible volume.
         let huge: Int64 = 1_000_000_000_000_000  // 1 PB
@@ -96,75 +89,5 @@ struct ModelInstallerTests {
         catch ModelInstallationError.insufficientDiskSpace {
             // Expected.
         }
-    }
-}
-
-@Suite("Backend installPath conventions", .serialized, ResetSharedStateTrait())
-struct InstallPathTests {
-
-    @Test func whisperInstallPathUsesBinCacheConvention() {
-        let path = WhisperBackend.installPath(for: "large-v3-turbo")
-        #expect(path.lastPathComponent == "large-v3-turbo.bin")
-        #expect(path.path.contains("superscribe/whisper/large-v3-turbo.bin"))
-    }
-
-    @Test func parakeetInstallPathMatchesFluidAudioConvention() {
-        let path = ParakeetBackend.installPath(for: "v3")
-        #expect(path.lastPathComponent == "parakeet-tdt-0.6b-v3")
-        #expect(path.path.contains("FluidAudio/Models/parakeet-tdt-0.6b-v3"))
-    }
-
-    @Test func parakeetInstallPathPassesUnknownIdsThrough() {
-        let path = ParakeetBackend.installPath(for: "parakeet-future-coreml")
-        #expect(path.lastPathComponent == "parakeet-future-coreml")
-    }
-
-    @Test func parakeetRepoFolderNameRoundTrips() {
-        #expect(ParakeetBackend.installFolderName(for: "v3") == "parakeet-tdt-0.6b-v3")
-        #expect(ParakeetBackend.installFolderName(for: "tdt-ja") == "parakeet-ja")
-        #expect(ParakeetBackend.installFolderName(for: "unknown-id") == "unknown-id")
-    }
-
-    @Test func parakeetHfRepoIdResolvesShortIds() {
-        #expect(
-            ParakeetBackend.huggingFaceRepoId(for: "v3")
-                == "FluidInference/parakeet-tdt-0.6b-v3-coreml"
-        )
-        #expect(
-            ParakeetBackend.huggingFaceRepoId(for: "tdt-ja")
-                == "FluidInference/parakeet-0.6b-ja-coreml"
-        )
-    }
-}
-
-@Suite("ModelInstallationError", .serialized, ResetSharedStateTrait())
-struct ModelInstallationErrorTests {
-
-    @Test func modelNotInstalledMessageNamesInstallCommand() {
-        let err = ModelInstallationError.modelNotInstalled(model: "tiny", backend: .whisperCpp)
-        let msg = err.description
-        #expect(msg.contains("Whisper"))
-        #expect(msg.contains("tiny"))
-        #expect(msg.contains("superscribe models --download tiny --backend whisper"))
-    }
-
-    @Test func unknownModelListsAvailable() {
-        let err = ModelInstallationError.unknownModel(
-            model: "bogus", backend: .parakeet, available: ["v2", "v3"]
-        )
-        let msg = err.description
-        #expect(msg.contains("bogus"))
-        #expect(msg.contains("v2, v3"))
-    }
-
-    @Test func unknownModelEmptyCatalogMessage() {
-        let err = ModelInstallationError.unknownModel(
-            model: "missing", backend: .whisperCpp, available: []
-        )
-        #expect(err.description.contains("(catalog empty)") == true)
-    }
-
-    @Test func installLockEarlyReturnAfterFire() async {
-        await ModelInstaller.exerciseInstallLockEarlyReturnForTesting()
     }
 }

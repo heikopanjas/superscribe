@@ -1,44 +1,35 @@
 import Foundation
 
-/// Renders `MergedSegment`s as a WebVTT document.
-public struct VTTFormatter: Sendable {
+public struct VTTFormatter: TranscriptFormatter {
     public var includeWords: Bool
+    public var maxLineLength: Int?
 
-    public init(includeWords: Bool = false) {
+    public init(includeWords: Bool = false, maxLineLength: Int? = nil) {
         self.includeWords = includeWords
+        self.maxLineLength = maxLineLength
     }
 
-    public func render(_ segments: [MergedSegment]) -> String {
+    public func render(_ segments: [MergedSegment]) throws -> String {
+        try RenderConfiguration.validateLineLength(self.maxLineLength)
         var output = "WEBVTT\n"
-        for segment in segments {
-            output += "\n"
-            output += "\(Self.timestamp(segment.start)) --> \(Self.timestamp(segment.end))\n"
-            output += "<v \(segment.speaker)>"
-            output += body(for: segment)
-            output += "\n"
+        for segment in try TranscriptValidation.normalized(segments) {
+            let (start, end) = SubtitleTimestamp.bounds(segment)
+            var previous = start
+            let body = SubtitleText.wrap(segment.words, maximum: self.maxLineLength) { index, text in
+                let escaped = SubtitleText.escape(text)
+                guard self.includeWords == true, index >= 0 else { return escaped }
+                let timestamp = SubtitleTimestamp.milliseconds(segment.words[index].start)
+                guard timestamp > previous, timestamp < end else { return escaped }
+                previous = timestamp
+                return "<\(SubtitleTimestamp.string(milliseconds: timestamp))>\(escaped)"
+            }
+            let speaker = segment.speaker.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            output += "\n\(SubtitleTimestamp.string(milliseconds: start)) --> \(SubtitleTimestamp.string(milliseconds: end))\n<v \(SubtitleText.escape(speaker))>\(body)\n"
         }
         return output
     }
 
-    private func body(for segment: MergedSegment) -> String {
-        guard includeWords == true, segment.words.isEmpty == false else {
-            return segment.words.map(\.text).joined(separator: " ")
-        }
-        // Inline word timestamps: `<00:00:01.230>word`.
-        return segment.words
-            .map { "<\(Self.timestamp($0.start))>\($0.text)" }
-            .joined(separator: " ")
-    }
-
-    /// Format a duration as `HH:MM:SS.mmm` (always; spec-compliant for VTT).
-    static func timestamp(_ seconds: TimeInterval) -> String {
-        let clamped = max(0, seconds)
-        let totalMillis = Int((clamped * 1000.0).rounded())
-        let millis = totalMillis % 1000
-        let totalSeconds = totalMillis / 1000
-        let s = totalSeconds % 60
-        let m = (totalSeconds / 60) % 60
-        let h = totalSeconds / 3600
-        return String(format: "%02d:%02d:%02d.%03d", h, m, s, millis)
+    internal static func timestamp(_ seconds: TimeInterval) -> String {
+        return SubtitleTimestamp.string(milliseconds: SubtitleTimestamp.milliseconds(max(0, seconds)))
     }
 }

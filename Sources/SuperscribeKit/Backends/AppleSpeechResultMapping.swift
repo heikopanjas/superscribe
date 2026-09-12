@@ -9,7 +9,7 @@ enum AppleSpeechResultMapping {
     }
 
     static func map(spans: [WordSpan], segmentOffset: TimeInterval) -> [TimedWord] {
-        spans.compactMap { span in
+        return spans.compactMap { span in
             let trimmed = span.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.isEmpty == false else { return nil }
             return TimedWord(

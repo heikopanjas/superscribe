@@ -5,7 +5,7 @@ import Testing
 
 @Suite("WhisperEncoderInstaller", .serialized, ResetSharedStateTrait())
 struct WhisperEncoderInstallerTests {
-    @Test func skipsWhenEncoderAlreadyInstalled() async throws {
+    @Test func skipsWhenEncoderAlreadyInstalled() async throws -> Void {
         let modelId = "base"
         let encoderPath = WhisperBackend.encoderInstallPath(for: modelId)
         try FileManager.default.createDirectory(at: encoderPath, withIntermediateDirectories: true)
@@ -17,7 +17,7 @@ struct WhisperEncoderInstallerTests {
             totalSizeBytes: 1,
             fileCount: 1,
             lastModified: nil,
-            repoURL: URL(string: "https://huggingface.co/\(WhisperBackend.huggingFaceRepoId)")!
+            repoURL: (try #require(URL(string: "https://huggingface.co/\(WhisperBackend.huggingFaceRepoId)")))
         )
 
         let probe = ProgressTickProbe()
@@ -27,7 +27,7 @@ struct WhisperEncoderInstallerTests {
         #expect(probe.count == 0)
     }
 
-    @Test func downloadProgressReportingBuildsExpectedShape() throws {
+    @Test func downloadProgressReportingBuildsExpectedShape() throws -> Void {
         let probe = ProgressCapture()
         DownloadProgressReporting.emit(
             modelId: "base",
@@ -46,25 +46,5 @@ struct WhisperEncoderInstallerTests {
         #expect(progress.filesTotal == 2)
         #expect(progress.bytesCompleted == 50)
         #expect(progress.bytesTotal == 100)
-    }
-}
-
-private final class ProgressTickProbe: @unchecked Sendable {
-    private let lock = NSLock()
-    private(set) var count = 0
-    func tick() {
-        lock.lock()
-        count += 1
-        lock.unlock()
-    }
-}
-
-private final class ProgressCapture: @unchecked Sendable {
-    private let lock = NSLock()
-    private(set) var value: DownloadProgress?
-    func store(_ progress: DownloadProgress) {
-        lock.lock()
-        value = progress
-        lock.unlock()
     }
 }

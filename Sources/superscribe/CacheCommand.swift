@@ -20,44 +20,44 @@ struct CacheCommand: ParsableCommand {
     @Flag(name: .long, help: "Skip confirmation prompt (use with --clear).")
     var yes: Bool = false
 
-    mutating func validate() throws {
+    mutating func validate() throws -> Void {
         try assertMutuallyExclusive([
-            ("--list", list),
-            ("--clear", clear),
-            ("--rm", rm != nil)
+            ("--list", self.list),
+            ("--clear", self.clear),
+            ("--rm", self.rm != nil)
         ])
-        if yes == true && clear == false {
+        if self.yes == true && self.clear == false {
             throw ValidationError("--yes applies only to --clear.")
         }
     }
 
-    mutating func run() throws {
+    mutating func run() throws -> Void {
         let cache = ConvertedAudioCache()
-        if list == true {
-            try runList(cache: cache)
+        if self.list == true {
+            try self.runList(cache: cache)
         }
-        else if clear == true {
-            try runClear(cache: cache)
+        else if self.clear == true {
+            try self.runClear(cache: cache)
         }
-        else if let path = rm {
-            try runRemove(path: path, cache: cache)
+        else if let path = self.rm {
+            try self.runRemove(path: path, cache: cache)
         }
         else {
-            try runInfo(cache: cache)
+            try self.runInfo(cache: cache)
         }
     }
 
     // MARK: - Verbs
 
-    private func runInfo(cache: ConvertedAudioCache) throws {
-        let (entries, totalBytes) = try scanEntries(cache: cache)
+    private func runInfo(cache: ConvertedAudioCache) throws -> Void {
+        let (entries, totalBytes) = try self.scanEntries(cache: cache)
         print("Cache location: \(cache.root.path)")
         print("Entries:        \(entries.count)")
         print("Total size:     \(formatBytes(totalBytes))")
     }
 
-    private func runList(cache: ConvertedAudioCache) throws {
-        let (entries, totalBytes) = try scanEntries(cache: cache)
+    private func runList(cache: ConvertedAudioCache) throws -> Void {
+        let (entries, totalBytes) = try self.scanEntries(cache: cache)
         if entries.isEmpty == true {
             print("Cache is empty (\(cache.root.path))")
             return
@@ -77,8 +77,8 @@ struct CacheCommand: ParsableCommand {
         print("\n\(entries.count) entry(s) — \(formatBytes(totalBytes))")
     }
 
-    private func runClear(cache: ConvertedAudioCache) throws {
-        let (entries, totalBytes) = try scanEntries(cache: cache)
+    private func runClear(cache: ConvertedAudioCache) throws -> Void {
+        let (entries, totalBytes) = try self.scanEntries(cache: cache)
         if entries.isEmpty == true {
             print("Cache is already empty.")
             return
@@ -86,7 +86,7 @@ struct CacheCommand: ParsableCommand {
         guard
             confirm(
                 prompt: "Delete \(entries.count) entry(s) (\(formatBytes(totalBytes))) from \(cache.root.path)? [y/N] ",
-                skip: yes
+                skip: self.yes
             ) == true
         else {
             print("Aborted.")
@@ -96,7 +96,7 @@ struct CacheCommand: ParsableCommand {
         print("Cleared \(entries.count) entry(s) (\(formatBytes(totalBytes))).")
     }
 
-    private func runRemove(path: String, cache: ConvertedAudioCache) throws {
+    private func runRemove(path: String, cache: ConvertedAudioCache) throws -> Void {
         let url = URL(fileURLWithPath: path).standardizedFileURL
         guard let key = cache.key(for: url, targetFormat: .asr16kMono) else {
             print("Cannot read file metadata for '\(url.lastPathComponent)' — no entry deleted.")

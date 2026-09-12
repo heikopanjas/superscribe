@@ -13,7 +13,7 @@ extension Backend {
     public func installPath(for modelId: String) throws -> URL {
         switch self {
             case .whisperCpp: return WhisperBackend.installPath(for: modelId)
-            case .parakeet: return ParakeetBackend.installPath(for: modelId)
+            case .parakeet: return try ParakeetBackend.installPath(for: modelId)
             case .appleSpeech: return try AppleSpeechCatalog.installPath(for: modelId)
         }
     }
@@ -40,14 +40,14 @@ extension Backend {
                 guard ParakeetBackend.isAvailable == true else {
                     throw BackendTranscriberError.unavailable("Parakeet requires Apple Silicon")
                 }
-                return ParakeetBackend(model: model)
+                return try ParakeetBackend(model: model)
             case .whisperCpp:
                 guard WhisperBackend.isAvailable == true else {
                     throw BackendTranscriberError.unavailable("Whisper requires Apple Silicon")
                 }
-                return WhisperBackend(model: model)
+                return try WhisperBackend(model: model)
             case .appleSpeech:
-                return try makeAppleSpeechTranscriberDispatch(model: model)
+                return try self.makeAppleSpeechTranscriberDispatch(model: model)
         }
     }
 
@@ -62,12 +62,15 @@ extension Backend {
     }
 }
 
-public enum BackendTranscriberError: Error, CustomStringConvertible, Sendable {
-    case unavailable(String)
-
-    public var description: String {
+extension Backend {
+    public func resolveModelId(_ requested: String? = nil) async throws -> String {
         switch self {
-            case .unavailable(let msg): return msg
+            case .parakeet: return try ParakeetBackend.descriptor(for: requested ?? ParakeetBackend.defaultModelId).id
+            case .whisperCpp:
+                let model = requested ?? WhisperBackend.defaultModelId
+                try ModelPathValidation.identifier(model)
+                return model
+            case .appleSpeech: return try await AppleSpeechSupport.resolveModelId(requested)
         }
     }
 }

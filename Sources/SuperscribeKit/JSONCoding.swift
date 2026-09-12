@@ -25,7 +25,7 @@ public enum JSONCoding {
 
     /// Intermediate transcript on-disk format (ISO-8601 dates, unescaped slashes).
     public static func transcriptEncoder() -> JSONEncoder {
-        let encoder = catalogEncoder()
+        let encoder = Self.catalogEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         return encoder
     }

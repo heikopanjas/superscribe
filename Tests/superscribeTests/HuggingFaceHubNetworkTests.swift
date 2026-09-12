@@ -6,18 +6,18 @@ import Testing
 @Suite("HuggingFaceHub networking", .serialized, ResetSharedStateTrait())
 struct HuggingFaceHubNetworkTests {
 
-    private func tearDownMocks() {
+    private func tearDownMocks() -> Void {
         MockURLSessionHelpers.reset()
     }
 
-    @Test func listAuthorReposUsesMockSession() async throws {
+    @Test func listAuthorReposUsesMockSession() async throws -> Void {
         let payload = """
             [{"id":"FluidInference/demo-coreml","lastModified":"2024-01-02T03:04:05Z"}]
             """
         try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
-                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                 return (resp, Data(payload.utf8))
             },
             { session in
@@ -33,7 +33,7 @@ struct HuggingFaceHubNetworkTests {
         )
     }
 
-    @Test func repoInfoSuccess() async throws {
+    @Test func repoInfoSuccess() async throws -> Void {
         let payload = """
             {"id":"ggerganov/whisper.cpp","lastModified":"2024-03-01T00:00:00Z","siblings":[
               {"rfilename":"ggml-base.bin","size":100}
@@ -42,7 +42,7 @@ struct HuggingFaceHubNetworkTests {
         try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
-                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                 return (resp, Data(payload.utf8))
             },
             { session in
@@ -57,11 +57,11 @@ struct HuggingFaceHubNetworkTests {
         )
     }
 
-    @Test func http404MapsToHttpError() async throws {
+    @Test func http404MapsToHttpError() async throws -> Void {
         try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
-                let resp = HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!
+                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)))
                 return (resp, Data())
             },
             { session in
@@ -72,7 +72,7 @@ struct HuggingFaceHubNetworkTests {
         )
     }
 
-    @Test func transportErrorFromFailedMock() async throws {
+    @Test func transportErrorFromFailedMock() async throws -> Void {
         try await MockURLSessionHelpers.withMockHandler(
             { _ in throw URLError(.notConnectedToInternet) },
             { session in
@@ -83,7 +83,7 @@ struct HuggingFaceHubNetworkTests {
         )
     }
 
-    @Test func flexibleISO8601ParsesFractionalAndPlain() throws {
+    @Test func flexibleISO8601ParsesFractionalAndPlain() throws -> Void {
         let frac = try #require(HuggingFaceHub.flexibleISO8601("2024-05-01T12:34:56.789Z"))
         let plain = try #require(HuggingFaceHub.flexibleISO8601("2024-05-01T12:34:56Z"))
         #expect(frac.timeIntervalSinceReferenceDate > 0)
@@ -93,11 +93,11 @@ struct HuggingFaceHubNetworkTests {
         #expect(bad == nil)
     }
 
-    @Test func decodingErrorWrapsPayload() async throws {
+    @Test func decodingErrorWrapsPayload() async throws -> Void {
         try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
-                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                 return (resp, Data(#"{"id":"x","lastModified":123,"siblings":[]}"#.utf8))
             },
             { session in

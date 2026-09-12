@@ -91,10 +91,10 @@ extension IntermediateTranscript {
     /// JSON encoder configured for the on-disk format: pretty-printed,
     /// stable key order, ISO-8601 timestamps.
     public static func jsonEncoder() -> JSONEncoder {
-        JSONCoding.transcriptEncoder()
+        return JSONCoding.transcriptEncoder()
     }
 
     public static func jsonDecoder() -> JSONDecoder {
-        JSONCoding.catalogDecoder()
+        return JSONCoding.catalogDecoder()
     }
 }

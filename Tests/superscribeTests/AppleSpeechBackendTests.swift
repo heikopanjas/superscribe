@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Apple Speech backend", .serialized, ResetSharedStateTrait())
 struct AppleSpeechBackendTests {
-    @Test func makeTranscriberUnavailableWhenForced() {
+    @Test func makeTranscriberUnavailableWhenForced() throws -> Void {
         if #available(macOS 26, *) {
             let prior = AppleSpeechBackend.testForceUnavailable
             AppleSpeechBackend.testForceUnavailable = true
@@ -16,10 +16,10 @@ struct AppleSpeechBackendTests {
         }
     }
 
-    @Test func transcribeMapsStubSpans() async throws {
+    @Test func transcribeMapsStubSpans() async throws -> Void {
         if #available(macOS 26, *) {
             AppleSpeechLiveAPI.testTranscriptionSpans = [
-                .init(text: "hello", start: 0.0, end: 0.3),
+                .init(text: "hello", start: 0.0, end: 0.3)
             ]
             defer { AppleSpeechLiveAPI.testTranscriptionSpans = nil }
 
@@ -28,9 +28,9 @@ struct AppleSpeechBackendTests {
             }
             defer { AppleSpeechBackend.testLoadHook = nil }
 
-            let backend = AppleSpeechBackend(model: "en-US")
+            let backend = try AppleSpeechBackend(model: "en-US")
             let segment = SpeechSegment(start: 5.0, end: 6.0)
-            let config = TranscriptionConfig(language: "en", model: "en-US", prompt: nil)
+            let config = TranscriptionConfig(language: "en", prompt: nil)
             let result = try await backend.transcribe(
                 samples: [0.1, 0.2, 0.3],
                 segment: segment,
@@ -42,7 +42,7 @@ struct AppleSpeechBackendTests {
         }
     }
 
-    @Test func ensureLoadedBuildsSessionFromInstalledLocale() async throws {
+    @Test func ensureLoadedBuildsSessionFromInstalledLocale() async throws -> Void {
         if #available(macOS 26, *) {
             AppleSpeechBackend.testLoadHook = nil
             AppleSpeechLiveAPI.testInstalledLocaleIds = ["en-US"]
@@ -52,16 +52,16 @@ struct AppleSpeechBackendTests {
                 AppleSpeechLiveAPI.testSupportedLocaleIds = nil
             }
 
-            let backend = AppleSpeechBackend(model: "en-US")
+            let backend = try AppleSpeechBackend(model: "en-US")
             let segment = SpeechSegment(start: 0.0, end: 1.0)
-            let config = TranscriptionConfig(language: nil, model: "en-US", prompt: nil)
+            let config = TranscriptionConfig(language: nil, prompt: nil)
             AppleSpeechLiveAPI.testTranscriptionSpans = []
             defer { AppleSpeechLiveAPI.testTranscriptionSpans = nil }
             _ = try await backend.transcribe(samples: [0.1], segment: segment, config: config)
         }
     }
 
-    @Test func ensureLoadedThrowsForUnsupportedLocale() async throws {
+    @Test func ensureLoadedThrowsForUnsupportedLocale() async throws -> Void {
         if #available(macOS 26, *) {
             AppleSpeechBackend.testLoadHook = nil
             AppleSpeechLiveAPI.testInstalledLocaleIds = ["en-US"]
@@ -71,10 +71,10 @@ struct AppleSpeechBackendTests {
                 AppleSpeechLiveAPI.testForceUnsupportedLocale = false
             }
 
-            let backend = AppleSpeechBackend(model: "en-US")
+            let backend = try AppleSpeechBackend(model: "en-US")
             let segment = SpeechSegment(start: 0.0, end: 1.0)
-            let config = TranscriptionConfig(language: nil, model: "en-US", prompt: nil)
-            await #expect(throws: AppleSpeechError.self) {
+            let config = TranscriptionConfig(language: nil, prompt: nil)
+            await #expect(throws: UnsupportedModelError.self) {
                 _ = try await backend.transcribe(
                     samples: [0.1],
                     segment: segment,
@@ -84,15 +84,15 @@ struct AppleSpeechBackendTests {
         }
     }
 
-    @Test func transcribeThrowsWhenInstallMissing() async throws {
+    @Test func transcribeThrowsWhenInstallMissing() async throws -> Void {
         if #available(macOS 26, *) {
             AppleSpeechBackend.testLoadHook = nil
             AppleSpeechLiveAPI.testInstalledLocaleIds = []
             defer { AppleSpeechLiveAPI.testInstalledLocaleIds = nil }
 
-            let backend = AppleSpeechBackend(model: "en-US")
+            let backend = try AppleSpeechBackend(model: "en-US")
             let segment = SpeechSegment(start: 0.0, end: 1.0)
-            let config = TranscriptionConfig(language: nil, model: "en-US", prompt: nil)
+            let config = TranscriptionConfig(language: nil, prompt: nil)
             await #expect(throws: ModelInstallationError.self) {
                 _ = try await backend.transcribe(
                     samples: [0.1],

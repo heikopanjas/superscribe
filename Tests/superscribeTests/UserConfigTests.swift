@@ -6,18 +6,18 @@ import Testing
 @Suite("UserConfig", .serialized, ResetSharedStateTrait())
 struct UserConfigTests {
 
-    @Test func loadMissingFileReturnsDefaults() throws {
+    @Test func loadMissingFileReturnsDefaults() throws -> Void {
         try TestHelpers.withTempDirectory(prefix: "superscribe-userconfig") { dir in
             let url = dir.appendingPathComponent("missing-config.json")
-            UserConfig.$taskOverrideConfigFileURL.withValue(url) {
-                let loaded = UserConfig.load()
+            try UserConfig.$taskOverrideConfigFileURL.withValue(url) {
+                let loaded = try UserConfig.load()
                 #expect(loaded.defaultModels.isEmpty == true)
                 #expect(loaded.defaultBackend == nil)
             }
         }
     }
 
-    @Test func staticOverrideConfigFileURL() throws {
+    @Test func staticOverrideConfigFileURL() throws -> Void {
         try TestHelpers.withTempDirectory(prefix: "superscribe-userconfig-static") { dir in
             let url = dir.appendingPathComponent("static-config.json")
             let prior = UserConfig.overrideConfigFileURL
@@ -27,20 +27,16 @@ struct UserConfigTests {
         }
     }
 
-    @Test func saveLoadRoundTripAndMutators() throws {
+    @Test func saveLoadRoundTripAndMutators() throws -> Void {
         try TestHelpers.withTempDirectory(prefix: "superscribe-userconfig") { dir in
-            let url = dir.appendingPathComponent("config.json")
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
+            let url = dir.appendingPathComponent("nested/config.json")
             try UserConfig.$taskOverrideConfigFileURL.withValue(url) {
                 var cfg = UserConfig()
                 cfg.setDefaultModel("large-v3-turbo", for: .whisperCpp)
                 cfg.setDefaultBackend(.whisperCpp)
                 try cfg.save()
 
-                let loaded = UserConfig.load()
+                let loaded = try UserConfig.load()
                 #expect(loaded.defaultModel(for: .whisperCpp) == "large-v3-turbo")
                 #expect(loaded.resolvedDefaultBackend() == .whisperCpp)
                 #expect(loaded.defaultBackend == Backend.whisperCpp.rawValue)
@@ -48,7 +44,7 @@ struct UserConfigTests {
         }
     }
 
-    @Test func resolvedDefaultBackendIgnoresInvalidRawValue() throws {
+    @Test func resolvedDefaultBackendIgnoresInvalidRawValue() throws -> Void {
         try TestHelpers.withTempDirectory(prefix: "superscribe-userconfig") { dir in
             let url = dir.appendingPathComponent("config.json")
             try FileManager.default.createDirectory(
@@ -60,7 +56,7 @@ struct UserConfigTests {
                 cfg.defaultBackend = "not-a-real-backend"
                 try cfg.save()
 
-                let loaded = UserConfig.load()
+                let loaded = try UserConfig.load()
                 #expect(loaded.resolvedDefaultBackend() == .parakeet)
             }
         }

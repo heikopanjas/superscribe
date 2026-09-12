@@ -8,7 +8,7 @@ struct CatalogStoreTests {
 
     /// Sets up a temp catalog file path for the duration of the test.
     private func withTempCatalog<T>(_ body: () throws -> T) throws -> T {
-        try TestHelpers.withTempDirectory { tmp in
+        return try TestHelpers.withTempDirectory { tmp in
             let url = tmp.appendingPathComponent("catalog.json")
             let prior = CatalogStore.overrideURL
             CatalogStore.overrideURL = url
@@ -17,8 +17,8 @@ struct CatalogStoreTests {
         }
     }
 
-    private func sampleEntry() -> CatalogEntry {
-        CatalogEntry(
+    private func sampleEntry() throws -> CatalogEntry {
+        return CatalogEntry(
             fetchedAt: Date(timeIntervalSince1970: 1_000_000),
             models: [
                 RemoteModelInfo(
@@ -27,24 +27,24 @@ struct CatalogStoreTests {
                     totalSizeBytes: 12345,
                     fileCount: 4,
                     lastModified: Date(timeIntervalSince1970: 999_000),
-                    repoURL: URL(string: "https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml")!
+                    repoURL: (try #require(URL(string: "https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml")))
                 )
             ]
         )
     }
 
-    @Test func loadReturnsEmptyWhenFileMissing() throws {
-        try withTempCatalog {
+    @Test func loadReturnsEmptyWhenFileMissing() throws -> Void {
+        try self.withTempCatalog {
             let catalog = try CatalogStore.load()
             #expect(catalog.entries.isEmpty)
             #expect(catalog.version == Catalog.currentVersion)
         }
     }
 
-    @Test func saveAndLoadRoundTrip() throws {
-        try withTempCatalog {
+    @Test func saveAndLoadRoundTrip() throws -> Void {
+        try self.withTempCatalog {
             var catalog = Catalog()
-            catalog.update(sampleEntry(), for: .parakeet)
+            try catalog.update(self.sampleEntry(), for: .parakeet)
             try CatalogStore.save(catalog)
 
             let loaded = try CatalogStore.load()
@@ -55,9 +55,9 @@ struct CatalogStoreTests {
         }
     }
 
-    @Test func updateConvenienceMergesEntry() throws {
-        try withTempCatalog {
-            try CatalogStore.update(sampleEntry(), for: .parakeet)
+    @Test func updateConvenienceMergesEntry() throws -> Void {
+        try self.withTempCatalog {
+            try CatalogStore.update(self.sampleEntry(), for: .parakeet)
             try CatalogStore.update(
                 CatalogEntry(fetchedAt: Date(), models: []), for: .whisperCpp
             )
@@ -68,8 +68,8 @@ struct CatalogStoreTests {
         }
     }
 
-    @Test func toleratesUnknownFutureBackendKeys() throws {
-        try withTempCatalog {
+    @Test func toleratesUnknownFutureBackendKeys() throws -> Void {
+        try self.withTempCatalog {
             // Hand-written JSON containing a future backend key not in our enum.
             let json = """
                 {
@@ -86,7 +86,7 @@ struct CatalogStoreTests {
                   }
                 }
                 """
-            try json.data(using: .utf8)!.write(to: CatalogStore.fileURL)
+            try (try #require(json.data(using: .utf8))).write(to: CatalogStore.fileURL)
 
             let loaded = try CatalogStore.load()
             // Both keys preserved (entries is just a [String: CatalogEntry]).

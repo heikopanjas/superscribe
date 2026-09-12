@@ -6,7 +6,7 @@ import Testing
 @Suite("IntermediateTranscript JSON", .serialized, ResetSharedStateTrait())
 struct IntermediateTranscriptTests {
 
-    @Test func encodesVersionSessionCreatedAndAnalyzerKeys() throws {
+    @Test func encodesVersionSessionCreatedAndAnalyzerKeys() throws -> Void {
         let created = Date(timeIntervalSince1970: 1_700_000_000)
         let transcript = IntermediateTranscript(
             session: "/session/foo/bar",

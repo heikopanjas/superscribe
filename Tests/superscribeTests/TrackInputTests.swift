@@ -5,7 +5,7 @@ import Testing
 
 @Suite("TrackInputScanning", .serialized, ResetSharedStateTrait())
 struct TrackInputTests {
-    @Test func filtersByAudioExtension() throws {
+    @Test func filtersByAudioExtension() throws -> Void {
         try TestHelpers.withTempDirectory { dir in
             FileManager.default.createFile(
                 atPath: dir.appendingPathComponent("a.wav").path, contents: Data()
@@ -22,7 +22,7 @@ struct TrackInputTests {
         }
     }
 
-    @Test func sortsByLocalizedFilename() throws {
+    @Test func sortsByLocalizedFilename() throws -> Void {
         try TestHelpers.withTempDirectory { dir in
             for name in ["zeta.wav", "Alpha.wav", "beta.wav"] {
                 FileManager.default.createFile(
@@ -35,7 +35,7 @@ struct TrackInputTests {
         }
     }
 
-    @Test func speakerKeysAreOneBased() throws {
+    @Test func speakerKeysAreOneBased() throws -> Void {
         try TestHelpers.withTempDirectory { dir in
             for name in ["first.wav", "second.wav"] {
                 FileManager.default.createFile(
@@ -48,7 +48,7 @@ struct TrackInputTests {
         }
     }
 
-    @Test func scanTracksThrowsWhenNoAudioFiles() throws {
+    @Test func scanTracksThrowsWhenNoAudioFiles() throws -> Void {
         try TestHelpers.withTempDirectory { dir in
             FileManager.default.createFile(
                 atPath: dir.appendingPathComponent("notes.txt").path, contents: Data()
@@ -59,7 +59,7 @@ struct TrackInputTests {
         }
     }
 
-    @Test func scanTracksReturnsSpeakerMap() throws {
+    @Test func scanTracksReturnsSpeakerMap() throws -> Void {
         try TestHelpers.withTempDirectory { dir in
             FileManager.default.createFile(
                 atPath: dir.appendingPathComponent("track.wav").path, contents: Data()

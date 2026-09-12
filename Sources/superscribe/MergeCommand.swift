@@ -13,15 +13,15 @@ struct MergeCommand: AsyncParsableCommand {
 
     @OptionGroup var options: MergeOptions
 
-    mutating func run() async throws {
-        let data = try Data(contentsOf: URL(fileURLWithPath: intermediateFile))
+    mutating func run() async throws -> Void {
+        let data = try Data(contentsOf: URL(fileURLWithPath: self.intermediateFile))
         let transcript = try IntermediateTranscript.jsonDecoder().decode(
             IntermediateTranscript.self, from: data
         )
 
-        let output = Self.renderMerged(transcript, options: options)
+        let output = try Self.renderMerged(transcript, options: self.options)
 
-        if let path = options.mergeOutput {
+        if let path = self.options.mergeOutput {
             try output.write(toFile: path, atomically: true, encoding: .utf8)
         }
         else {
@@ -32,21 +32,7 @@ struct MergeCommand: AsyncParsableCommand {
     static func renderMerged(
         _ transcript: IntermediateTranscript,
         options: MergeOptions
-    ) -> String {
-        let merger = Merger(
-            config: MergerConfig(
-                overlapPolicy: options.overlapPolicy,
-                gapThreshold: options.gapThreshold,
-                maxCueDuration: options.maxCueDuration
-            )
-        )
-        let merged = merger.merge(transcript)
-
-        switch options.format {
-            case .vtt:
-                return VTTFormatter(includeWords: options.includeWords).render(merged)
-            case .srt, .json, .txt:
-                fatalError("Output format `\(options.format.rawValue)` is not yet implemented")
-        }
+    ) throws -> String {
+        return try TranscriptRenderer.render(transcript, configuration: options.renderConfiguration)
     }
 }

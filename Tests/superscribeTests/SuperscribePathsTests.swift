@@ -6,33 +6,35 @@ import Testing
 @Suite("SuperscribePaths", .serialized, ResetSharedStateTrait())
 struct SuperscribePathsTests {
     private func home() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        return FileManager.default.homeDirectoryForCurrentUser
     }
 
-    @Test func userConfigDirectory() {
+    @Test func userConfigDirectory() -> Void {
         let path = SuperscribePaths.userConfigDirectory()
-        #expect(path.path == home().appendingPathComponent(".config/superscribe").path)
+        #expect(path.path == self.home().appendingPathComponent(".config/superscribe").path)
     }
 
-    @Test func catalogCacheDirectory() {
+    @Test func catalogCacheDirectory() -> Void {
         let path = SuperscribePaths.catalogCacheDirectory()
-        #expect(path.path == home().appendingPathComponent(".cache/superscribe").path)
+        #expect(path.path == self.home().appendingPathComponent(".cache/superscribe").path)
     }
 
-    @Test func audioCacheRoot() {
+    @Test func audioCacheRoot() -> Void {
         let path = SuperscribePaths.audioCacheRoot()
-        #expect(path.path == home().appendingPathComponent(".cache/superscribe/audio").path)
+        #expect(path.path == self.home().appendingPathComponent(".cache/superscribe/audio").path)
     }
 
-    @Test func whisperModelCacheDirectory() {
+    @Test func whisperModelCacheDirectory() throws -> Void {
+        SuperscribePaths.overrideWhisperModelCacheDirectory = nil
         let path = SuperscribePaths.whisperModelCacheDirectory()
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let caches = (try #require(FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first))
         #expect(path.path == caches.appendingPathComponent("superscribe/whisper").path)
     }
 
-    @Test func fluidAudioModelsDirectory() {
+    @Test func fluidAudioModelsDirectory() throws -> Void {
+        SuperscribePaths.overrideFluidAudioModelsDirectory = nil
         let path = SuperscribePaths.fluidAudioModelsDirectory()
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = (try #require(FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first))
         #expect(
             path.path
                 == appSupport.appendingPathComponent("FluidAudio/Models").path

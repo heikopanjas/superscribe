@@ -6,7 +6,7 @@ import Testing
 @Suite("Pipeline", .serialized, ResetSharedStateTrait())
 struct PipelineTests {
     @Test("pipeline produces intermediate transcript from two tracks")
-    func twoTracks() async throws {
+    func twoTracks() async throws -> Void {
         let aliceURL = try TestHelpers.makeTempSineWAV(name: "Alice", durationSeconds: 2.0)
         defer { try? FileManager.default.removeItem(at: aliceURL) }
         let bobURL = try TestHelpers.makeTempSineWAV(name: "Bob", durationSeconds: 2.0)
@@ -34,7 +34,7 @@ struct PipelineTests {
     }
 
     @Test("intermediate transcript round-trips through JSON")
-    func jsonRoundTrip() async throws {
+    func jsonRoundTrip() async throws -> Void {
         let url = try TestHelpers.makeTempSineWAV(name: "Solo", durationSeconds: 1.0)
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -55,7 +55,7 @@ struct PipelineTests {
     }
 
     @Test("pipeline metadata records configured backend")
-    func backendMetadata() async throws {
+    func backendMetadata() async throws -> Void {
         let url = try TestHelpers.makeTempSineWAV(name: "Backend", durationSeconds: 1.0)
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -69,9 +69,12 @@ struct PipelineTests {
     }
 
     @Test("empty segment samples do not invoke transcriber")
-    func emptySegmentSkipsTranscriber() async throws {
-        let counter = TranscribeCallCounter()
-        let transcriber = CountingTranscriber(counter: counter)
+    func emptySegmentSkipsTranscriber() async throws -> Void {
+        let counter = Counter()
+        let transcriber = ControlledTranscriber { segment in
+            await counter.increment()
+            return [.init(text: "x", start: segment.start, end: segment.end)]
+        }
         let preparer = AudioPreparer(for: transcriber.capabilities)
         let samples = Array(repeating: Float(0.1), count: 16_000)
         let segments = [SpeechSegment(start: 0.5, end: 0.5)]
@@ -81,7 +84,7 @@ struct PipelineTests {
             config: PipelineConfig(
                 tracks: [TrackInput(speaker: "Solo", file: URL(fileURLWithPath: "/tmp/x.wav"))],
                 backend: .parakeet,
-                transcriptionConfig: TranscriptionConfig(language: "en", model: "test", prompt: nil)
+                transcriptionConfig: TranscriptionConfig(language: "en", prompt: nil)
             )
         )
 
@@ -91,11 +94,11 @@ struct PipelineTests {
             preparer: preparer
         )
         #expect(results.isEmpty == true)
-        #expect(await counter.count == 0)
+        #expect(await counter.value == 0)
     }
 
     @Test("silent track is omitted from intermediate transcript")
-    func emptyTrackDropped() async throws {
+    func emptyTrackDropped() async throws -> Void {
         let speechURL = try TestHelpers.makeTempSineWAV(name: "Speech", durationSeconds: 1.0)
         defer { try? FileManager.default.removeItem(at: speechURL) }
         let silenceURL = try TestHelpers.makeTempSineWAV(
@@ -112,7 +115,7 @@ struct PipelineTests {
     }
 
     @Test("progress callbacks advance monotonically across tracks")
-    func progressOrder() async throws {
+    func progressOrder() async throws -> Void {
         let aliceURL = try TestHelpers.makeTempSineWAV(name: "Alice", durationSeconds: 1.5)
         defer { try? FileManager.default.removeItem(at: aliceURL) }
         let bobURL = try TestHelpers.makeTempSineWAV(name: "Bob", durationSeconds: 1.5)
@@ -142,9 +145,13 @@ struct PipelineTests {
     }
 
     @Test("maxConcurrentTranscriptions bounds parallel segment work")
-    func maxConcurrent() async throws {
-        let depth = ConcurrencyDepthTracker()
-        let transcriber = SlowTranscriber(depth: depth)
+    func maxConcurrent() async throws -> Void {
+        let gate = ConcurrentTestGate(batchSize: 1)
+        let transcriber = ControlledTranscriber { segment in
+            await gate.enter()
+            await gate.leave()
+            return [.init(text: "bounded", start: segment.start, end: segment.end)]
+        }
         let preparer = AudioPreparer(for: transcriber.capabilities)
         let samples = Array(repeating: Float(0.1), count: 64_000)
         let segments = (0 ..< 4).map {
@@ -155,7 +162,7 @@ struct PipelineTests {
             transcriber: transcriber,
             config: PipelineConfig(
                 tracks: [TrackInput(speaker: "Solo", file: URL(fileURLWithPath: "/tmp/x.wav"))],
-                transcriptionConfig: TranscriptionConfig(language: "en", model: "test", prompt: nil),
+                transcriptionConfig: TranscriptionConfig(language: "en", prompt: nil),
                 maxConcurrentTranscriptions: 1
             )
         )
@@ -164,101 +171,7 @@ struct PipelineTests {
             allSamples: samples,
             preparer: preparer
         )
-        #expect(await depth.peak == 1)
-    }
-}
-
-private struct CountingTranscriber: Transcriber {
-    let counter: TranscribeCallCounter
-
-    var capabilities: BackendCapabilities {
-        BackendCapabilities(
-            requiredAudioFormat: .asr16kMono,
-            displayName: "Counter",
-            defaultModelId: "counter"
-        )
-    }
-
-    func transcribe(
-        samples: [Float],
-        segment: SpeechSegment,
-        config: TranscriptionConfig
-    ) async throws -> SegmentTranscription {
-        await counter.increment()
-        return SegmentTranscription(
-            segment: segment,
-            words: [TimedWord(text: "x", start: segment.start, end: segment.end)]
-        )
-    }
-}
-
-private actor TranscribeCallCounter {
-    private(set) var count = 0
-    func increment() { count += 1 }
-}
-
-private actor ConcurrencyDepthTracker {
-    private(set) var peak = 0
-    private var inFlight = 0
-
-    func entered() {
-        inFlight += 1
-        if inFlight > peak { peak = inFlight }
-    }
-
-    func exited() {
-        inFlight -= 1
-    }
-}
-
-private struct SlowTranscriber: Transcriber {
-    let depth: ConcurrencyDepthTracker
-
-    var capabilities: BackendCapabilities {
-        BackendCapabilities(
-            requiredAudioFormat: .asr16kMono,
-            displayName: "Slow",
-            defaultModelId: "slow"
-        )
-    }
-
-    func transcribe(
-        samples: [Float],
-        segment: SpeechSegment,
-        config: TranscriptionConfig
-    ) async throws -> SegmentTranscription {
-        await depth.entered()
-        try await Task.sleep(for: .milliseconds(50))
-        await depth.exited()
-        return SegmentTranscription(
-            segment: segment,
-            words: [TimedWord(text: "slow", start: segment.start, end: segment.end)]
-        )
-    }
-}
-
-// MARK: - End-to-end merge test
-
-@Suite("EndToEnd", .serialized, ResetSharedStateTrait())
-struct EndToEndTests {
-    @Test("pipeline + merger produces VTT with both speakers")
-    func pipelineToVTT() async throws {
-        let aliceURL = try TestHelpers.makeTempSineWAV(name: "Alice", durationSeconds: 1.0)
-        defer { try? FileManager.default.removeItem(at: aliceURL) }
-        let bobURL = try TestHelpers.makeTempSineWAV(name: "Bob", durationSeconds: 1.0)
-        defer { try? FileManager.default.removeItem(at: bobURL) }
-
-        let transcript = try await TestHelpers.runMockPipeline(tracks: [
-            TrackInput(speaker: "Alice", file: aliceURL),
-            TrackInput(speaker: "Bob", file: bobURL)
-        ])
-
-        let merger = Merger()
-        let merged = merger.merge(transcript)
-        let vtt = VTTFormatter(includeWords: false).render(merged)
-
-        #expect(vtt.hasPrefix("WEBVTT\n"))
-        #expect(vtt.contains("<v Alice>"))
-        #expect(vtt.contains("<v Bob>"))
+        #expect(await gate.peak == 1)
+        #expect(await gate.current == 0)
     }
 }

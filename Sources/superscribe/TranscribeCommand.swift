@@ -28,38 +28,38 @@ struct TranscribeCommand: AsyncParsableCommand {
     )
     var input: String?
 
-    mutating func validate() throws {
-        let hasTrack = !options.track.isEmpty
-        if let _ = createInput {
+    mutating func validate() throws -> Void {
+        let hasTrack = !self.options.track.isEmpty
+        if self.createInput != nil {
             if hasTrack == true { throw ValidationError("--create-input may not be combined with --track.") }
-            if input != nil { throw ValidationError("--create-input may not be combined with --input.") }
+            if self.input != nil { throw ValidationError("--create-input may not be combined with --input.") }
         }
-        if input != nil, hasTrack == true {
+        if self.input != nil, hasTrack == true {
             throw ValidationError("--input may not be combined with --track.")
         }
     }
 
-    mutating func run() async throws {
-        if let dir = createInput {
-            try runCreateInput(directory: dir)
+    mutating func run() async throws -> Void {
+        if let dir = self.createInput {
+            try self.runCreateInput(directory: dir)
             return
         }
 
         let resolvedTracks: [TrackInput]
-        if let inputFile = input {
-            resolvedTracks = try loadTrackInputs(from: inputFile)
+        if let inputFile = self.input {
+            resolvedTracks = try TrackMappingLoader.load(from: URL(fileURLWithPath: inputFile), relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
         }
         else {
-            resolvedTracks = options.trackInputs
+            resolvedTracks = self.options.trackInputs
         }
 
-        let opts = options
+        let opts = self.options
         let result = try await PipelineRunner.run(
             options: PipelineRunOptions(
                 cliBackend: opts.backend,
                 cliModel: opts.model,
                 tracks: resolvedTracks,
-                transcriptionConfig: { model in opts.transcriptionConfig(model: model) },
+                transcriptionConfig: opts.transcriptionConfig,
                 analyzerConfig: opts.analyzerConfig,
                 useCache: opts.noCache == false
             )
@@ -67,7 +67,7 @@ struct TranscribeCommand: AsyncParsableCommand {
 
         let outputPath = defaultIntermediateOutputPath(
             backend: result.backend,
-            explicitOutput: options.output
+            explicitOutput: self.options.output
         )
         try saveIntermediateTranscript(result.transcript, to: outputPath)
         printTranscribeSummary(transcript: result.transcript, duration: result.duration)
@@ -76,7 +76,7 @@ struct TranscribeCommand: AsyncParsableCommand {
 
     // MARK: - --create-input
 
-    private func runCreateInput(directory: String) throws {
+    private func runCreateInput(directory: String) throws -> Void {
         let dirURL = URL(fileURLWithPath: directory, isDirectory: true)
         let cwdURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let tracks = try TrackInputScanning.scanTracks(in: dirURL, relativeTo: cwdURL)
@@ -89,21 +89,4 @@ struct TranscribeCommand: AsyncParsableCommand {
         print("Created \(outputURL.path) with \(tracks.count) track(s).")
     }
 
-    // MARK: - --input
-
-    private func loadTrackInputs(from filePath: String) throws -> [TrackInput] {
-        let fileURL = URL(fileURLWithPath: filePath)
-        let cwdURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-
-        let data = try Data(contentsOf: fileURL)
-        let mapping = try JSONDecoder().decode([String: String].self, from: data)
-
-        guard mapping.isEmpty == false else {
-            throw ValidationError("\(filePath): track mapping is empty.")
-        }
-
-        return mapping.sorted { $0.key < $1.key }.map { speaker, filename in
-            TrackInput(speaker: speaker, file: cwdURL.appendingPathComponent(filename))
-        }
-    }
 }

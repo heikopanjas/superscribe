@@ -5,11 +5,11 @@ import Testing
 
 @Suite("Apple Speech registry", .serialized, ResetSharedStateTrait())
 struct AppleSpeechRegistryTests {
-    @Test func catalogDefaultModelIdMatchesSupport() {
+    @Test func catalogDefaultModelIdMatchesSupport() -> Void {
         #expect(AppleSpeechCatalog.defaultModelId == AppleSpeechSupport.defaultLocaleId)
     }
 
-    @Test func remoteModelsUsesStubLocales() async throws {
+    @Test func remoteModelsUsesStubLocales() async throws -> Void {
         if #available(macOS 26, *) {
             AppleSpeechLiveAPI.testSupportedLocaleIds = ["en-US", "de-DE"]
             defer { AppleSpeechLiveAPI.testSupportedLocaleIds = nil }
@@ -24,7 +24,7 @@ struct AppleSpeechRegistryTests {
         }
     }
 
-    @Test func installedModelsUsesStubLocales() async throws {
+    @Test func installedModelsUsesStubLocales() async throws -> Void {
         if #available(macOS 26, *) {
             AppleSpeechLiveAPI.testInstalledLocaleIds = ["en-US"]
             defer { AppleSpeechLiveAPI.testInstalledLocaleIds = nil }
@@ -38,7 +38,7 @@ struct AppleSpeechRegistryTests {
         }
     }
 
-    @Test func catalogReturnsEmptyWhenAPIForcedOff() async throws {
+    @Test func catalogReturnsEmptyWhenAPIForcedOff() async throws -> Void {
         let prior = AppleSpeechSupport.testForceAPIAvailabilityFalse
         AppleSpeechSupport.testForceAPIAvailabilityFalse = true
         defer { AppleSpeechSupport.testForceAPIAvailabilityFalse = prior }
@@ -46,7 +46,7 @@ struct AppleSpeechRegistryTests {
         #expect(try await AppleSpeechCatalog.installedModels().isEmpty == true)
     }
 
-    @Test func catalogReturnsEmptyWhenRuntimeForcedUnavailable() async throws {
+    @Test func catalogReturnsEmptyWhenRuntimeForcedUnavailable() async throws -> Void {
         let prior = AppleSpeechSupport.testForceRuntimeUnavailable
         AppleSpeechSupport.testForceRuntimeUnavailable = true
         defer { AppleSpeechSupport.testForceRuntimeUnavailable = prior }
@@ -57,7 +57,7 @@ struct AppleSpeechRegistryTests {
         }
     }
 
-    @Test func installPathReturnsMarkerWhenRuntimeAvailable() throws {
+    @Test func installPathReturnsMarkerWhenRuntimeAvailable() throws -> Void {
         if AppleSpeechSupport.isRuntimeAvailable() == true {
             let path = try AppleSpeechCatalog.installPath(for: "en-US")
             #expect(path.absoluteString.contains("apple-speech://locale/en-US") == true)

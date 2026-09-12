@@ -18,28 +18,28 @@ final class ModelManager {
         {
             return (existing, false)
         }
-        let models = try await remoteModels(for: backend)
+        let models = try await Self.remoteModels(for: backend)
         let entry = CatalogEntry(fetchedAt: Date(), models: models)
-        try CatalogStore.update(entry, for: backend)
+        try await CatalogStore.updateAsync(entry, for: backend)
         return (entry, true)
     }
 
     /// Backend → its `remoteModels()` static call.
     static func remoteModels(for backend: Backend) async throws -> [RemoteModelInfo] {
-        try await backend.remoteModels()
+        return try await backend.remoteModels()
     }
 
     /// Backend → its `installedModels()` static call.
     static func installedModels(for backend: Backend) async throws -> [InstalledModelInfo] {
-        try await backend.installedModels()
+        return try await backend.installedModels()
     }
 
     /// If `model` isn't installed for `backend`, look it up in the catalog
     /// (auto-fetch if missing) and install it via `ModelInstaller`.
     /// No-op when the model is already on disk.
-    static func ensureModelInstalled(_ model: String, backend: Backend) async throws {
-        let installed = (try? await installedModels(for: backend)) ?? []
-        if installed.contains(where: { $0.id == model }) == true { return }
+    static func ensureModelInstalled(_ model: String, backend: Backend) async throws -> Void {
+        let installed = (try? await Self.installedModels(for: backend)) ?? []
+        if backend != .appleSpeech, installed.contains(where: { $0.id == model && $0.state.hasInstalledAssets }) == true { return }
 
         FileHandle.standardError.write(
             Data(
@@ -47,7 +47,7 @@ final class ModelManager {
             )
         )
 
-        let (entry, _) = try await catalog(for: backend, forceRefresh: false)
+        let (entry, _) = try await Self.catalog(for: backend, forceRefresh: false)
         guard let info = entry.models.first(where: { $0.id == model }) else {
             throw ModelInstallationError.unknownModel(
                 model: model,
@@ -58,7 +58,7 @@ final class ModelManager {
         _ = try await ModelInstaller.install(
             model: info,
             backend: backend,
-            onProgress: makeDownloadProgressHandler()
+            onProgress: Self.makeDownloadProgressHandler()
         )
         // Clear the progress line.
         FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
@@ -73,7 +73,7 @@ final class ModelManager {
     /// values grow or shrink. The line is cleared with `ESC[2K` before each
     /// write to wipe any leftover characters from a previous, longer render.
     static func makeDownloadProgressHandler() -> @Sendable (DownloadProgress) -> Void {
-        { p in
+        return { p in
             let rate: String = {
                 if let bps = p.bytesPerSecond, bps > 0 {
                     return "\(formatBytes(Int64(bps)))/s"
@@ -97,7 +97,7 @@ final class ModelManager {
             let file: String = {
                 if p.currentFile.isEmpty == true { return "" }
                 let short = (p.currentFile as NSString).lastPathComponent
-                return truncateMiddle(short, max: 32)
+                return Self.truncateMiddle(short, max: 32)
             }()
 
             // Fixed slot widths (chosen for the largest realistic value).

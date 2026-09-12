@@ -5,7 +5,7 @@ import Testing
 
 @Suite("sortedById", .serialized, ResetSharedStateTrait())
 struct SortingTests {
-    @Test func installedModelsSortById() {
+    @Test func installedModelsSortById() -> Void {
         let models = [
             InstalledModelInfo(id: "z", path: URL(fileURLWithPath: "/z"), sizeBytes: 1),
             InstalledModelInfo(id: "a", path: URL(fileURLWithPath: "/a"), sizeBytes: 1),
@@ -14,7 +14,7 @@ struct SortingTests {
         #expect(models.sortedById().map(\.id) == ["a", "m", "z"])
     }
 
-    @Test func remoteModelsSortById() {
+    @Test func remoteModelsSortById() throws -> Void {
         let models = [
             RemoteModelInfo(
                 id: "large",
@@ -22,7 +22,7 @@ struct SortingTests {
                 totalSizeBytes: 1,
                 fileCount: 1,
                 lastModified: nil,
-                repoURL: URL(string: "https://huggingface.co/org/large")!
+                repoURL: (try #require(URL(string: "https://huggingface.co/org/large")))
             ),
             RemoteModelInfo(
                 id: "base",
@@ -30,7 +30,7 @@ struct SortingTests {
                 totalSizeBytes: 1,
                 fileCount: 1,
                 lastModified: nil,
-                repoURL: URL(string: "https://huggingface.co/org/base")!
+                repoURL: (try #require(URL(string: "https://huggingface.co/org/base")))
             )
         ]
         #expect(models.sortedById().map(\.id) == ["base", "large"])

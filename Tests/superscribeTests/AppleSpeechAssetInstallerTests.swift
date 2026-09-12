@@ -5,21 +5,21 @@ import Testing
 
 @Suite("Apple Speech asset installer", .serialized, ResetSharedStateTrait())
 struct AppleSpeechAssetInstallerTests {
-    @Test func isInstalledFalseWhenRuntimeUnavailable() async {
+    @Test func isInstalledFalseWhenRuntimeUnavailable() async -> Void {
         let prior = AppleSpeechSupport.testForceRuntimeUnavailable
         AppleSpeechSupport.testForceRuntimeUnavailable = true
         defer { AppleSpeechSupport.testForceRuntimeUnavailable = prior }
         #expect(await AppleSpeechAssetInstaller.isInstalled(localeId: "en-US") == false)
     }
 
-    @Test func isInstalledFalseWhenAPIForcedOff() async {
+    @Test func isInstalledFalseWhenAPIForcedOff() async -> Void {
         let prior = AppleSpeechSupport.testForceAPIAvailabilityFalse
         AppleSpeechSupport.testForceAPIAvailabilityFalse = true
         defer { AppleSpeechSupport.testForceAPIAvailabilityFalse = prior }
         #expect(await AppleSpeechAssetInstaller.isInstalled(localeId: "en-US") == false)
     }
 
-    @Test func ensureInstalledUsesDefaultProgressHandler() async throws {
+    @Test func ensureInstalledUsesDefaultProgressHandler() async throws -> Void {
         if #available(macOS 26, *) {
             AppleSpeechLiveAPI.testInstalledLocaleIds = ["en-US"]
             AppleSpeechLiveAPI.testSupportedLocaleIds = ["en-US"]
@@ -36,7 +36,7 @@ struct AppleSpeechAssetInstallerTests {
         }
     }
 
-    @Test func ensureInstalledThrowsWhenAPIForcedOff() async {
+    @Test func ensureInstalledThrowsWhenAPIForcedOff() async -> Void {
         let prior = AppleSpeechSupport.testForceAPIAvailabilityFalse
         AppleSpeechSupport.testForceAPIAvailabilityFalse = true
         defer { AppleSpeechSupport.testForceAPIAvailabilityFalse = prior }
@@ -49,7 +49,7 @@ struct AppleSpeechAssetInstallerTests {
         }
     }
 
-    @Test func ensureInstalledThrowsWhenRuntimeUnavailable() async {
+    @Test func ensureInstalledThrowsWhenRuntimeUnavailable() async -> Void {
         let prior = AppleSpeechSupport.testForceRuntimeUnavailable
         AppleSpeechSupport.testForceRuntimeUnavailable = true
         defer { AppleSpeechSupport.testForceRuntimeUnavailable = prior }
@@ -62,7 +62,7 @@ struct AppleSpeechAssetInstallerTests {
         }
     }
 
-    @Test func isInstalledUsesStubLocales() async {
+    @Test func isInstalledUsesStubLocales() async -> Void {
         if #available(macOS 26, *) {
             AppleSpeechLiveAPI.testInstalledLocaleIds = ["fr-FR"]
             defer { AppleSpeechLiveAPI.testInstalledLocaleIds = nil }
@@ -74,7 +74,7 @@ struct AppleSpeechAssetInstallerTests {
         }
     }
 
-    @Test func ensureInstalledThrowsForUnsupportedLocale() async {
+    @Test func ensureInstalledThrowsForUnsupportedLocale() async -> Void {
         if #available(macOS 26, *) {
             AppleSpeechLiveAPI.testForceUnsupportedLocale = true
             defer { AppleSpeechLiveAPI.testForceUnsupportedLocale = false }
@@ -88,14 +88,14 @@ struct AppleSpeechAssetInstallerTests {
         }
     }
 
-    @Test func releaseNoOpWhenRuntimeUnavailable() async {
+    @Test func releaseNoOpWhenRuntimeUnavailable() async -> Void {
         let prior = AppleSpeechSupport.testForceRuntimeUnavailable
         AppleSpeechSupport.testForceRuntimeUnavailable = true
         defer { AppleSpeechSupport.testForceRuntimeUnavailable = prior }
         await AppleSpeechAssetInstaller.release(localeId: "en-US")
     }
 
-    @Test func ensureInstalledSkipsWhenAlreadyInstalled() async throws {
+    @Test func ensureInstalledSkipsWhenAlreadyInstalled() async throws -> Void {
         if #available(macOS 26, *) {
             AppleSpeechLiveAPI.testInstalledLocaleIds = ["en-US"]
             AppleSpeechLiveAPI.testSupportedLocaleIds = ["en-US"]

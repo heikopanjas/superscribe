@@ -1,16 +1,9 @@
 import Foundation
 
-/// Coordinates atomic, idempotent model installation:
-///
-///   1. If the final dir already looks installed → no-op.
-///   2. Pre-flight quota-aware free-space check.
-///   3. Stage download in a sibling `<finalDir>.staging-<uuid>` directory.
-///   4. Atomic `moveItem(staging → finalDir)` once every byte is on disk.
-///   5. On any failure: delete the staging dir; the previous on-disk state
-///      is untouched.
-///
-/// Concurrent installs of the *same* model serialize via a per-finalDir lock
-/// so two parallel `transcribe` calls can't race.
+/// Validates existing artifacts, stages complete downloads, then atomically publishes them.
+/// A cancellation-aware FIFO coordinates installation, removal, and confirmation paths.
+/// Failed staging preserves the previous destination; explicit Whisper installs also repair
+/// a missing published encoder. Encoders remain while installed variants share them.
 public enum ModelInstaller {
 
     /// Installs `model` for `backend` if not already present. Returns the
@@ -23,11 +16,8 @@ public enum ModelInstaller {
         onProgress: @Sendable @escaping (DownloadProgress) -> Void = { _ in }
     ) async throws -> URL {
         if backend == .appleSpeech {
-            let finalDir = try installPath(for: model.id, backend: backend)
-            return try await InstallLocks.shared.withLock(for: finalDir) {
-                if await AppleSpeechAssetInstaller.isInstalled(localeId: model.id) == true {
-                    return finalDir
-                }
+            _ = try Self.installPath(for: model.id, backend: backend)
+            return try await ModelLifecycleCoordinator.shared.withLock {
                 return try await AppleSpeechAssetInstaller.ensureInstalled(
                     localeId: model.id,
                     backend: backend,
@@ -36,12 +26,18 @@ public enum ModelInstaller {
             }
         }
 
-        let finalDir = try installPath(for: model.id, backend: backend)
+        if backend == .parakeet {
+            let repository = try ParakeetBackend.huggingFaceRepoId(for: model.id)
+            guard model.repoId == repository, model.subpath == nil else {
+                throw UnsupportedModelError(backend: backend, model: model.repoId)
+            }
+        }
+        let finalDir = try Self.installPath(for: model.id, backend: backend)
 
-        return try await InstallLocks.shared.withLock(for: finalDir) {
+        return try await ModelLifecycleCoordinator.shared.withLock {
             // 1. Idempotent fast path.
             if backend == .whisperCpp {
-                let binReady = await isInstalled(at: finalDir, backend: backend) == true
+                let binReady = await Self.isInstalled(at: finalDir, backend: backend, modelId: model.id, expectedSize: model.totalSizeBytes) == true
                 let encoderReady = WhisperBackend.isEncoderInstalled(modelId: model.id) == true
                 if binReady == true && encoderReady == true {
                     return finalDir
@@ -55,7 +51,7 @@ public enum ModelInstaller {
                     return finalDir
                 }
             }
-            else if await isInstalled(at: finalDir, backend: backend) == true {
+            else if await Self.isInstalled(at: finalDir, backend: backend, modelId: model.id, expectedSize: model.totalSizeBytes) == true {
                 return finalDir
             }
 
@@ -67,7 +63,7 @@ public enum ModelInstaller {
                 else {
                     model.totalSizeBytes
                 }
-            try preflightDiskSpace(
+            try Self.preflightDiskSpace(
                 requiredBytes: requiredBytes,
                 installPath: finalDir
             )
@@ -101,16 +97,9 @@ public enum ModelInstaller {
                     )
                 }
 
-                // 4. Atomic rename.
-                if SuperscribeFS.isExistingFile(at: finalDir) == true
-                    || SuperscribeFS.isExistingDirectory(at: finalDir) == true
-                {
-                    try SuperscribeFS.atomicReplace(
-                        staging: stagingPath,
-                        final: finalDir,
-                        policy: .discardStagingIfFinalExists
-                    )
-                    return finalDir
+                // Validate staging before replacing any incomplete destination.
+                guard await Self.isInstalled(at: stagingPath, backend: backend, modelId: model.id, expectedSize: model.totalSizeBytes) == true else {
+                    throw ModelInstallationError.installFailed(path: stagingPath, underlying: CocoaError(.fileReadCorruptFile))
                 }
                 do {
                     if SuperscribeKitTestHooks.forceModelInstallerAtomicReplaceFailure == true {
@@ -119,7 +108,7 @@ public enum ModelInstaller {
                     try SuperscribeFS.atomicReplace(
                         staging: stagingPath,
                         final: finalDir,
-                        policy: .removeFinalThenMove
+                        policy: .replaceExisting
                     )
                 }
                 catch {
@@ -144,56 +133,72 @@ public enum ModelInstaller {
 
     /// Per-backend convention for where a model lives on disk.
     public static func installPath(for modelId: String, backend: Backend) throws -> URL {
-        try backend.installPath(for: modelId)
+        try ModelPathValidation.identifier(modelId)
+        let path = try backend.installPath(for: modelId)
+        if path.isFileURL == true {
+            let root = backend == .whisperCpp ? SuperscribePaths.whisperModelCacheDirectory() : SuperscribePaths.fluidAudioModelsDirectory()
+            return try ModelPathValidation.resolve(path.lastPathComponent, under: root)
+        }
+        return path
     }
 
     /// Removes an installed model from disk.
     ///
     /// Whisper: deletes the `.bin` and the Core ML `{base}-encoder.mlmodelc` bundle when present.
     /// Parakeet: deletes the model directory tree.
-    public static func removeInstalled(modelId: String, backend: Backend) async throws {
-        switch backend {
-            case .appleSpeech:
-                await AppleSpeechAssetInstaller.release(localeId: modelId)
-            case .whisperCpp:
-                let bin = WhisperBackend.installPath(for: modelId)
-                let encoder = WhisperBackend.encoderInstallPath(for: modelId)
-                let fm = FileManager.default
-                if SuperscribeFS.isExistingFile(at: bin) == true {
-                    try fm.removeItem(at: bin)
-                }
-                if SuperscribeFS.isExistingDirectory(at: encoder) == true {
-                    try fm.removeItem(at: encoder)
-                }
-            case .parakeet:
-                let path = try installPath(for: modelId, backend: backend)
-                if FileManager.default.fileExists(atPath: path.path) == true {
-                    try FileManager.default.removeItem(at: path)
-                }
+    public static func removeInstalled(modelId: String, backend: Backend) async throws -> Void {
+        _ = try Self.installPath(for: modelId, backend: backend)
+        try await ModelLifecycleCoordinator.shared.withLock {
+            try await Self.removeUnlocked(modelId: modelId, backend: backend)
+        }
+    }
+
+    private static func removeUnlocked(modelId: String, backend: Backend) async throws -> Void {
+
+        if backend == .appleSpeech {
+            await AppleSpeechAssetInstaller.release(localeId: modelId)
+            return
+        }
+        for path in try await Self.removalPathsUnlocked(modelId: modelId, backend: backend) {
+            try Task.checkCancellation()
+            try FileManager.default.removeItem(at: path)
         }
     }
 
     /// Paths that `removeInstalled` would delete (for confirmation prompts).
     public static func removalPaths(modelId: String, backend: Backend) async throws -> [URL] {
+        _ = try Self.installPath(for: modelId, backend: backend)
+        return try await ModelLifecycleCoordinator.shared.withLock {
+            return try await Self.removalPathsUnlocked(modelId: modelId, backend: backend)
+        }
+    }
+
+    private static func removalPathsUnlocked(modelId: String, backend: Backend) async throws -> [URL] {
+
         switch backend {
             case .appleSpeech:
-                if await AppleSpeechAssetInstaller.isInstalled(localeId: modelId) == true {
-                    return [AppleSpeechSupport.installMarkerURL(for: modelId)]
+                let canonicalId = (try? await AppleSpeechSupport.resolveModelId(modelId)) ?? AppleSpeechSupport.normalizeLocaleId(modelId)
+                if try await AppleSpeechCatalog.installedModels().contains(where: { $0.id == canonicalId && $0.state.hasReservation }) == true {
+                    return [try AppleSpeechSupport.installMarkerURL(for: canonicalId)]
                 }
                 return []
             case .whisperCpp:
                 var paths: [URL] = []
                 let bin = WhisperBackend.installPath(for: modelId)
-                if FileManager.default.fileExists(atPath: bin.path) == true {
+                if SuperscribeFS.isExistingFile(at: bin) == true {
                     paths.append(bin)
                 }
                 let encoder = WhisperBackend.encoderInstallPath(for: modelId)
-                if WhisperBackend.isEncoderInstalled(modelId: modelId) == true {
+                let base = WhisperBackend.encoderBaseId(for: modelId)
+                let shared = try WhisperBackend.installedModels().contains { model in
+                    return model.id != modelId && WhisperBackend.encoderBaseId(for: model.id) == base
+                }
+                if WhisperBackend.isEncoderInstalled(modelId: modelId) == true, shared == false {
                     paths.append(encoder)
                 }
                 return paths
             case .parakeet:
-                let path = try installPath(for: modelId, backend: backend)
+                let path = try Self.installPath(for: modelId, backend: backend)
                 if FileManager.default.fileExists(atPath: path.path) == true {
                     return [path]
                 }
@@ -201,13 +206,15 @@ public enum ModelInstaller {
         }
     }
 
-    /// Returns `true` if a model looks completely installed (per-backend heuristic).
-    public static func isInstalled(at path: URL, backend: Backend) async -> Bool {
+    /// Checks required artifact presence and known binary size without inference.
+    public static func isInstalled(at path: URL, backend: Backend, modelId: String? = nil, expectedSize: Int64? = nil) async -> Bool {
         switch backend {
             case .whisperCpp:
-                return SuperscribeFS.isExistingFile(at: path)
+                return ModelArtifacts.nonemptyFile(at: path, expectedSize: expectedSize)
             case .parakeet:
-                return SuperscribeFS.containsCompiledCoreMLBundle(at: path)
+                let id = modelId ?? ParakeetBackend.knownFolderAliases[path.lastPathComponent]
+                guard let id, let descriptor = try? ParakeetBackend.descriptor(for: id) else { return false }
+                return ModelArtifacts.parakeet(at: path, descriptor: descriptor)
             case .appleSpeech:
                 guard let localeId = AppleSpeechSupport.localeId(fromInstallMarker: path) else {
                     return false
@@ -227,7 +234,7 @@ public enum ModelInstaller {
     static func preflightDiskSpace(
         requiredBytes: Int64?,
         installPath: URL
-    ) throws {
+    ) throws -> Void {
         guard let required = requiredBytes, required > 0 else { return }
 
         // Use the parent directory if installPath doesn't exist yet.
@@ -275,59 +282,5 @@ public enum ModelInstaller {
                 )
             )
         }
-    }
-}
-
-// MARK: - Per-finalDir lock
-
-/// Serialises concurrent `install` calls so two callers never race on the
-/// same destination directory. A single global queue is sufficient given how
-/// rare model installs are (first-use only).
-private actor InstallLocks {
-    static let shared = InstallLocks()
-
-    private var tail: Task<Void, Never> = Task { /* initial no-op */  }
-
-    func withLock<T: Sendable>(
-        for url: URL,
-        body: @Sendable @escaping () async throws -> T
-    ) async throws -> T {
-        _ = url  // reserved for future per-URL locking
-        let predecessor = tail
-        // Use a dedicated signal task as the new tail; predecessors await it.
-        let signal = LockSignal()
-        let signalTask = Task<Void, Never> { await signal.wait() }
-        tail = signalTask
-        await predecessor.value
-        defer { Task { await signal.fire() } }
-        return try await body()
-    }
-}
-
-private actor LockSignal {
-    private var fired = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func wait() async {
-        if fired == true { return }
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            waiters.append(cont)
-        }
-    }
-
-    func fire() {
-        fired = true
-        let pending = waiters
-        waiters.removeAll()
-        for cont in pending { cont.resume() }
-    }
-}
-
-extension ModelInstaller {
-    /// Exercises `LockSignal.wait()` after `fire()` for coverage.
-    internal static func exerciseInstallLockEarlyReturnForTesting() async {
-        let signal = LockSignal()
-        await signal.fire()
-        await signal.wait()
     }
 }

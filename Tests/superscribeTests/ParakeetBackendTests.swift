@@ -7,31 +7,33 @@ import Testing
 @Suite("ParakeetBackend", .serialized, ResetSharedStateTrait())
 struct ParakeetBackendTests {
 
-    private func displayName(for model: String) async -> String {
-        let backend = ParakeetBackend(model: model, injectedSession: nil)
+    private func displayName(for model: String) async throws -> String {
+        let backend = try ParakeetBackend(model: model, injectedSession: nil)
         return backend.capabilities.displayName
     }
 
-    @Test func publicInitUsesDefaultModel() async {
-        let backend = ParakeetBackend()
+    @Test func publicInitUsesDefaultModel() async throws -> Void {
+        let backend = try ParakeetBackend()
         #expect(backend.capabilities.displayName.contains("v3") == true)
     }
 
-    @Test func modelStringSelectsReportedVariants() async {
-        #expect(await displayName(for: "v2").contains("v2") == true)
-        #expect(await displayName(for: "v3").contains("v3") == true)
-        #expect(await displayName(for: "tdt-ctc-110m").contains("tdtCtc110m") == true)
-        #expect(await displayName(for: "tdt-ja").contains("tdtJa") == true)
-        #expect(await displayName(for: "bogus-unknown").contains("v3") == true)
+    @Test func modelStringSelectsReportedVariants() async throws -> Void {
+        #expect(try await self.displayName(for: "v2").contains("v2") == true)
+        #expect(try await self.displayName(for: "v3").contains("v3") == true)
+        #expect(try await self.displayName(for: "tdt-ctc-110m").contains("tdtCtc110m") == true)
+        #expect(try await self.displayName(for: "tdt-ja").contains("tdtJa") == true)
+        #expect(throws: UnsupportedModelError.self) { _ = try ParakeetBackend(model: "bogus-unknown") }
+        #expect(UnsupportedModelError(backend: .parakeet, model: "bogus").errorDescription?.contains("bogus") == true)
     }
 
-    @Test func shortIdForVersionMapsKnownAndFutureCases() {
-        #expect(ParakeetBackend.shortIdForVersion(.v2) == "v2")
-        #expect(ParakeetBackend.shortIdForVersion(.tdtCtc110m) == "tdt-ctc-110m")
-        #expect(ParakeetBackend.shortIdForVersion(.ctcZhCn) == "v3")
+    @Test(arguments: ["tdtctc110m", "110m", "tdtja", "ja", " V3 "])
+    func aliasesUseDescriptorIdentity(alias: String) throws -> Void {
+        let descriptor = try ParakeetBackend.descriptor(for: alias)
+        #expect(descriptor.id.isEmpty == false)
+        _ = try ParakeetBackend(model: alias)
     }
 
-    @Test func transcribeMapsTokenTimings() async throws {
+    @Test func transcribeMapsTokenTimings() async throws -> Void {
         let timings: [TokenTiming] = [
             TokenTiming(token: "▁hel", tokenId: 1, startTime: 0, endTime: 0.05, confidence: 1),
             TokenTiming(token: "lo", tokenId: 2, startTime: 0.05, endTime: 0.1, confidence: 1)
@@ -45,9 +47,9 @@ struct ParakeetBackendTests {
                 tokenTimings: timings
             )
         )
-        let backend = ParakeetBackend(model: "v3", injectedSession: mock)
+        let backend = try ParakeetBackend(model: "v3", injectedSession: mock)
         let segment = SpeechSegment(start: 2.0, end: 5.0)
-        let cfg = TranscriptionConfig(language: "en", model: "v3", prompt: nil)
+        let cfg = TranscriptionConfig(language: "en", prompt: nil)
         let out = try await backend.transcribe(
             samples: [Float](repeating: 0, count: 100),
             segment: segment,
@@ -58,7 +60,7 @@ struct ParakeetBackendTests {
         #expect(out.words.first?.start ?? 0 >= segment.start)
     }
 
-    @Test func transcribeFallsBackToPlainTextWhenNoTimings() async throws {
+    @Test func transcribeFallsBackToPlainTextWhenNoTimings() async throws -> Void {
         let mock = MockParakeetSession(
             result: ASRResult(
                 text: " hi ",
@@ -68,9 +70,9 @@ struct ParakeetBackendTests {
                 tokenTimings: nil
             )
         )
-        let backend = ParakeetBackend(model: "v3", injectedSession: mock)
+        let backend = try ParakeetBackend(model: "v3", injectedSession: mock)
         let segment = SpeechSegment(start: 1.0, end: 3.0)
-        let cfg = TranscriptionConfig(language: nil, model: "v3", prompt: nil)
+        let cfg = TranscriptionConfig(language: nil, prompt: nil)
         let out = try await backend.transcribe(
             samples: [Float](repeating: 0, count: 64),
             segment: segment,
@@ -82,7 +84,7 @@ struct ParakeetBackendTests {
         #expect(out.words[0].end == segment.end)
     }
 
-    @Test func transcribeEmptyTextYieldsNoWords() async throws {
+    @Test func transcribeEmptyTextYieldsNoWords() async throws -> Void {
         let mock = MockParakeetSession(
             result: ASRResult(
                 text: "   ",
@@ -92,33 +94,30 @@ struct ParakeetBackendTests {
                 tokenTimings: nil
             )
         )
-        let backend = ParakeetBackend(model: "v3", injectedSession: mock)
+        let backend = try ParakeetBackend(model: "v3", injectedSession: mock)
         let out = try await backend.transcribe(
             samples: [],
             segment: SpeechSegment(start: 0, end: 1),
-            config: TranscriptionConfig(language: nil, model: "v3", prompt: nil)
+            config: TranscriptionConfig(language: nil, prompt: nil)
         )
         #expect(out.words.isEmpty == true)
     }
 
-    @Test func transcribeThrowsWhenModelMissing() async throws {
-        let modelId = "tdt-ja"
-        let path = ParakeetBackend.installPath(for: modelId)
-        guard FileManager.default.fileExists(atPath: path.path) == false else {
-            return
-        }
-
-        let backend = ParakeetBackend(model: modelId, injectedSession: nil)
-        await #expect(throws: ModelInstallationError.self) {
-            _ = try await backend.transcribe(
-                samples: [0.01],
-                segment: SpeechSegment(start: 0, end: 1),
-                config: TranscriptionConfig(language: nil, model: modelId, prompt: nil)
-            )
+    @Test func transcribeThrowsWhenModelMissing() async throws -> Void {
+        try await TestHelpers.withIsolatedModelCaches { _, _ in
+            let modelId = "tdt-ja"
+            let backend = try ParakeetBackend(model: modelId, injectedSession: nil)
+            await #expect(throws: ModelInstallationError.self) {
+                _ = try await backend.transcribe(
+                    samples: [0.01],
+                    segment: SpeechSegment(start: 0, end: 1),
+                    config: TranscriptionConfig(language: nil, prompt: nil)
+                )
+            }
         }
     }
 
-    @Test func resultMappingDirectMergeAndOffsets() {
+    @Test func resultMappingDirectMergeAndOffsets() -> Void {
         let timings: [TokenTiming] = [
             TokenTiming(token: "▁a", tokenId: 1, startTime: 0, endTime: 0.02, confidence: 1),
             TokenTiming(token: "b", tokenId: 2, startTime: 0.02, endTime: 0.05, confidence: 1)
@@ -137,23 +136,5 @@ struct ParakeetBackendTests {
 
         let merged = ParakeetResultMapping.mergeTokensIntoWords(timings, segmentOffset: 5)
         #expect(merged.isEmpty == false)
-    }
-}
-
-// MARK: - Mock session
-
-private struct MockParakeetSession: ParakeetASRSession {
-    let result: ASRResult
-
-    var decoderLayerCount: Int {
-        get async { 1 }
-    }
-
-    func transcribe(
-        _ samples: [Float],
-        decoderState: inout TdtDecoderState,
-        language: Language?
-    ) async throws -> ASRResult {
-        result
     }
 }

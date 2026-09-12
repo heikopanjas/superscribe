@@ -8,8 +8,13 @@ public protocol Transcriber: Sendable {
     /// The backend's capabilities, including its required audio format.
     var capabilities: BackendCapabilities { get }
 
+    /// Canonical identity of the model owned by this transcriber.
+    var modelId: String { get async }
+
     /// Transcribe a single speech segment from pre-converted audio samples.
     ///
+    /// - Returns: Timed words for the source segment.
+    /// - Throws: Cancellation, invalid input, missing model, or backend inference errors.
     /// - Parameters:
     ///   - samples: PCM Float32 samples in the format declared by
     ///     `capabilities.requiredAudioFormat`.

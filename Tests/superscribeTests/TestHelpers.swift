@@ -2,12 +2,18 @@ import AVFoundation
 import CoreML
 import FluidAudio
 import Foundation
+import Testing
 
 @testable import SuperscribeKit
 
 // MARK: - Temp directories
 
 enum TestHelpers {
+    /// Avoids recursively expanding #require inside another #require on Swift 6.4.
+    static func requireValue<Value>(_ value: Value?, sourceLocation: SourceLocation = #_sourceLocation()) throws -> Value {
+        return try #require(value, sourceLocation: sourceLocation)
+    }
+
     /// Creates a unique temporary directory; caller must remove it.
     static func makeTempDir(prefix: String = "superscribe-tests") throws -> URL {
         let dir = FileManager.default.temporaryDirectory
@@ -21,7 +27,7 @@ enum TestHelpers {
         prefix: String = "superscribe-tests",
         _ body: (URL) throws -> T
     ) throws -> T {
-        let dir = try makeTempDir(prefix: prefix)
+        let dir = try Self.makeTempDir(prefix: prefix)
         defer { try? FileManager.default.removeItem(at: dir) }
         return try body(dir)
     }
@@ -31,7 +37,7 @@ enum TestHelpers {
         prefix: String = "superscribe-tests",
         _ body: (URL) async throws -> T
     ) async throws -> T {
-        let dir = try makeTempDir(prefix: prefix)
+        let dir = try Self.makeTempDir(prefix: prefix)
         defer { try? FileManager.default.removeItem(at: dir) }
         return try await body(dir)
     }
@@ -45,7 +51,7 @@ enum TestHelpers {
         sampleRate: Double = 48_000,
         amplitude: Float = 0.5
     ) throws -> URL {
-        try makeTempSineWAV(
+        return try Self.makeTempSineWAV(
             name: name,
             durationSeconds: durationSeconds,
             sampleRate: sampleRate,
@@ -63,26 +69,40 @@ enum TestHelpers {
         amplitude: Float = 0.5
     ) throws -> URL {
         let frameCount = AVAudioFrameCount(sampleRate * durationSeconds)
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels)!
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+        let format = (try #require(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels)))
+        let buffer = (try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)))
         buffer.frameLength = frameCount
         let freq: Float = 440.0
         for ch in 0 ..< Int(channels) {
-            let floats = buffer.floatChannelData![ch]
+            let floats = (try #require(buffer.floatChannelData))[ch]
             for i in 0 ..< Int(frameCount) {
                 floats[i] = sinf(2.0 * .pi * freq * Float(i) / Float(sampleRate)) * amplitude
             }
         }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(name)-\(UUID().uuidString).wav")
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
+        return try Self.writeWAV(buffer: buffer, name: name)
+    }
+
+    static func writeWAV(buffer: AVAudioPCMBuffer, name: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-\(UUID().uuidString).wav")
+        try autoreleasepool {
+            let file = try AVAudioFile(forWriting: url, settings: buffer.format.settings)
+            try file.write(from: buffer)
+        }
         return url
+    }
+
+    static func makeTempPCM(samples: [Float], name: String) throws -> URL {
+        let format = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(max(1, samples.count))))
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        let channel = try #require(buffer.floatChannelData?[0])
+        for (index, sample) in samples.enumerated() { channel[index] = sample }
+        return try Self.writeWAV(buffer: buffer, name: name)
     }
 
     /// 16 kHz mono Float32 WAV matching `.asr16kMono` for AudioPreparer fast path.
     static func makeTemp16kMonoFloatWAV(name: String, durationSeconds: Double = 0.5) throws -> URL {
-        try makeTempSineWAV(
+        return try Self.makeTempSineWAV(
             name: name,
             durationSeconds: durationSeconds,
             sampleRate: 16_000,
@@ -91,13 +111,23 @@ enum TestHelpers {
         )
     }
 
-    /// Builds `AsrModels` with a bundled macOS Core ML model (no Hugging Face download).
-    /// `AsrManager.loadModels` only stores references; weights are not executed in these tests.
+    /// Minimal repository layout; no fixture model is used for inference.
+    static let parakeetFiles = ["Preprocessor.mlmodelc/model.mil", "Encoder.mlmodelc/model.mil", "Decoder.mlmodelc/model.mil", "JointDecisionv3.mlmodelc/model.mil", "parakeet_vocab.json"]
+
+    static func makeParakeetInstallation(at root: URL) throws -> Void {
+        for name in Self.parakeetFiles {
+            let file = root.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("bin".utf8).write(to: file)
+        }
+    }
+
+    /// Builds storage-only ASR stubs from our tiny scalar regression fixture.
     static func makeStubAsrModels(version: AsrModelVersion = .v3) throws -> AsrModels {
-        let modelURL = URL(
-            fileURLWithPath: "/System/Library/CoreServices/MapsSuggestionsTransportModePrediction.mlmodelc"
-        )
-        let stubModel = try MLModel(contentsOf: modelURL)
+        let source = try #require(Bundle.module.url(forResource: "Scalar", withExtension: "mlmodel", subdirectory: "Fixtures"))
+        let compiled = try MLModel.compileModel(at: source)
+        defer { try? FileManager.default.removeItem(at: compiled) }
+        let stubModel = try MLModel(contentsOf: compiled)
         let config = MLModelConfiguration()
         return AsrModels(
             encoder: stubModel,
@@ -114,8 +144,8 @@ enum TestHelpers {
     static func withIsolatedModelCaches<T>(
         _ body: (URL, URL) async throws -> T
     ) async throws -> T {
-        let parakeetRoot = try makeTempDir(prefix: "pk-cache")
-        let whisperRoot = try makeTempDir(prefix: "wh-cache")
+        let parakeetRoot = try Self.makeTempDir(prefix: "pk-cache")
+        let whisperRoot = try Self.makeTempDir(prefix: "wh-cache")
         let priorParakeet = SuperscribePaths.overrideFluidAudioModelsDirectory
         let priorWhisper = SuperscribePaths.overrideWhisperModelCacheDirectory
         SuperscribePaths.overrideFluidAudioModelsDirectory = nil
@@ -141,11 +171,11 @@ enum TestHelpers {
         model: String = "test",
         language: String? = "en"
     ) -> PipelineConfig {
-        PipelineConfig(
+        return PipelineConfig(
             tracks: tracks,
             backend: backend,
             transcriptionConfig: TranscriptionConfig(
-                language: language, model: model, prompt: nil
+                language: language, prompt: nil
             ),
             analyzerConfig: AnalyzerConfig()
         )
@@ -158,40 +188,11 @@ enum TestHelpers {
         language: String? = "en"
     ) async throws -> IntermediateTranscript {
         let pipeline = TranscribePipeline(
-            transcriber: MockTranscriber(),
-            config: mockPipelineConfig(
+            transcriber: MockTranscriber(modelId: model),
+            config: Self.mockPipelineConfig(
                 tracks: tracks, backend: backend, model: model, language: language
             )
         )
         return try await pipeline.run()
-    }
-}
-
-// MARK: - Mock transcriber
-
-/// A deterministic transcriber for testing: returns one word per segment
-/// with text "mock-word".
-struct MockTranscriber: Transcriber {
-    static var isAvailable: Bool { true }
-
-    var capabilities: BackendCapabilities {
-        BackendCapabilities(
-            requiredAudioFormat: .asr16kMono,
-            displayName: "Mock",
-            defaultModelId: "mock"
-        )
-    }
-
-    func transcribe(
-        samples: [Float],
-        segment: SpeechSegment,
-        config: TranscriptionConfig
-    ) async throws -> SegmentTranscription {
-        let word = TimedWord(
-            text: "mock-word",
-            start: segment.start,
-            end: segment.end
-        )
-        return SegmentTranscription(segment: segment, words: [word])
     }
 }

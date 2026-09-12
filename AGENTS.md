@@ -1,12 +1,12 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-06-11 (v0.8.0 — appleSpeech backend)
+**Last updated:** 2026-09-12 (v1.0.0 — unit and sanitizer verification complete)
 
 <!-- {mission} -->
 
 ## Mission Statement
 
-**superscribe** is a macOS command-line tool and Swift library that transcribes multi-track podcast recordings into a single time-aligned subtitle file (VTT today; SRT/JSON/TXT planned). Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a publish-ready output.
+**superscribe** is a macOS command-line tool and Swift library that transcribes multi-track podcast recordings into a single time-aligned subtitle file (VTT, SRT, JSON, or TXT). Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a publish-ready output.
 
 Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Silicon; Apple Speech on macOS 26+):
 
@@ -29,9 +29,9 @@ Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Si
 ```
 Sources/
   SuperscribeKit/          Core library (importable by Swift apps)
-    Backends/              ParakeetBackend, WhisperBackend, AppleSpeechBackend (+Registry, +LiveAPI)
+    Backends/              ParakeetBackend, WhisperBackend, AppleSpeechBackend (+Registry, separate framework LiveAPI shims)
     AppleSpeechAssetInstaller.swift  Locale asset install via AssetInventory
-    Format/                VTTFormatter
+    Format/                Shared rendering, cue splitting, VTT/SRT/JSON/TXT formatters
     Analyzer.swift         Silence detection
     AudioPreparer.swift    Audio conversion + slicing (16 kHz mono f32 PCM)
     ConvertedAudioCache.swift  On-disk PCM cache with manifest sidecar
@@ -41,28 +41,27 @@ Sources/
     ModelInstaller.swift   Atomic stage-then-rename installer
     ModelRegistry.swift    Per-backend model id registry protocol
     Merger.swift           Timeline alignment + overlap resolution
-    Pipeline.swift         Orchestrates conversion + transcription
+    TranscribePipeline.swift  Bounded file-backed conversion + global segment scheduling
     Transcriber.swift      Transcriber protocol
-    Types.swift            Core value types
+    TimedWord.swift, SpeechSegment.swift, …  One standalone type per matching file
     UserConfig.swift       Persistent default backend / model
   superscribe/             CLI executable (thin wrapper over SuperscribeKit)
-    Commands/Options.swift, Subcommands.swift
-    SuperscribeCommand.swift
-Tests/superscribeTests/    Swift Testing (50 tests)
+    TranscribeCommand.swift, RunCommand.swift, MergeCommand.swift, …
+Tests/superscribeTests/    Isolated Swift Testing unit suite
 _scripts/build-whisper.sh  One-time xcframework build (cmake + ninja)
 _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v0.6.0)
+## Subcommand Surface (v1.0.0)
 
 | Subcommand | Purpose |
 |---|---|
 | `transcribe` | Detect speech + run ASR; writes `transcript.superscribe.<backend>.json`. Also: `--create-input <dir>` (scan dir → template), `--input <file>` (load template) |
-| `merge` | Read intermediate JSON → render formatted output (VTT) |
+| `merge` | Read intermediate JSON → render VTT, SRT, JSON, or TXT |
 | `run` | `transcribe` + `merge` in one pass |
 | `model` | `--list`, `--remote`, `--download`, `--rm`, `--set-default`, `--refresh` |
-| `backends` | List backends and capabilities |
+| `backend` | List backends and capabilities |
 | `cache` | Audio-conversion cache: info, `--list`, `--clear`, `--rm` |
 
 ## Session Protocol
@@ -135,7 +134,7 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 
 | Item | Detail |
 |---|---|
-| Gate | `_scripts/coverage.sh --run-tests` (or `_scripts/test.sh` then `_scripts/coverage.sh`) |
+| Gate | `_scripts/coverage.sh --run-tests`; report-only mode verifies hashes from that successful test run |
 | Minimum | `COVERAGE_MIN=100` (default; do not lower) |
 | Scope | `Sources/SuperscribeKit/` line **and region** coverage via `llvm-cov` |
 | CLI | `Sources/superscribe/` is not part of the gate |
@@ -145,8 +144,23 @@ When initializing a session or analyzing the workspace, refer to instruction fil
 
 - Every new or changed line in `SuperscribeKit` must be covered by a test, or the change is not done.
 - Tests must be **CI-safe**: no downloaded whisper GGML models, no Hugging Face model fetches, no reliance on machine-local cache contents. Use test hooks and stubs (see v0.7.8–v0.7.9 entries).
-- **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusions: `WhisperBackend+LiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk), `AppleSpeechBackend+LiveAPI.swift` (Speech framework APIs and `#available(macOS 26, *)` transcriber bridge; unit tests use stub hooks in `AppleSpeechBackend.swift` and `AppleSpeechSupport.swift`).
+- Hardware integration tests live in `Tests/superscribeIntegrationTests/` and enter the package graph only with `SUPERSCRIBE_INTEGRATION_TESTS=1`. Supply `SUPERSCRIBE_INTEGRATION_AUDIO` and an already-installed `SUPERSCRIBE_INTEGRATION_MODEL`; invoke with `--filter ParakeetIntegrationTests`.
+- Core ML unit fixtures are repository-owned (`Tests/superscribeTests/Fixtures/Scalar.mlmodel`); compile into temporary storage. Never load undocumented system model bundles.
+- Mock URL sessions intercept every request and fail for missing handlers; await invalidation before unregistering handlers. Cancelled or failed download streams are closed before session cleanup.
+- Mutable test overrides use per-test task-local storage protected by a lock. Capture storage before entering synchronous framework callbacks. Default test scopes redirect model, catalog, and configuration storage to temporary directories. Keep the serial test runner during migration.
+- Apple Speech lifecycle orchestration lives in covered `AppleSpeechAssetInstaller`, `AppleSpeechInstallation`, and `AppleSpeechAnalysis`. The framework shim supplies injectable operations; failed analysis cancels the framework and joins result collection, and failed installation rolls back only a new reservation.
+- Coverage uses the selected SwiftPM build output and rejects missing, stale, or changed binary/profile pairs using a SHA-256 receipt. Swift Build and native SwiftPM binary layouts are supported.
+
+- **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusions: `WhisperLiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk), `AppleSpeechLiveAPI.swift` and `AppleSpeechTranscriberBridge.swift` (the same Speech framework calls and availability bridge previously housed together; unit tests use stub hooks in `AppleSpeechBackend.swift` and `AppleSpeechSupport.swift`).
 - If coverage drops, add tests or refactor untestable code into an excluded shim — never weaken the gate.
+
+### Audio preparation and execution
+
+- `StreamingAudioConverter` is the single finite-input converter for files and Speech buffers. Input errors fail conversion; output is drained through end of stream.
+- `PreparedAudio` owns file-backed PCM. The pipeline retains file references, reads active segment slices, and bounds conversion concurrency to two by default. Temporary PCM is removed when its final owner leaves scope.
+- Segment work shares one global limit across tracks. Progress completion counts come from the parent collector, preserving input track and segment order separately.
+- CLI progress has one owned reporter; both success and failure await its final drain before summaries.
+- Child processes drain stdout and stderr concurrently and join termination and pipe readers on cancellation.
 
 ### DRY (Don't Repeat Yourself)
 
@@ -186,7 +200,31 @@ After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm
 
 <!-- {integration} -->
 
+### Persistence and cancellation
+
+- Filesystem replacement uses atomic exclusive rename or swap; failed promotion preserves the destination. `AtomicReplacePolicy.replaceExisting` replaces the old remove-then-move policy.
+- Cache manifest and catalog mutations lock the full read-modify-write transaction using a sidecar file lock. CLI configuration updates use `UserConfig.update` on the blocking-I/O worker; corrupt configuration throws and is preserved.
+- Shared loads track individual waiters, cancel loading when the last waiter leaves, and ignore stale generations. Bounded groups check cancellation before admission and collect by index.
+- Download throttling uses an injectable monotonic clock; tests advance it explicitly.
+
+## Model and persistence integrity
+
+- Parakeet installation accepts the descriptor's canonical repository and requires every model bundle plus vocabulary. Whisper installation checks nonempty regular files and known artifact size before taking its fast path.
+- Downloads constrain paths to their roots, validate known byte sizes, and clean staging after failure. Explicit Whisper downloads repair incomplete files and missing encoders; installed binaries remain usable offline.
+- Atomic same-volume rename/swap preserves prior destinations on promotion failure. Cache, catalog, and preference read-modify-write transactions use filesystem locks; async callers acquire locks on the blocking-I/O worker.
+- Coverage receipts bind binary, profile, owned sources, tests, and package inputs. Edits during a run or stale report inputs require a new test run.
+
+## Rendering and public API (1.0.0)
+
+- `TranscriptRenderer` is the shared throwing entry point for `merge` and `run`; all four formats are public library implementations.
+- TXT defaults to word interleaving and rejects explicit preserve. Word output means SRT word cues, timestamped TXT words, VTT inline timestamps; JSON always retains complete timings.
+- Cue splitting uses real sentence/word boundaries; an indivisible timed word/span can exceed the configured duration. Wrapping counts Swift characters and preserves long words.
+- Backend instances own model identity; transcription configuration supplies language and prompt only. Construction, input validation, registry path resolution, and rendering can throw.
+- Standalone types live in matching files. Framework shims contain only external API calls; lifecycle orchestration remains covered. Formatting uses 187 columns, without changing actor-isolation defaults. Use valid Swift `if` expressions for conditional assignments and returns instead of copying the skill’s malformed ternary example.
+
 ## Semantic Versioning
+
+The authoritative product version is `SuperscribeVersion.current` in `Sources/SuperscribeKit/SuperscribeVersion.swift`; CLI output and the HTTP user agent use it. Version 1.0.0 begins the authorized breaking API cleanup. `ParakeetBackend` construction now throws for unsupported models; aliases and model versions come from the descriptor table.
 
 Automatically bump the project version after every code change and include it in the same commit. Load the `semantic-versioning` skill for the full PATCH/MINOR/MAJOR decision rules.
 

@@ -20,8 +20,11 @@ enum TrackInputScanning {
             options: .skipsHiddenFiles
         )
         return
-            contents
-            .filter { audioExtensions.contains($0.pathExtension.lowercased()) }
+            try contents
+            .filter { url in
+                guard Self.audioExtensions.contains(url.pathExtension.lowercased()) == true else { return false }
+                return try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
+            }
             .sorted {
                 $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent)
                     == .orderedAscending
@@ -45,10 +48,10 @@ enum TrackInputScanning {
 
     /// Scans a directory and returns a speaker-keyed track map.
     static func scanTracks(in directory: URL, relativeTo cwdURL: URL) throws -> [String: String] {
-        let audioFiles = try scanAudioFiles(in: directory)
+        let audioFiles = try Self.scanAudioFiles(in: directory)
         guard audioFiles.isEmpty == false else {
             throw ValidationError("No audio files found in \(directory.path).")
         }
-        return makeTrackMap(from: audioFiles, relativeTo: cwdURL)
+        return Self.makeTrackMap(from: audioFiles, relativeTo: cwdURL)
     }
 }

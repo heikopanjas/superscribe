@@ -33,7 +33,7 @@ enum WhisperEncoderInstaller {
         model: RemoteModelInfo,
         session: URLSession = .shared,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void
-    ) async throws {
+    ) async throws -> Void {
         if WhisperBackend.isEncoderInstalled(modelId: model.id) == true {
             return
         }
@@ -89,9 +89,9 @@ enum WhisperEncoderInstaller {
         )
 
         try FileManager.default.createDirectory(at: stagingExtract, withIntermediateDirectories: true)
-        try unzipArchive(at: stagingZip, into: stagingExtract)
+        try await Self.unzipArchive(at: stagingZip, into: stagingExtract)
 
-        guard let bundle = findMlmodelcBundle(under: stagingExtract) else {
+        guard let bundle = Self.findMlmodelcBundle(under: stagingExtract) else {
             throw ModelInstallationError.installFailed(
                 path: finalEncoder,
                 underlying: NSError(
@@ -108,7 +108,7 @@ enum WhisperEncoderInstaller {
         try SuperscribeFS.atomicReplace(
             staging: bundle,
             final: finalEncoder,
-            policy: .removeFinalThenMove
+            policy: .replaceExisting
         )
 
         let bytesCompleted: Int64
@@ -133,27 +133,29 @@ enum WhisperEncoderInstaller {
 
     // MARK: - Private
 
-    private static func unzipArchive(at zip: URL, into dest: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-q", "-o", zip.path, "-d", dest.path]
-        let pipe = Pipe()
-        process.standardError = pipe
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let raw = pipe.fileHandleForReading.readDataToEndOfFile()
-            let err = decodeUnzipStderr(raw: raw)
+    internal static func unzipArchive(at zip: URL, into dest: URL) async throws -> Void {
+        let executable = URL(fileURLWithPath: "/usr/bin/unzip")
+        let listing = try await ProcessRunner.run(executable: executable, arguments: ["-Z1", zip.path])
+        guard listing.status == 0 else {
+            throw ModelInstallationError.installFailed(path: dest, underlying: CocoaError(.fileReadCorruptFile))
+        }
+        for entry in String(decoding: listing.stdout, as: UTF8.self).split(separator: "\n") {
+            let path = entry.hasSuffix("/") ? String(entry.dropLast()) : String(entry)
+            _ = try ModelPathValidation.resolve(path, under: dest)
+        }
+        let metadata = try await ProcessRunner.run(executable: executable, arguments: ["-Z", "-l", zip.path])
+        guard metadata.status == 0,
+            String(decoding: metadata.stdout, as: UTF8.self).split(separator: "\n").contains(where: { $0.hasPrefix("l") }) == false
+        else {
+            throw ModelInstallationError.installFailed(path: dest, underlying: CocoaError(.fileReadCorruptFile))
+        }
+        let output = try await ProcessRunner.run(executable: executable, arguments: ["-q", "-o", zip.path, "-d", dest.path])
+        guard output.status == 0 else {
             throw ModelInstallationError.installFailed(
                 path: dest,
-                underlying: NSError(
-                    domain: "WhisperEncoderInstaller",
-                    code: 2,
-                    userInfo: [NSLocalizedDescriptionKey: err]
-                )
+                underlying: NSError(domain: "WhisperEncoderInstaller", code: 2, userInfo: [NSLocalizedDescriptionKey: Self.decodeUnzipStderr(raw: output.stderr)])
             )
         }
-        return
     }
 
     private static func findMlmodelcBundle(under root: URL) -> URL? {

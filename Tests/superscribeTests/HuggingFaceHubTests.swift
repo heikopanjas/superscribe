@@ -8,20 +8,22 @@ struct HuggingFaceHubTests {
 
     // MARK: - HFRepoInfo / HFSibling
 
-    @Test func decodesRepoInfoWithUnknownFieldsAndMissingSizes() throws {
-        let json = """
-            {
-              "id": "ggerganov/whisper.cpp",
-              "lastModified": "2025-09-15T08:30:00.000Z",
-              "tags": ["whisper", "ggml"],
-              "downloads": 1234,
-              "siblings": [
-                { "rfilename": "ggml-tiny.bin", "size": 1024 },
-                { "rfilename": "ggml-base.bin" },
-                { "rfilename": "README.md", "size": 200 }
-              ]
-            }
-            """.data(using: .utf8)!
+    @Test func decodesRepoInfoWithUnknownFieldsAndMissingSizes() throws -> Void {
+        let json =
+            (try #require(
+                """
+                {
+                  "id": "ggerganov/whisper.cpp",
+                  "lastModified": "2025-09-15T08:30:00.000Z",
+                  "tags": ["whisper", "ggml"],
+                  "downloads": 1234,
+                  "siblings": [
+                    { "rfilename": "ggml-tiny.bin", "size": 1024 },
+                    { "rfilename": "ggml-base.bin" },
+                    { "rfilename": "README.md", "size": 200 }
+                  ]
+                }
+                """.data(using: .utf8)))
 
         let info = try HuggingFaceHub.decoder()
             .decode(HuggingFaceHub.HFRepoInfo.self, from: json)
@@ -34,19 +36,21 @@ struct HuggingFaceHubTests {
 
     // MARK: - HFRepo (author listing)
 
-    @Test func decodesAuthorListing() throws {
-        let json = """
-            [
-              {
-                "id": "FluidInference/parakeet-tdt-0.6b-v3-coreml",
-                "lastModified": "2025-08-01T00:00:00.000Z",
-                "tags": ["asr"]
-              },
-              {
-                "id": "FluidInference/parakeet-tdt-0.6b-v2-coreml"
-              }
-            ]
-            """.data(using: .utf8)!
+    @Test func decodesAuthorListing() throws -> Void {
+        let json =
+            (try #require(
+                """
+                [
+                  {
+                    "id": "FluidInference/parakeet-tdt-0.6b-v3-coreml",
+                    "lastModified": "2025-08-01T00:00:00.000Z",
+                    "tags": ["asr"]
+                  },
+                  {
+                    "id": "FluidInference/parakeet-tdt-0.6b-v2-coreml"
+                  }
+                ]
+                """.data(using: .utf8)))
 
         let repos = try HuggingFaceHub.decoder()
             .decode([HuggingFaceHub.HFRepo].self, from: json)

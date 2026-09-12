@@ -5,19 +5,41 @@ import Testing
 
 @Suite("DownloadProgressTracker", .serialized, ResetSharedStateTrait())
 struct DownloadProgressTrackerTests {
-
-    private final class TickSink: @unchecked Sendable {
-        var ticks: [DownloadProgress] = []
+    @Test func zeroBytesAndElapsedTimeHaveNoRate() async throws -> Void {
+        let clock = TestDependencyStorage(0.0)
+        let ticks = TestDependencyStorage<[DownloadProgress]>([])
+        let tracker = DownloadProgressTracker(
+            modelId: "empty", backend: .parakeet, filesTotal: 1, bytesTotal: nil,
+            onProgress: {
+                ticks[\.self].append($0)
+            }, now: { return clock[\.self] })
+        await tracker.flush()
+        clock[\.self] = 0.5
+        await tracker.flush()
+        #expect(ticks[\.self].allSatisfy { $0.bytesPerSecond == nil } == true)
+        await tracker.add(bytes: 10)
+        await tracker.flush()
+        #expect(ticks[\.self].last?.bytesPerSecond == 20)
     }
 
-    @Test func startAddCompleteFlushUpdatesProgress() async throws {
+    private final class TickSink: Sendable {
+        private let storage = TestDependencyStorage<[DownloadProgress]>([])
+        var ticks: [DownloadProgress] {
+            get { return self.storage[\.self] }
+            set { self.storage[\.self] = newValue }
+        }
+    }
+
+    @Test func startAddCompleteFlushUpdatesProgress() async throws -> Void {
         let sink = TickSink()
+        let clock = TestDependencyStorage(0.0)
         let tracker = DownloadProgressTracker(
             modelId: "m1",
             backend: .whisperCpp,
             filesTotal: 2,
             bytesTotal: 100,
-            onProgress: { sink.ticks.append($0) }
+            onProgress: { sink.ticks.append($0) },
+            now: { return clock[\.self] }
         )
 
         await tracker.startFile(name: "a.bin")
@@ -38,14 +60,16 @@ struct DownloadProgressTrackerTests {
         #expect(last.backend == .whisperCpp)
     }
 
-    @Test func rapidAddsAreThrottledUntilFlush() async throws {
+    @Test func rapidAddsAreThrottledUntilFlush() async throws -> Void {
         let sink = TickSink()
+        let clock = TestDependencyStorage(0.0)
         let tracker = DownloadProgressTracker(
             modelId: "throttle",
             backend: .parakeet,
             filesTotal: 1,
             bytesTotal: 10_000,
-            onProgress: { sink.ticks.append($0) }
+            onProgress: { sink.ticks.append($0) },
+            now: { return clock[\.self] }
         )
 
         await tracker.startFile(name: "one.bin")
@@ -59,39 +83,43 @@ struct DownloadProgressTrackerTests {
         #expect(final.bytesCompleted == 200)
     }
 
-    @Test func zeroByteWindowSkipsThroughputUpdate() async throws {
+    @Test func zeroByteWindowSkipsThroughputUpdate() async throws -> Void {
         let sink = TickSink()
+        let clock = TestDependencyStorage(0.0)
         let tracker = DownloadProgressTracker(
             modelId: "zero-delta",
             backend: .parakeet,
             filesTotal: 1,
             bytesTotal: 100,
-            onProgress: { sink.ticks.append($0) }
+            onProgress: { sink.ticks.append($0) },
+            now: { return clock[\.self] }
         )
 
         await tracker.startFile(name: "x.bin")
         await tracker.add(bytes: 100)
-        try await Task.sleep(for: .milliseconds(1_100))
+        clock[\.self] += 1.1
         await tracker.flush()
-        try await Task.sleep(for: .milliseconds(1_100))
+        clock[\.self] += 1.1
         await tracker.flush()
 
         #expect(sink.ticks.count >= 2)
     }
 
-    @Test func throughputUsesSlidingWindowAfterOneSecond() async throws {
+    @Test func throughputUsesSlidingWindowAfterOneSecond() async throws -> Void {
         let sink = TickSink()
+        let clock = TestDependencyStorage(0.0)
         let tracker = DownloadProgressTracker(
             modelId: "bps",
             backend: .whisperCpp,
             filesTotal: 1,
             bytesTotal: nil,
-            onProgress: { sink.ticks.append($0) }
+            onProgress: { sink.ticks.append($0) },
+            now: { return clock[\.self] }
         )
 
         await tracker.startFile(name: "x.bin")
         await tracker.add(bytes: 50_000)
-        try await Task.sleep(for: .milliseconds(1_100))
+        clock[\.self] += 1.1
         await tracker.add(bytes: 50_000)
         await tracker.flush()
 

@@ -16,7 +16,7 @@ public struct ConvertedAudioCache: Sendable {
     }
 
     public static func defaultRoot() -> URL {
-        SuperscribePaths.audioCacheRoot()
+        return SuperscribePaths.audioCacheRoot()
     }
 
     /// Identity of a (source file, target format) pair.
@@ -41,7 +41,7 @@ public struct ConvertedAudioCache: Sendable {
         /// Stable digest used as the on-disk filename stem.
         public var digest: String {
             let raw =
-                "\(sourcePath)|\(sourceSize)|\(sourceMtimeNanos)|\(formatKey)"
+                "\(self.sourcePath)|\(self.sourceSize)|\(self.sourceMtimeNanos)|\(self.formatKey)"
             let bytes = SHA256.hash(data: Data(raw.utf8))
             return bytes.map { String(format: "%02x", $0) }.joined()
         }
@@ -79,18 +79,19 @@ public struct ConvertedAudioCache: Sendable {
 
     /// Stable, human-readable description of the target PCM format.
     public static func formatKey(for format: AudioFormat) -> String {
-        "f32-\(format.sampleRate)-\(format.channels)"
+        return "f32-\(format.sampleRate)-\(format.channels)"
     }
 
     /// On-disk URL for a cache key (whether or not the file exists).
     public func cacheURL(for key: CacheKey) -> URL {
-        root.appendingPathComponent("\(key.digest).wav", isDirectory: false)
+        return self.root.appendingPathComponent("\(key.digest).wav", isDirectory: false)
     }
 
     /// Returns the cache URL if a file is present at that location.
     public func lookup(_ key: CacheKey) -> URL? {
-        let url = cacheURL(for: key)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        let url = self.cacheURL(for: key)
+        return if FileManager.default.fileExists(atPath: url.path) == true { url }
+        else { nil }
     }
 
     // MARK: - Manifest
@@ -105,41 +106,46 @@ public struct ConvertedAudioCache: Sendable {
 
     /// URL of the manifest sidecar file (`manifest.json` in the cache root).
     public var manifestURL: URL {
-        root.appendingPathComponent("manifest.json", isDirectory: false)
+        return self.root.appendingPathComponent("manifest.json", isDirectory: false)
     }
 
     /// Load the manifest from disk. Returns an empty dictionary when no manifest exists.
     public func loadManifest() throws -> [String: ManifestEntry] {
-        guard FileManager.default.fileExists(atPath: manifestURL.path) == true else { return [:] }
-        let data = try Data(contentsOf: manifestURL)
+        guard FileManager.default.fileExists(atPath: self.manifestURL.path) == true else { return [:] }
+        let data = try Data(contentsOf: self.manifestURL)
         let decoder = JSONCoding.catalogDecoder()
         let entries = try decoder.decode([ManifestEntry].self, from: data)
         return Dictionary(entries.map { ($0.digest, $0) }, uniquingKeysWith: { $1 })
     }
 
     /// Upsert an entry in the manifest. Callers treat failures as non-fatal.
-    public func updateManifest(adding entry: ManifestEntry) throws {
-        var current = (try? loadManifest()) ?? [:]
-        current[entry.digest] = entry
-        try writeManifest(Array(current.values))
+    public func updateManifest(adding entry: ManifestEntry) throws -> Void {
+        try FileTransaction.withLock(for: self.manifestURL) {
+            var current = (try? self.loadManifest()) ?? [:]
+            current[entry.digest] = entry
+            try self.writeManifest(Array(current.values))
+        }
     }
 
     /// Remove an entry from the manifest. No-op if the digest is absent.
-    public func updateManifest(removingDigest digest: String) throws {
-        var current = (try? loadManifest()) ?? [:]
-        guard current[digest] != nil else { return }
-        current.removeValue(forKey: digest)
-        try writeManifest(Array(current.values))
+    public func updateManifest(removingDigest digest: String) throws -> Void {
+        try FileTransaction.withLock(for: self.manifestURL) {
+            var current = (try? self.loadManifest()) ?? [:]
+            guard current[digest] != nil else { return }
+            current.removeValue(forKey: digest)
+            try self.writeManifest(Array(current.values))
+        }
     }
 
-    private func writeManifest(_ entries: [ManifestEntry]) throws {
+    private func writeManifest(_ entries: [ManifestEntry]) throws -> Void {
         let data = try JSONCoding.catalogEncoder().encode(entries)
-        let stagingURL = SuperscribeFS.stagingURL(beside: manifestURL, label: "manifest.json")
+        let stagingURL = SuperscribeFS.stagingURL(beside: self.manifestURL, label: "manifest.json")
+        defer { try? FileManager.default.removeItem(at: stagingURL) }
         try data.write(to: stagingURL)
         try SuperscribeFS.atomicReplace(
             staging: stagingURL,
-            final: manifestURL,
-            policy: .removeFinalThenMove
+            final: self.manifestURL,
+            policy: .replaceExisting
         )
     }
 
@@ -152,19 +158,43 @@ public struct ConvertedAudioCache: Sendable {
         format: AudioFormat,
         key: CacheKey
     ) throws -> URL {
+        try AudioValidation.validate(format)
         try FileManager.default.createDirectory(
-            at: root, withIntermediateDirectories: true
+            at: self.root, withIntermediateDirectories: true
         )
 
-        let finalURL = cacheURL(for: key)
-        let stagingURL = SuperscribeFS.stagingURL(beside: finalURL, label: "\(key.digest).wav")
+        let finalURL = self.cacheURL(for: key)
+        let stagingURL = SuperscribeFS.stagingURL(beside: finalURL, label: key.digest).appendingPathExtension("wav")
 
-        let avFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(format.sampleRate),
-            channels: AVAudioChannelCount(format.channels),
-            interleaved: false
-        )!
+        try autoreleasepool {
+            try self.writeSamples(samples, format: format, to: stagingURL)
+        }
+
+        do {
+            if SuperscribeKitTestHooks.forceCacheStoreAtomicReplaceFailure == true {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            try SuperscribeFS.atomicReplace(
+                staging: stagingURL,
+                final: finalURL,
+                policy: .replaceExisting
+            )
+        }
+        catch {
+            try? FileManager.default.removeItem(at: stagingURL)
+            throw error
+        }
+
+        // Update manifest so `superscribe cache --list` can show source filenames.
+        try? self.updateManifest(
+            adding: ManifestEntry(digest: key.digest, sourcePath: key.sourcePath, storedAt: Date())
+        )
+
+        return finalURL
+    }
+    @inline(never)
+    private func writeSamples(_ samples: [Float], format: AudioFormat, to stagingURL: URL) throws -> Void {
+        let avFormat = try AudioBuffers.format(format)
 
         // WAV settings matching the in-memory float32 samples bit-for-bit.
         let settings: [String: Any] = [
@@ -218,10 +248,8 @@ public struct ConvertedAudioCache: Sendable {
                     )
                 }
                 buffer.frameLength = AVAudioFrameCount(count)
-                samples.withUnsafeBufferPointer { src in
-                    let base = src.baseAddress!.advanced(by: offset)
-                    buffer.floatChannelData![0].update(from: base, count: count)
-                }
+                let channel = try AudioBuffers.channels(buffer)[0]
+                _ = UnsafeMutableBufferPointer(start: channel, count: count).update(from: samples[offset ..< offset + count])
                 try outputFile.write(from: buffer)
                 if SuperscribeKitTestHooks.forceCacheStoreMidWriteFailure == true {
                     throw CocoaError(.fileWriteUnknown)
@@ -238,30 +266,6 @@ public struct ConvertedAudioCache: Sendable {
             throw error
         }
 
-        // Closing happens on dealloc; ensure the file is closed before the
-        // rename by dropping our reference.
-        _ = outputFile
-
-        do {
-            if SuperscribeKitTestHooks.forceCacheStoreAtomicReplaceFailure == true {
-                throw CocoaError(.fileWriteUnknown)
-            }
-            try SuperscribeFS.atomicReplace(
-                staging: stagingURL,
-                final: finalURL,
-                policy: .removeFinalThenMove
-            )
-        }
-        catch {
-            try? FileManager.default.removeItem(at: stagingURL)
-            throw error
-        }
-
-        // Update manifest so `superscribe cache --list` can show source filenames.
-        try? updateManifest(
-            adding: ManifestEntry(digest: key.digest, sourcePath: key.sourcePath, storedAt: Date())
-        )
-
-        return finalURL
     }
+
 }

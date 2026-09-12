@@ -4,113 +4,173 @@ import Foundation
 /// Internal flags used by unit tests to exercise error paths that are
 /// impractical to trigger through real AVFoundation / filesystem failures.
 enum SuperscribeKitTestHooks {
-    nonisolated(unsafe) static var forceAudioPreparerFastPathBufferFailure = false
-    nonisolated(unsafe) static var forceAudioPreparerCachedBufferFailure = false
-    nonisolated(unsafe) static var forceAudioPreparerConverterCreationFailure = false
-    nonisolated(unsafe) static var forceAudioPreparerOutputBufferFailure = false
-    nonisolated(unsafe) static var forceAudioPreparerInputBufferFailure = false
-    nonisolated(unsafe) static var forceAudioPreparerConversionError: String?
-    nonisolated(unsafe) static var forceAudioPreparerEndOfStreamImmediately = false
-    nonisolated(unsafe) static var forceAudioPreparerZeroFrameRead = false
-    nonisolated(unsafe) static var forceAudioPreparerSecondPullEndOfStream = false
-    nonisolated(unsafe) static var forceAudioPreparerMarkEndBeforeSecondPull = false
-    nonisolated(unsafe) static var forceAudioPreparerConverterNativeError = false
+    @TaskLocal internal static var testState = TestDependencyStorage(TestState())
 
-    nonisolated(unsafe) static var forceAnalyzerMonoFormatFailure = false
-    nonisolated(unsafe) static var forceAnalyzerSourceBufferFailure = false
-    nonisolated(unsafe) static var forceAnalyzerReadIntoFailure = false
-    nonisolated(unsafe) static var forceAnalyzerConverterCreationFailure = false
-    nonisolated(unsafe) static var forceAnalyzerConversionError: Error?
-    nonisolated(unsafe) static var forceAnalyzerSecondInputEndOfStream = false
-    nonisolated(unsafe) static var forceAnalyzerChunkedInput = false
-    nonisolated(unsafe) static var forceAnalyzerSmallMonoBuffer = false
-    nonisolated(unsafe) static var forceAnalyzerInjectConversionError = false
-    nonisolated(unsafe) static var forceAnalyzerNilMonoChannel = false
-    nonisolated(unsafe) static var forceAnalyzerSimulatedConversionError: NSError?
-    nonisolated(unsafe) static var forceAnalyzerBadConverterStatus = false
-    nonisolated(unsafe) static var forceAnalyzerConversionStatusError = false
+    internal struct TestState {
+        var audioReadFailureAfterFrames: Int64?
+        var audioConverterErrorWithoutDetails = false
+        var loadWaiterWillRegister: (@Sendable () -> Void)?
+        var forceCacheStoreWriteBufferFailure = false
+        var forceCacheStoreWriteError: Error?
+        var forceCacheStoreMidWriteFailure = false
+        var forceCacheStoreAtomicReplaceFailure = false
+        var forceCacheStoreOpenFailure = false
+        var forceCacheKeyAttributeParseFailure = false
+        var forceCacheKeyAttributeGuardFailure = false
+        var forceModelInstallerAtomicReplaceFailure = false
+        var forceModelInstallerPreflightVolumeLookupFailure = false
+        var forceModelInstallerPreflightVolumeUnknown = false
+        var forceModelDownloaderFileHandleFailure = false
+        var forceParakeetDirectorySizeEnumeratorFailure = false
+        var forceParakeetDirectorySizeNilEnumerator = false
+        var forceContentsOfDirectoryFailure = false
+        var forceUnzipInvalidStderr = false
+        var forceEncoderBundleEnumeratorNil = false
+        var parakeetMaterializeSession: (@Sendable (URL, AsrModelVersion) async throws -> any ParakeetASRSession)?
+        var parakeetMaterializeFromDiskStub: (@Sendable (URL, AsrModelVersion) async throws -> any ParakeetASRSession)?
+        var parakeetAsrModelsLoad: (@Sendable (URL, AsrModelVersion) async throws -> AsrModels)?
+        var parakeetAsrManagerLoadModels: (@Sendable (AsrManager) async throws -> Void)?
+        var parakeetLoadAfterInstalledCheck: (@Sendable () async throws -> any ParakeetASRSession)?
+    }
 
-    nonisolated(unsafe) static var forceCacheStoreWriteBufferFailure = false
-    nonisolated(unsafe) static var forceCacheStoreWriteError: Error?
-    nonisolated(unsafe) static var forceCacheStoreMidWriteFailure = false
-    nonisolated(unsafe) static var forceCacheStoreAtomicReplaceFailure = false
-    nonisolated(unsafe) static var forceCacheStoreOpenFailure = false
-    nonisolated(unsafe) static var forceCacheKeyAttributeParseFailure = false
-    nonisolated(unsafe) static var forceCacheKeyAttributeGuardFailure = false
+    internal static var forceCacheStoreWriteBufferFailure: Bool {
+        get { return Self.testState[\.forceCacheStoreWriteBufferFailure] }
+        set { Self.testState[\.forceCacheStoreWriteBufferFailure] = newValue }
+    }
+    internal static var forceCacheStoreWriteError: Error? {
+        get { return Self.testState[\.forceCacheStoreWriteError] }
+        set { Self.testState[\.forceCacheStoreWriteError] = newValue }
+    }
+    internal static var forceCacheStoreMidWriteFailure: Bool {
+        get { return Self.testState[\.forceCacheStoreMidWriteFailure] }
+        set { Self.testState[\.forceCacheStoreMidWriteFailure] = newValue }
+    }
+    internal static var forceCacheStoreAtomicReplaceFailure: Bool {
+        get { return Self.testState[\.forceCacheStoreAtomicReplaceFailure] }
+        set { Self.testState[\.forceCacheStoreAtomicReplaceFailure] = newValue }
+    }
+    internal static var forceCacheStoreOpenFailure: Bool {
+        get { return Self.testState[\.forceCacheStoreOpenFailure] }
+        set { Self.testState[\.forceCacheStoreOpenFailure] = newValue }
+    }
+    internal static var forceCacheKeyAttributeParseFailure: Bool {
+        get { return Self.testState[\.forceCacheKeyAttributeParseFailure] }
+        set { Self.testState[\.forceCacheKeyAttributeParseFailure] = newValue }
+    }
+    internal static var forceCacheKeyAttributeGuardFailure: Bool {
+        get { return Self.testState[\.forceCacheKeyAttributeGuardFailure] }
+        set { Self.testState[\.forceCacheKeyAttributeGuardFailure] = newValue }
+    }
 
-    nonisolated(unsafe) static var forceModelInstallerAtomicReplaceFailure = false
-    nonisolated(unsafe) static var forceModelInstallerPreflightVolumeLookupFailure = false
-    nonisolated(unsafe) static var forceModelInstallerPreflightVolumeUnknown = false
+    internal static var forceModelInstallerAtomicReplaceFailure: Bool {
+        get { return Self.testState[\.forceModelInstallerAtomicReplaceFailure] }
+        set { Self.testState[\.forceModelInstallerAtomicReplaceFailure] = newValue }
+    }
+    internal static var forceModelInstallerPreflightVolumeLookupFailure: Bool {
+        get { return Self.testState[\.forceModelInstallerPreflightVolumeLookupFailure] }
+        set { Self.testState[\.forceModelInstallerPreflightVolumeLookupFailure] = newValue }
+    }
+    internal static var forceModelInstallerPreflightVolumeUnknown: Bool {
+        get { return Self.testState[\.forceModelInstallerPreflightVolumeUnknown] }
+        set { Self.testState[\.forceModelInstallerPreflightVolumeUnknown] = newValue }
+    }
 
-    nonisolated(unsafe) static var forceModelDownloaderFileHandleFailure = false
+    internal static var forceModelDownloaderFileHandleFailure: Bool {
+        get { return Self.testState[\.forceModelDownloaderFileHandleFailure] }
+        set { Self.testState[\.forceModelDownloaderFileHandleFailure] = newValue }
+    }
 
-    nonisolated(unsafe) static var forceParakeetDirectorySizeEnumeratorFailure = false
-    nonisolated(unsafe) static var forceParakeetDirectorySizeNilEnumerator = false
-    nonisolated(unsafe) static var forceContentsOfDirectoryFailure = false
-    nonisolated(unsafe) static var forceUnzipInvalidStderr = false
-    nonisolated(unsafe) static var forceEncoderBundleEnumeratorNil = false
+    internal static var forceParakeetDirectorySizeEnumeratorFailure: Bool {
+        get { return Self.testState[\.forceParakeetDirectorySizeEnumeratorFailure] }
+        set { Self.testState[\.forceParakeetDirectorySizeEnumeratorFailure] = newValue }
+    }
+    internal static var forceParakeetDirectorySizeNilEnumerator: Bool {
+        get { return Self.testState[\.forceParakeetDirectorySizeNilEnumerator] }
+        set { Self.testState[\.forceParakeetDirectorySizeNilEnumerator] = newValue }
+    }
+    internal static var forceContentsOfDirectoryFailure: Bool {
+        get { return Self.testState[\.forceContentsOfDirectoryFailure] }
+        set { Self.testState[\.forceContentsOfDirectoryFailure] = newValue }
+    }
+    internal static var forceUnzipInvalidStderr: Bool {
+        get { return Self.testState[\.forceUnzipInvalidStderr] }
+        set { Self.testState[\.forceUnzipInvalidStderr] = newValue }
+    }
+    internal static var forceEncoderBundleEnumeratorNil: Bool {
+        get { return Self.testState[\.forceEncoderBundleEnumeratorNil] }
+        set { Self.testState[\.forceEncoderBundleEnumeratorNil] = newValue }
+    }
 
     /// When set, replaces FluidAudio disk load in `ensureLoaded` before `materializeFromDisk`.
-    nonisolated(unsafe) static var parakeetMaterializeSession: (@Sendable (URL, AsrModelVersion) async throws -> any ParakeetASRSession)?
+    internal static var parakeetMaterializeSession: (@Sendable (URL, AsrModelVersion) async throws -> any ParakeetASRSession)? {
+        get { return Self.testState[\.parakeetMaterializeSession] }
+        set { Self.testState[\.parakeetMaterializeSession] = newValue }
+    }
 
     /// When set, replaces the body of `materializeFromDisk` after the status line (no HF downloads).
-    nonisolated(unsafe) static var parakeetMaterializeFromDiskStub: (@Sendable (URL, AsrModelVersion) async throws -> any ParakeetASRSession)?
+    internal static var parakeetMaterializeFromDiskStub: (@Sendable (URL, AsrModelVersion) async throws -> any ParakeetASRSession)? {
+        get { return Self.testState[\.parakeetMaterializeFromDiskStub] }
+        set { Self.testState[\.parakeetMaterializeFromDiskStub] = newValue }
+    }
 
     /// When set, replaces `AsrModels.load` inside `materializeFromDiskUsingFluidAudio`.
-    nonisolated(unsafe) static var parakeetAsrModelsLoad: (@Sendable (URL, AsrModelVersion) async throws -> AsrModels)?
+    internal static var parakeetAsrModelsLoad: (@Sendable (URL, AsrModelVersion) async throws -> AsrModels)? {
+        get { return Self.testState[\.parakeetAsrModelsLoad] }
+        set { Self.testState[\.parakeetAsrModelsLoad] = newValue }
+    }
 
     /// When set, replaces `AsrManager.loadModels` inside `loadParakeetModelsIntoManager`.
-    nonisolated(unsafe) static var parakeetAsrManagerLoadModels: (@Sendable (AsrManager) async throws -> Void)?
+    internal static var parakeetAsrManagerLoadModels: (@Sendable (AsrManager) async throws -> Void)? {
+        get { return Self.testState[\.parakeetAsrManagerLoadModels] }
+        set { Self.testState[\.parakeetAsrManagerLoadModels] = newValue }
+    }
 
     /// Runs after `requireInstalled` succeeds, skipping FluidAudio load.
-    nonisolated(unsafe) static var parakeetLoadAfterInstalledCheck: (@Sendable () async throws -> any ParakeetASRSession)?
+    internal static var parakeetLoadAfterInstalledCheck: (@Sendable () async throws -> any ParakeetASRSession)? {
+        get { return Self.testState[\.parakeetLoadAfterInstalledCheck] }
+        set { Self.testState[\.parakeetLoadAfterInstalledCheck] = newValue }
+    }
+
+    internal static var loadWaiterWillRegister: (@Sendable () -> Void)? {
+        get { return Self.testState[\.loadWaiterWillRegister] }
+        set { Self.testState[\.loadWaiterWillRegister] = newValue }
+    }
+
+    internal static var audioReadFailureAfterFrames: Int64? {
+        get { return Self.testState[\.audioReadFailureAfterFrames] }
+        set { Self.testState[\.audioReadFailureAfterFrames] = newValue }
+    }
+
+    internal static var audioConverterErrorWithoutDetails: Bool {
+        get { return Self.testState[\.audioConverterErrorWithoutDetails] }
+        set { Self.testState[\.audioConverterErrorWithoutDetails] = newValue }
+    }
 
     /// Clears all hook flags (used by the test harness between tests).
-    static func resetAll() {
-        forceAudioPreparerFastPathBufferFailure = false
-        forceAudioPreparerCachedBufferFailure = false
-        forceAudioPreparerConverterCreationFailure = false
-        forceAudioPreparerOutputBufferFailure = false
-        forceAudioPreparerInputBufferFailure = false
-        forceAudioPreparerConversionError = nil
-        forceAudioPreparerEndOfStreamImmediately = false
-        forceAudioPreparerZeroFrameRead = false
-        forceAudioPreparerSecondPullEndOfStream = false
-        forceAudioPreparerMarkEndBeforeSecondPull = false
-        forceAudioPreparerConverterNativeError = false
-        forceAnalyzerMonoFormatFailure = false
-        forceAnalyzerSourceBufferFailure = false
-        forceAnalyzerReadIntoFailure = false
-        forceAnalyzerConverterCreationFailure = false
-        forceAnalyzerConversionError = nil
-        forceAnalyzerSecondInputEndOfStream = false
-        forceAnalyzerChunkedInput = false
-        forceAnalyzerSmallMonoBuffer = false
-        forceAnalyzerInjectConversionError = false
-        forceAnalyzerNilMonoChannel = false
-        forceAnalyzerSimulatedConversionError = nil
-        forceAnalyzerBadConverterStatus = false
-        forceAnalyzerConversionStatusError = false
-        forceCacheStoreWriteBufferFailure = false
-        forceCacheStoreWriteError = nil
-        forceCacheStoreMidWriteFailure = false
-        forceCacheStoreAtomicReplaceFailure = false
-        forceCacheStoreOpenFailure = false
-        forceCacheKeyAttributeParseFailure = false
-        forceCacheKeyAttributeGuardFailure = false
-        forceModelInstallerAtomicReplaceFailure = false
-        forceModelInstallerPreflightVolumeLookupFailure = false
-        forceModelInstallerPreflightVolumeUnknown = false
-        forceModelDownloaderFileHandleFailure = false
-        forceParakeetDirectorySizeEnumeratorFailure = false
-        forceParakeetDirectorySizeNilEnumerator = false
-        forceContentsOfDirectoryFailure = false
-        forceUnzipInvalidStderr = false
-        forceEncoderBundleEnumeratorNil = false
-        parakeetMaterializeSession = nil
-        parakeetMaterializeFromDiskStub = nil
-        parakeetAsrModelsLoad = nil
-        parakeetAsrManagerLoadModels = nil
-        parakeetLoadAfterInstalledCheck = nil
+    static func resetAll() -> Void {
+        Self.audioReadFailureAfterFrames = nil
+        Self.audioConverterErrorWithoutDetails = false
+        Self.loadWaiterWillRegister = nil
+        Self.forceCacheStoreWriteBufferFailure = false
+        Self.forceCacheStoreWriteError = nil
+        Self.forceCacheStoreMidWriteFailure = false
+        Self.forceCacheStoreAtomicReplaceFailure = false
+        Self.forceCacheStoreOpenFailure = false
+        Self.forceCacheKeyAttributeParseFailure = false
+        Self.forceCacheKeyAttributeGuardFailure = false
+        Self.forceModelInstallerAtomicReplaceFailure = false
+        Self.forceModelInstallerPreflightVolumeLookupFailure = false
+        Self.forceModelInstallerPreflightVolumeUnknown = false
+        Self.forceModelDownloaderFileHandleFailure = false
+        Self.forceParakeetDirectorySizeEnumeratorFailure = false
+        Self.forceParakeetDirectorySizeNilEnumerator = false
+        Self.forceContentsOfDirectoryFailure = false
+        Self.forceUnzipInvalidStderr = false
+        Self.forceEncoderBundleEnumeratorNil = false
+        Self.parakeetMaterializeSession = nil
+        Self.parakeetMaterializeFromDiskStub = nil
+        Self.parakeetAsrModelsLoad = nil
+        Self.parakeetAsrManagerLoadModels = nil
+        Self.parakeetLoadAfterInstalledCheck = nil
     }
 }

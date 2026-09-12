@@ -5,7 +5,7 @@ import Testing
 
 @Suite("JSONCoding", .serialized, ResetSharedStateTrait())
 struct JSONCodingTests {
-    @Test func catalogRoundTripPreservesISO8601Dates() throws {
+    @Test func catalogRoundTripPreservesISO8601Dates() throws -> Void {
         let fetchedAt = Date(timeIntervalSince1970: 1_700_000_000)
         let catalog = Catalog(
             entries: [
@@ -18,7 +18,7 @@ struct JSONCodingTests {
                             totalSizeBytes: 100,
                             fileCount: 1,
                             lastModified: fetchedAt,
-                            repoURL: URL(string: "https://huggingface.co/x")!
+                            repoURL: (try #require(URL(string: "https://huggingface.co/x")))
                         )
                     ]
                 )
@@ -36,7 +36,7 @@ struct JSONCodingTests {
         #expect(abs(entry.fetchedAt.timeIntervalSince1970 - fetchedAt.timeIntervalSince1970) < 1)
     }
 
-    @Test func configEncoderOmitsDateStrategy() throws {
+    @Test func configEncoderOmitsDateStrategy() throws -> Void {
         struct Payload: Codable { let key: String }
         let data = try JSONCoding.configEncoder().encode(Payload(key: "value"))
         let json = String(decoding: data, as: UTF8.self)
@@ -44,7 +44,7 @@ struct JSONCodingTests {
         #expect(json.contains("value"))
     }
 
-    @Test func transcriptEncoderUsesUnescapedSlashes() throws {
+    @Test func transcriptEncoderUsesUnescapedSlashes() throws -> Void {
         let encoder = JSONCoding.transcriptEncoder()
         #expect(encoder.outputFormatting.contains(.withoutEscapingSlashes))
     }

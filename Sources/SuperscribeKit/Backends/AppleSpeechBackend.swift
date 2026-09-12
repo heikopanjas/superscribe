@@ -4,13 +4,26 @@ import Foundation
 /// speech-to-text using system-managed locale assets.
 @available(macOS 26, *)
 public actor AppleSpeechBackend: Transcriber {
+    @TaskLocal internal static var testState = TestDependencyStorage(TestState())
+
+    internal struct TestState {
+        var testLoadHook: (@Sendable () async throws -> AppleSpeechSession)?
+        var testForceUnavailable = false
+    }
+
     /// Test hook for `ensureLoaded()` without Speech assets on disk.
-    nonisolated(unsafe) internal static var testLoadHook: (@Sendable () async throws -> AppleSpeechSession)?
+    internal static var testLoadHook: (@Sendable () async throws -> AppleSpeechSession)? {
+        get { return Self.testState[\.testLoadHook] }
+        set { Self.testState[\.testLoadHook] = newValue }
+    }
     /// When `true`, `isAvailable` reports unavailable (for dispatch tests).
-    nonisolated(unsafe) internal static var testForceUnavailable = false
+    internal static var testForceUnavailable: Bool {
+        get { return Self.testState[\.testForceUnavailable] }
+        set { Self.testState[\.testForceUnavailable] = newValue }
+    }
 
     public nonisolated static var isAvailable: Bool {
-        if testForceUnavailable == true { return false }
+        if Self.testForceUnavailable == true { return false }
         return AppleSpeechSupport.isRuntimeAvailable()
     }
 
@@ -21,16 +34,21 @@ public actor AppleSpeechBackend: Transcriber {
 
     private let loader = LoadOnce<AppleSpeechSession>()
     private let localeId: String
+    private let requestedLocaleId: String?
+    private var resolvedLocaleId: String?
+    public var modelId: String { return self.resolvedLocaleId ?? self.localeId }
 
-    public init(model: String = AppleSpeechBackend.defaultModelId) {
-        self.localeId = AppleSpeechSupport.normalizeLocaleId(model)
+    public init(model: String? = nil) throws {
+        if let model { try ModelPathValidation.identifier(model) }
+        self.requestedLocaleId = model
+        self.localeId = AppleSpeechSupport.normalizeLocaleId(model ?? AppleSpeechSupport.defaultLocaleId)
     }
 
     public nonisolated var capabilities: BackendCapabilities {
-        BackendCapabilities(
+        return BackendCapabilities(
             requiredAudioFormat: .asr16kMono,
             displayName: "Apple Speech",
-            defaultModelId: AppleSpeechBackend.defaultModelId
+            defaultModelId: Self.defaultModelId
         )
     }
 
@@ -39,7 +57,9 @@ public actor AppleSpeechBackend: Transcriber {
         segment: SpeechSegment,
         config: TranscriptionConfig
     ) async throws -> SegmentTranscription {
-        let session = try await ensureLoaded()
+        try config.validate()
+        let session = try await self.ensureLoaded()
+        self.resolvedLocaleId = session.localeId
         let spans = try await AppleSpeechLiveAPI.transcribe(
             samples: samples,
             locale: session.locale,
@@ -50,18 +70,16 @@ public actor AppleSpeechBackend: Transcriber {
     }
 
     private func ensureLoaded() async throws -> AppleSpeechSession {
-        try await loader.get { [localeId] in
+        return try await self.loader.get { [requestedLocaleId = self.requestedLocaleId] in
             if let hook = Self.testLoadHook {
                 return try await hook()
             }
-            guard await AppleSpeechLiveAPI.isLocaleInstalled(localeId) == true else {
-                throw ModelInstallationError.modelNotInstalled(model: localeId, backend: .appleSpeech)
+            let canonicalId = try await AppleSpeechSupport.resolveModelId(requestedLocaleId)
+            let locale = AppleSpeechSupport.locale(fromModelId: canonicalId)
+            guard await AppleSpeechLiveAPI.isLocaleInstalled(canonicalId) == true else {
+                throw ModelInstallationError.modelNotInstalled(model: canonicalId, backend: .appleSpeech)
             }
-            let locale = AppleSpeechSupport.locale(fromModelId: localeId)
-            guard await AppleSpeechLiveAPI.resolveSupportedLocale(for: locale) != nil else {
-                throw AppleSpeechError.localeUnsupported(localeId)
-            }
-            return AppleSpeechSession(locale: locale, localeId: localeId)
+            return AppleSpeechSession(locale: locale, localeId: canonicalId)
         }
     }
 }

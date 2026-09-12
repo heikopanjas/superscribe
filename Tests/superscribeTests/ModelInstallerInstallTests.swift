@@ -7,49 +7,32 @@ import Testing
 @Suite("ModelInstaller network installs", .serialized, ResetSharedStateTrait())
 struct ModelInstallerInstallTests {
 
-    private func tearDownMocks() {
+    private func tearDownMocks() -> Void {
         MockURLSessionHelpers.reset()
     }
 
-    private func makeEncoderZip(bundleParent: URL, bundleName: String, zipDestination: URL) throws {
-        let bundle = bundleParent.appendingPathComponent(bundleName, isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: bundle.appendingPathComponent("nested", isDirectory: true),
-            withIntermediateDirectories: true
-        )
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-        proc.arguments = ["-q", "-r", zipDestination.path, bundle.lastPathComponent]
-        proc.currentDirectoryURL = bundleParent
-        try proc.run()
-        proc.waitUntilExit()
-        #expect(proc.terminationStatus == 0)
-    }
-
-    @Test func parakeetFolderInstallViaMockDownload() async throws {
-        let tag = "pk-install-\(UUID().uuidString.prefix(8))"
-        let repoId = "FluidInference/\(tag)-coreml"
-        let finalDir = ParakeetBackend.installPath(for: tag)
+    @Test func parakeetFolderInstallViaMockDownload() async throws -> Void {
+        let tag = "v3"
+        let repoId = try ParakeetBackend.huggingFaceRepoId(for: tag)
+        let finalDir = try ParakeetBackend.installPath(for: tag)
+        try FileManager.default.createDirectory(at: finalDir.appendingPathComponent("Encoder.mlmodelc"), withIntermediateDirectories: true)
         defer {
             try? FileManager.default.removeItem(at: finalDir)
         }
 
-        let repoPayload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"Encoder.mlmodelc/w.bin","size":3}
-            ]}
-            """
+        let siblings = TestHelpers.parakeetFiles.map { ["rfilename": $0, "size": 3] as [String: Any] }
+        let repoPayload = try JSONSerialization.data(withJSONObject: ["id": repoId, "siblings": siblings])
 
         try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
                 if s.contains("/api/models/\(repoId)") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
-                    return (resp, Data(repoPayload.utf8))
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
+                    return (resp, repoPayload)
                 }
-                if s.contains("/resolve/main/Encoder.mlmodelc/w.bin") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                if s.contains("/resolve/main/") == true {
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data("bin".utf8))
                 }
                 throw URLError(.unsupportedURL)
@@ -59,10 +42,10 @@ struct ModelInstallerInstallTests {
                     id: tag,
                     repoId: repoId,
                     subpath: nil,
-                    totalSizeBytes: 3,
-                    fileCount: 1,
+                    totalSizeBytes: 15,
+                    fileCount: 5,
                     lastModified: nil,
-                    repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                 )
 
                 let url = try await ModelInstaller.install(
@@ -77,10 +60,12 @@ struct ModelInstallerInstallTests {
         )
     }
 
-    @Test func whisperBinInstallViaMockDownload() async throws {
+    @Test func whisperBinInstallRepairsTruncatedDownload() async throws -> Void {
         let tag = "wt-\(UUID().uuidString.prefix(8))"
         let repoId = WhisperBackend.huggingFaceRepoId
         let binURL = WhisperBackend.installPath(for: tag)
+        try FileManager.default.createDirectory(at: binURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([0]).write(to: binURL)
         defer {
             try? FileManager.default.removeItem(at: binURL)
         }
@@ -96,11 +81,11 @@ struct ModelInstallerInstallTests {
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
                 if s.contains("/api/models/\(repoId)") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data(repoPayload.utf8))
                 }
                 if s.contains("/resolve/main/ggml-\(tag).bin") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data("ggmlstub".utf8))
                 }
                 throw URLError(.unsupportedURL)
@@ -113,7 +98,7 @@ struct ModelInstallerInstallTests {
                     totalSizeBytes: 8,
                     fileCount: 1,
                     lastModified: nil,
-                    repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                 )
 
                 _ = try await ModelInstaller.install(
@@ -128,8 +113,8 @@ struct ModelInstallerInstallTests {
         )
     }
 
-    @Test func whisperBinFastPathInstallsEncoderZip() async throws {
-        defer { tearDownMocks() }
+    @Test func whisperBinFastPathInstallsEncoderZip() async throws -> Void {
+        defer { self.tearDownMocks() }
         let tag = "wt-enc-\(UUID().uuidString.prefix(8))"
         let repoId = WhisperBackend.huggingFaceRepoId
         let binURL = WhisperBackend.installPath(for: tag)
@@ -148,12 +133,7 @@ struct ModelInstallerInstallTests {
 
         try await TestHelpers.withTempDirectory(prefix: "encoder-zip-build") { zipBuild in
             let bundleName = "\(WhisperBackend.encoderBaseId(for: tag))-encoder.mlmodelc"
-            try makeEncoderZip(
-                bundleParent: zipBuild,
-                bundleName: bundleName,
-                zipDestination: zipBuild.appendingPathComponent("out.zip")
-            )
-            let zipData = try Data(contentsOf: zipBuild.appendingPathComponent("out.zip"))
+            let zipData = ZIPFixture.encoderBundle(named: bundleName)
             let repoPayload = """
                 {"id":"\(repoId)","lastModified":null,"siblings":[
                   {"rfilename":"ggml-\(tag).bin","size":8},
@@ -166,12 +146,12 @@ struct ModelInstallerInstallTests {
                     guard let url = req.url else { throw URLError(.badURL) }
                     let s = url.absoluteString
                     if s.contains("/api/models/\(repoId)") == true {
-                        let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                        let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                         return (resp, Data(repoPayload.utf8))
                     }
                     let resolveSuffix = "/resolve/main/\(zipName)"
                     if s.contains(resolveSuffix) == true {
-                        let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                        let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                         return (resp, zipData)
                     }
                     throw URLError(.unsupportedURL)
@@ -181,10 +161,10 @@ struct ModelInstallerInstallTests {
                         id: tag,
                         repoId: repoId,
                         subpath: nil,
-                        totalSizeBytes: Int64(8 + zipData.count),
+                        totalSizeBytes: 8,
                         fileCount: 2,
                         lastModified: nil,
-                        repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                        repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
 
                     _ = try await ModelInstaller.install(
@@ -199,7 +179,7 @@ struct ModelInstallerInstallTests {
         }
     }
 
-    @Test func concurrentInstallsSerializeForSameDestination() async throws {
+    @Test func concurrentInstallsSerializeForSameDestination() async throws -> Void {
         let tag = "wt-ser-\(UUID().uuidString.prefix(8))"
         let repoId = WhisperBackend.huggingFaceRepoId
         let binURL = WhisperBackend.installPath(for: tag)
@@ -218,11 +198,11 @@ struct ModelInstallerInstallTests {
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
                 if s.contains("/api/models/\(repoId)") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data(repoPayload.utf8))
                 }
                 if s.contains("/resolve/main/ggml-\(tag).bin") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data("ZZZZ".utf8))
                 }
                 throw URLError(.unsupportedURL)
@@ -235,7 +215,7 @@ struct ModelInstallerInstallTests {
                     totalSizeBytes: 4,
                     fileCount: 1,
                     lastModified: nil,
-                    repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                 )
 
                 let session = session
@@ -257,7 +237,7 @@ struct ModelInstallerInstallTests {
         )
     }
 
-    @Test func installFailedWhenEncoderZipUnzipFails() async throws {
+    @Test func installFailedWhenEncoderZipUnzipFails() async throws -> Void {
         let tag = "wt-badzip-\(UUID().uuidString.prefix(8))"
         let repoId = WhisperBackend.huggingFaceRepoId
         let binURL = WhisperBackend.installPath(for: tag)
@@ -285,11 +265,11 @@ struct ModelInstallerInstallTests {
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
                 if s.contains("/api/models/\(repoId)") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data(repoPayload.utf8))
                 }
                 if s.contains("/resolve/main/\(zipName)") == true {
-                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, Data("not-a-real-zip".utf8))
                 }
                 throw URLError(.unsupportedURL)
@@ -299,10 +279,10 @@ struct ModelInstallerInstallTests {
                     id: tag,
                     repoId: repoId,
                     subpath: nil,
-                    totalSizeBytes: 20,
+                    totalSizeBytes: 8,
                     fileCount: 2,
                     lastModified: nil,
-                    repoURL: URL(string: "https://huggingface.co/\(repoId)")!
+                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                 )
 
                 await #expect(throws: ModelInstallationError.self) {
@@ -317,9 +297,9 @@ struct ModelInstallerInstallTests {
         )
     }
 
-    @Test func removeInstalledParakeetDeletesDirectory() async throws {
-        let tag = "pk-rm-\(UUID().uuidString.prefix(8))"
-        let dir = ParakeetBackend.installPath(for: tag)
+    @Test func removeInstalledParakeetDeletesDirectory() async throws -> Void {
+        let tag = "v3"
+        let dir = try ParakeetBackend.installPath(for: tag)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(
             at: dir.appendingPathComponent("X.mlmodelc", isDirectory: true),
@@ -333,8 +313,8 @@ struct ModelInstallerInstallTests {
         #expect(FileManager.default.fileExists(atPath: dir.path) == false)
     }
 
-    @Test func removalPathsParakeetReturnsEmptyWhenAbsent() async throws {
-        let tag = "pk-missing-\(UUID().uuidString.prefix(8))"
+    @Test func removalPathsParakeetReturnsEmptyWhenAbsent() async throws -> Void {
+        let tag = "v3"
         let paths = try await ModelInstaller.removalPaths(modelId: tag, backend: .parakeet)
         #expect(paths.isEmpty == true)
     }

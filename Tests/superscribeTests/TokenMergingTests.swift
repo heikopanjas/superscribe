@@ -5,7 +5,7 @@ import Testing
 
 @Suite("TokenAccumulator", .serialized, ResetSharedStateTrait())
 struct TokenMergingTests {
-    @Test func mergesSentencePieceBoundaries() {
+    @Test func mergesSentencePieceBoundaries() -> Void {
         var acc = TokenAccumulator()
         acc.accept(token: "▁hello", start: 0.0, end: 0.5)
         acc.accept(token: "▁world", start: 0.5, end: 1.0)
@@ -19,7 +19,7 @@ struct TokenMergingTests {
         #expect(words[1].end == 11.0)
     }
 
-    @Test func mergesLeadingSpaceBoundaries() {
+    @Test func mergesLeadingSpaceBoundaries() -> Void {
         var acc = TokenAccumulator()
         acc.accept(token: " foo", start: 1.0, end: 1.2)
         acc.accept(token: " bar", start: 1.2, end: 1.4)
@@ -27,7 +27,7 @@ struct TokenMergingTests {
         #expect(words.map(\.text) == ["foo", "bar"])
     }
 
-    @Test func skipsEmptyTokens() {
+    @Test func skipsEmptyTokens() -> Void {
         var acc = TokenAccumulator()
         acc.accept(token: "   ", start: 0, end: 0.1)
         acc.accept(token: "▁ok", start: 0.1, end: 0.2)
@@ -36,7 +36,7 @@ struct TokenMergingTests {
         #expect(words[0].text == "ok")
     }
 
-    @Test func flushesFinalWord() {
+    @Test func flushesFinalWord() -> Void {
         var acc = TokenAccumulator()
         acc.accept(token: "▁only", start: 2.0, end: 3.0)
         let words = acc.finish(segmentOffset: 5.0)
@@ -46,7 +46,7 @@ struct TokenMergingTests {
         #expect(words[0].end == 8.0)
     }
 
-    @Test func concatenatesSubwordPieces() {
+    @Test func concatenatesSubwordPieces() -> Void {
         var acc = TokenAccumulator()
         acc.accept(token: "▁trans", start: 0.0, end: 0.3)
         acc.accept(token: "cript", start: 0.3, end: 0.6)
@@ -55,7 +55,7 @@ struct TokenMergingTests {
         #expect(words[0].text == "transcript")
     }
 
-    @Test func finishWithNoTokensReturnsEmpty() {
+    @Test func finishWithNoTokensReturnsEmpty() -> Void {
         let acc = TokenAccumulator()
         let words = acc.finish(segmentOffset: 0)
         #expect(words.isEmpty == true)

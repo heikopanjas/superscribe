@@ -1,42 +1,5 @@
+import Darwin
 import Foundation
-
-/// Snapshot of an in-progress model download.
-public struct DownloadProgress: Sendable, Hashable {
-    public let modelId: String
-    public let backend: Backend
-    public let currentFile: String
-    public let filesCompleted: Int
-    public let filesTotal: Int
-    public let bytesCompleted: Int64
-    public let bytesTotal: Int64?
-    public let bytesPerSecond: Double?
-
-    public init(
-        modelId: String,
-        backend: Backend,
-        currentFile: String,
-        filesCompleted: Int,
-        filesTotal: Int,
-        bytesCompleted: Int64,
-        bytesTotal: Int64?,
-        bytesPerSecond: Double?
-    ) {
-        self.modelId = modelId
-        self.backend = backend
-        self.currentFile = currentFile
-        self.filesCompleted = filesCompleted
-        self.filesTotal = filesTotal
-        self.bytesCompleted = bytesCompleted
-        self.bytesTotal = bytesTotal
-        self.bytesPerSecond = bytesPerSecond
-    }
-
-    /// 0…1, or `nil` if total is unknown.
-    public var fraction: Double? {
-        guard let total = bytesTotal, total > 0 else { return nil }
-        return min(1, Double(bytesCompleted) / Double(total))
-    }
-}
 
 /// URLSession-based downloader for a single model from Hugging Face Hub.
 ///
@@ -62,7 +25,11 @@ public enum ModelDownloader {
         into stagingDir: URL,
         session: URLSession = .shared,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void
-    ) async throws {
+    ) async throws -> Void {
+        try ModelPathValidation.identifier(model.id)
+        if let subpath = model.subpath {
+            _ = try ModelPathValidation.components(subpath.hasSuffix("/") ? String(subpath.dropLast()) : subpath)
+        }
         // Re-fetch the latest sibling list so we never miss files added since
         // the catalog was cached.
         let info = try await HuggingFaceHub.repoInfo(repoId: model.repoId, session: session)
@@ -71,7 +38,9 @@ public enum ModelDownloader {
         let files: [(rfilename: String, relPath: String, expectedSize: Int64?)] = info.siblings
             .compactMap { sibling in
                 if let subpath = model.subpath {
-                    let prefix = subpath.hasSuffix("/") ? subpath : subpath + "/"
+                    let prefix =
+                        if subpath.hasSuffix("/") == true { subpath }
+                        else { subpath + "/" }
                     guard sibling.rfilename.hasPrefix(prefix) == true else { return nil }
                     let rel = String(sibling.rfilename.dropFirst(prefix.count))
                     guard rel.isEmpty == false else { return nil }
@@ -100,7 +69,7 @@ public enum ModelDownloader {
         // percentage will be nil too.
         let knownTotal: Int64? =
             files.allSatisfy { $0.expectedSize != nil }
-            ? files.reduce(Int64(0)) { $0 + $1.expectedSize! }
+            ? files.compactMap(\.expectedSize).reduce(Int64(0), +)
             : model.totalSizeBytes
 
         let progressActor = DownloadProgressTracker(
@@ -112,10 +81,10 @@ public enum ModelDownloader {
         )
 
         try await ConcurrencyHelpers.withBoundedVoidThrowingTaskGroup(
-            limit: maxParallelFiles,
+            limit: Self.maxParallelFiles,
             items: files
         ) { file in
-            try await downloadOne(
+            try await Self.downloadOne(
                 model: model,
                 file: file.rfilename,
                 relPath: file.relPath,
@@ -139,7 +108,7 @@ public enum ModelDownloader {
         into dest: URL,
         session: URLSession = .shared,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void
-    ) async throws {
+    ) async throws -> Void {
         // For single-file models subpath is nil and rfilename == model filename.
         guard
             let sibling = try await {
@@ -164,7 +133,7 @@ public enum ModelDownloader {
             onProgress: onProgress
         )
         let rfilename = "ggml-\(model.id).bin"
-        try await downloadOne(
+        try await Self.downloadOne(
             model: model,
             file: rfilename,
             relPath: dest.lastPathComponent,
@@ -184,41 +153,46 @@ public enum ModelDownloader {
         expectedSize: Int64?,
         session: URLSession = .shared,
         onProgress: (@Sendable (Int64, Int64?) -> Void)? = nil
-    ) async throws {
-        let url = URL(string: "https://huggingface.co/\(repoId)/resolve/main/\(rfilename)")!
-        try FileManager.default.createDirectory(
-            at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
+    ) async throws -> Void {
+        let tracker = CumulativeByteTracker()
+        try await Self.downloadBytes(repoId: repoId, filename: rfilename, into: dest, expectedSize: expectedSize, session: session) { bytes, total in
+            let done = await tracker.add(bytes)
+            onProgress?(done, total)
+        }
+    }
 
+    private static func downloadBytes(
+        repoId: String, filename: String, into destination: URL, expectedSize: Int64?, session: URLSession, onChunk: @escaping @Sendable (Int64, Int64?) async -> Void
+    ) async throws -> Void {
+        try Task.checkCancellation()
+        let url = try ModelPathValidation.downloadURL(repoId: repoId, filename: filename)
+        let destination = try ModelPathValidation.resolve(destination.lastPathComponent, under: destination.deletingLastPathComponent())
         var request = URLRequest(url: url, timeoutInterval: 120)
         request.setValue(HuggingFaceHub.userAgent, forHTTPHeaderField: "User-Agent")
-
-        let (asyncBytes, response): (URLSession.AsyncBytes, URLResponse)
         do {
-            (asyncBytes, response) = try await session.bytes(for: request)
+            let (bytes, response) = try await session.bytes(for: request)
+            defer { bytes.task.cancel() }
+            do {
+                if let http = response as? HTTPURLResponse, http.isSuccess == false {
+                    throw ModelInstallationError.httpError(status: http.statusCode, url: url)
+                }
+                let size = expectedSize ?? (response.expectedContentLength >= 0 ? response.expectedContentLength : nil)
+                _ = try await Self.streamBytes(from: bytes, to: destination, sourceURL: url, expectedSize: size) { chunk in
+                    await onChunk(chunk, size)
+                }
+            }
+            catch {
+                bytes.task.cancel()
+                // Consume the cancelled iterator so an unconsumed response cannot retain the session.
+                var iterator = bytes.makeAsyncIterator()
+                _ = try? await iterator.next()
+                throw error
+            }
         }
         catch {
+            try Cancellation.propagate(error)
+            if (error is ModelInstallationError) == true { throw error }
             throw ModelInstallationError.downloadFailed(url: url, underlying: error)
-        }
-
-        if let http = response as? HTTPURLResponse, http.isSuccess == false {
-            throw ModelInstallationError.httpError(status: http.statusCode, url: url)
-        }
-
-        let totalForFile: Int64? =
-            (response.expectedContentLength > 0)
-            ? response.expectedContentLength
-            : expectedSize
-
-        let tracker = CumulativeByteTracker()
-        _ = try await streamBytes(
-            from: asyncBytes,
-            to: dest,
-            sourceURL: url,
-            expectedSize: totalForFile
-        ) { chunk in
-            let total = await tracker.add(chunk)
-            onProgress?(total, totalForFile)
         }
     }
 
@@ -237,27 +211,21 @@ public enum ModelDownloader {
             )
         }
         catch {
+            try Cancellation.propagate(error)
             throw ModelInstallationError.downloadFailed(url: sourceURL, underlying: error)
         }
 
-        FileManager.default.createFile(atPath: dest.path, contents: nil)
-        let handle: FileHandle? =
-            if SuperscribeKitTestHooks.forceModelDownloaderFileHandleFailure == true {
-                nil
-            }
-            else {
-                try? FileHandle(forWritingTo: dest)
-            }
-        guard let handle else {
-            throw ModelInstallationError.downloadFailed(
-                url: sourceURL,
-                underlying: NSError(
-                    domain: "ModelDownloader", code: 2,
-                    userInfo: [NSLocalizedDescriptionKey: "Cannot open \(dest.path) for writing."]
-                )
-            )
+        try Task.checkCancellation()
+        let descriptor = SuperscribeKitTestHooks.forceModelDownloaderFileHandleFailure == true ? -1 : open(dest.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else {
+            throw ModelInstallationError.downloadFailed(url: sourceURL, underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(errno)))
         }
-        defer { try? handle.close() }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        var completed = false
+        defer {
+            try? handle.close()
+            if completed == false { try? FileManager.default.removeItem(at: dest) }
+        }
 
         var buffer = Data()
         buffer.reserveCapacity(64 * 1024)
@@ -266,6 +234,7 @@ public enum ModelDownloader {
             for try await byte in bytes {
                 buffer.append(byte)
                 if buffer.count >= 64 * 1024 {
+                    try Task.checkCancellation()
                     try handle.write(contentsOf: buffer)
                     let chunkSize = Int64(buffer.count)
                     fileBytes += chunkSize
@@ -275,6 +244,7 @@ public enum ModelDownloader {
                     buffer.removeAll(keepingCapacity: true)
                 }
             }
+            try Task.checkCancellation()
             if buffer.isEmpty == false {
                 try handle.write(contentsOf: buffer)
                 let chunkSize = Int64(buffer.count)
@@ -285,22 +255,24 @@ public enum ModelDownloader {
             }
         }
         catch {
+            try Cancellation.propagate(error)
             throw ModelInstallationError.downloadFailed(url: sourceURL, underlying: error)
         }
 
-        if let total = expectedSize, total > 0, fileBytes < total {
+        if let total = expectedSize, total >= 0, fileBytes != total {
             throw ModelInstallationError.downloadFailed(
                 url: sourceURL,
                 underlying: NSError(
                     domain: "ModelDownloader", code: 3,
                     userInfo: [
                         NSLocalizedDescriptionKey:
-                            "Truncated download: got \(fileBytes) of \(total) bytes."
+                            "Incorrect download size: got \(fileBytes) of \(total) bytes."
                     ]
                 )
             )
         }
 
+        completed = true
         return fileBytes
     }
 
@@ -314,55 +286,13 @@ public enum ModelDownloader {
         stagingDir: URL,
         session: URLSession,
         progress: DownloadProgressTracker
-    ) async throws {
-        let url = URL(string: "https://huggingface.co/\(model.repoId)/resolve/main/\(rfilename)")!
-        let dest = stagingDir.appendingPathComponent(relPath)
-        try FileManager.default.createDirectory(
-            at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-
-        var request = URLRequest(url: url, timeoutInterval: 60)
-        request.setValue(HuggingFaceHub.userAgent, forHTTPHeaderField: "User-Agent")
-
-        let (asyncBytes, response): (URLSession.AsyncBytes, URLResponse)
-        do {
-            (asyncBytes, response) = try await session.bytes(for: request)
-        }
-        catch {
-            throw ModelInstallationError.downloadFailed(url: url, underlying: error)
-        }
-
-        if let http = response as? HTTPURLResponse, http.isSuccess == false {
-            throw ModelInstallationError.httpError(status: http.statusCode, url: url)
-        }
-
-        let totalForFile: Int64? =
-            (response.expectedContentLength > 0)
-            ? response.expectedContentLength
-            : expectedSize
-
+    ) async throws -> Void {
+        let dest = try ModelPathValidation.resolve(relPath, under: stagingDir)
         await progress.startFile(name: rfilename)
-
-        _ = try await streamBytes(
-            from: asyncBytes,
-            to: dest,
-            sourceURL: url,
-            expectedSize: totalForFile
-        ) { chunk in
+        try await Self.downloadBytes(repoId: model.repoId, filename: rfilename, into: dest, expectedSize: expectedSize, session: session) { chunk, _ in
             await progress.add(bytes: chunk)
         }
-
         await progress.completeFile()
     }
-}
 
-// MARK: - Progress throttling
-
-private actor CumulativeByteTracker {
-    private var bytes: Int64 = 0
-
-    func add(_ chunk: Int64) -> Int64 {
-        bytes += chunk
-        return bytes
-    }
 }

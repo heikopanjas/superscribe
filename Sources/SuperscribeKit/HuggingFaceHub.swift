@@ -74,13 +74,11 @@ public enum HuggingFaceHub {
         search: String? = nil,
         session: URLSession = .shared
     ) async throws -> [HFRepo] {
-        var components = URLComponents(string: "https://huggingface.co/api/models")!
         var items: [URLQueryItem] = [URLQueryItem(name: "author", value: author)]
         if let search { items.append(URLQueryItem(name: "search", value: search)) }
-        components.queryItems = items
-        let url = components.url!
-        let data = try await fetch(url, session: session)
-        return try decode([HFRepo].self, from: data, url: url)
+        let url = try HTTPURL.make(host: "huggingface.co", path: "/api/models", query: items)
+        let data = try await Self.fetch(url, session: session)
+        return try Self.decode([HFRepo].self, from: data, url: url)
     }
 
     /// `GET https://huggingface.co/api/models/{repoId}` (siblings + lastModified).
@@ -88,14 +86,15 @@ public enum HuggingFaceHub {
         repoId: String,
         session: URLSession = .shared
     ) async throws -> HFRepoInfo {
-        let url = URL(string: "https://huggingface.co/api/models/\(repoId)")!
-        let data = try await fetch(url, session: session)
-        return try decode(HFRepoInfo.self, from: data, url: url)
+        let repo = try ModelPathValidation.components(repoId).joined(separator: "/")
+        let url = try HTTPURL.make(host: "huggingface.co", path: "/api/models/\(repo)")
+        let data = try await Self.fetch(url, session: session)
+        return try Self.decode(HFRepoInfo.self, from: data, url: url)
     }
 
     // MARK: - Internals
 
-    static let userAgent: String = "superscribe/0.1"
+    static let userAgent: String = "superscribe/\(SuperscribeVersion.current)"
 
     static func decoder() -> JSONDecoder {
         let decoder = JSONDecoder()
@@ -125,7 +124,7 @@ public enum HuggingFaceHub {
 
     static func decode<T: Decodable>(_ type: T.Type, from data: Data, url: URL) throws -> T {
         do {
-            return try decoder().decode(T.self, from: data)
+            return try Self.decoder().decode(T.self, from: data)
         }
         catch let err as DecodingError {
             throw Error.decoding(err, url: url)
@@ -134,7 +133,7 @@ public enum HuggingFaceHub {
 
     static func fetch(_ url: URL, session: URLSession) async throws -> Data {
         var request = URLRequest(url: url, timeoutInterval: 10)
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
             let (data, response) = try await session.data(for: request)
@@ -144,6 +143,7 @@ public enum HuggingFaceHub {
             return data
         }
         catch let err as URLError {
+            try Cancellation.propagate(err)
             throw Error.transport(err)
         }
     }
