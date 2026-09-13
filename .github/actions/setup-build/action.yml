@@ -28,7 +28,7 @@ runs:
         fi
 
     - name: Cache whisper xcframework
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: whisper-build/whisper.xcframework
         key: whisper-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.image }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('_scripts/bootstrap.sh') }}

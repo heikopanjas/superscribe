@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-09-13 (v1.0.7, decision log consolidation)
+**Last updated:** 2026-09-13 (v1.0.8, GitHub Actions Node 24 upgrades)
 
 <!-- {mission} -->
 
@@ -53,7 +53,7 @@ _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v1.0.7)
+## Subcommand Surface (v1.0.8)
 
 | Subcommand | Purpose |
 |---|---|
@@ -158,6 +158,7 @@ Use `AGENTS.md` for current coding standards, conventions, and project decisions
 
 - `.github/workflows/build.yml` runs on pushes and PRs targeting `develop` or `feature/**`; `.github/workflows/release.yml` runs on PRs targeting `main` and pushes to `main`.
 - Both use macOS 26 ARM64 with Xcode 26.2 and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. `.github/actions/build-release/action.yml` owns optimized ARM64 builds, smoke tests, and version metadata from the CLI. Push builds upload artifacts for separate publishing jobs; release PRs upload unsigned archive/checksum artifacts for 14 days without publishing.
+- Workflows use the Node 24 action generations: `actions/checkout@v7`, `actions/cache@v6`, `actions/upload-artifact@v7`, and `actions/download-artifact@v8`. Hosted runners must meet each action's minimum runner version.
 - Successful pushes to `develop` and `feature/**` publish unsigned pre-releases containing the raw CLI, matching aranet-kit: tag `R<version>_BUILD_<run-number>_<YYYYMMDD>_<HHMMSS>`, title `superscribe-build-<run-number>-<YYYYMMDD>-<HHMMSS>` (UTC). Main pushes publish signed/notarized stable releases with tag and title `v<version>`, `superscribe-<version>-macos-arm64.tar.gz`, and `SHA256SUMS.txt`. The archive contains a versioned directory with the CLI, README, and license.
 - `_scripts/package-release.sh` owns packaging; `_scripts/publish-release.sh` owns naming and publication. Only push-only publisher jobs receive `contents: write`, depend on successful builds, and reuse their artifacts. Tags target the exact tested SHA; existing tags/releases are never overwritten, so each stable release requires a new version. Pre-releases cannot become Latest. Push runs are not cancelled in progress by newer pushes; PR checks remain cancellable.
 - `_scripts/release-common.sh` shares product-version validation and archive naming. Local checks use `ruby _scripts/test-release-workflows.rb /bin/bash` with fake GitHub tools; validate release tooling under Bash 3.2 and the developer's Bash without publishing test releases.

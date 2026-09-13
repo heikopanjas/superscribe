@@ -4,6 +4,13 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-09-13 (v1.0.8, 17:38 github actions node 24 upgrades)
+
+- upgraded checkout, cache, artifact upload, and artifact download to their current Node 24 action generations
+- kept the existing workflow inputs and artifact flow; GitHub-hosted runners exceed the actions' minimum runner versions
+- rationale: remove Node 20 runtime and `punycode` deprecation warnings from build and release jobs
+- version bump: 1.0.7 to 1.0.8 (PATCH - ci dependency maintenance with no public api changes)
+
 ### 2026-09-13 (v1.0.7, decision log consolidation)
 
 - moved the complete decision history to `UPDATES.md` and removed the duplicate log from `AGENTS.md`
