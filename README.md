@@ -459,24 +459,6 @@ CPU compilation uses `GGML_NATIVE=OFF` and an explicit M1-compatible `armv8.4-a+
 
 The first transcription with a newly installed Core ML encoder bundle may be slow while macOS compiles the graph for the Neural Engine.
 
-## GitHub Actions
-
-`.github/workflows/build.yml` builds and runs the 100% line and region coverage gate on pushes to, and pull requests targeting, `develop` or `feature/**`. After successful push builds, it publishes an unsigned GitHub pre-release containing the optimized `superscribe` executable. PRs never publish releases or tags.
-
-`.github/workflows/release.yml` runs on pull requests targeting `main` and pushes to `main`. It runs the same coverage gate, builds the optimized CLI, checks `--version` and `--help`, and packages `superscribe-<version>-macos-arm64.tar.gz` plus `SHA256SUMS.txt`. The archive contains a matching versioned directory with the executable, README, and license. PR Actions artifacts are named `superscribe-macos-arm64-unsigned`; main-push artifacts are named `superscribe-macos-arm64` and contain a Developer ID-signed, notarized executable. Actions artifacts are retained for 14 days; successful main pushes also publish a stable GitHub Release.
-
-Naming matches [aranet-kit](https://github.com/heikopanjas/aranet-kit): pre-release tags are `R<version>_BUILD_<run-number>_<YYYYMMDD>_<HHMMSS>`, with titles `superscribe-build-<run-number>-<YYYYMMDD>-<HHMMSS>` (UTC). Stable tags and titles are `v<version>`. Pre-releases never become Latest. Tags target the exact tested commit, not a moving branch tip, and existing tags/releases are never overwritten; each new stable release needs a new product version. Release notes are generated automatically. Version metadata comes from the built CLI's `--version`, backed by `SuperscribeVersion.current`.
-
-`.github/actions/build-release/action.yml` owns the shared optimized build and smoke checks. `_scripts/package-release.sh` owns archive layout/checksums; `_scripts/publish-release.sh` owns naming and publication. Only separate push-only publishing jobs receive `contents: write`, after their build jobs succeed. Publishing reuses the tested artifacts without rebuilding. Push runs are not cancelled in progress by newer pushes; superseded PR checks may be cancelled.
-
-Run `ruby _scripts/test-release-workflows.rb /bin/bash` for local packaging and publication checks with fake GitHub tools. These verify names, commit targets, PR/branch guards, existing-tag protection, archive contents, and checksum failures without publishing anything. `_scripts/release-common.sh` keeps product-version validation and archive naming shared across the release tools.
-
-Signing follows `heikopanjas/aranet-kit` and uses these repository secrets: `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`, and `APPSTORE_CONNECT_KEY_P8_BASE64`. They are available only to the main-push signing step. `_scripts/sign-release.sh` creates and unlocks a temporary keychain, imports the P12 with the reference workflow's access settings, and adds the keychain to the user's search list. It checks for a valid code-signing identity, signs with hardened runtime and a secure timestamp, verifies the signature, and requires an accepted Apple notarization result before packaging. Cleanup restores the previous keychain search list and removes temporary credentials. The bare CLI executable cannot have a notarization ticket stapled to it.
-
-Signing-orchestration tests are optional local checks: run `/bin/bash _scripts/test-sign-release.sh`. They use fake tools and dummy credentials to check failure handling and cleanup, and are not part of CI. The signer and stubs use the harness's selected Bash, with explicit stub failure exits for compatibility with macOS Bash 3.2. Real signing and notarization are validated by the main-push workflow.
-
-Both workflows use the macOS 26 ARM64 runner with Xcode 26.2. The shared `.github/actions/setup-build/action.yml` installs missing CMake, Ninja, and ripgrep tools, then runs `_scripts/bootstrap.sh` before SwiftPM. Only the finished whisper xcframework is cached, with an exact key covering runner image, architecture, Xcode build, and bootstrap-script contents; changes rebuild the combined Metal/Core ML library. Unit tests use stubs and require no downloaded ASR models.
-
 ## Project structure
 
 ```
@@ -526,68 +508,3 @@ The gate excludes `WhisperLiveAPI.swift`, `AppleSpeechLiveAPI.swift`, and `Apple
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-## Migration to 1.0
-
-Parakeet construction validates model identifiers and now throws:
-
-```swift
-let backend = try ParakeetBackend(model: "v3")
-```
-
-Unknown models throw `UnsupportedModelError` instead of silently selecting v3.
-Only supported Parakeet models are advertised in the remote catalog. The existing
-short aliases remain accepted.
-
-Unit tests run with `_scripts/coverage.sh --run-tests`, which records and verifies
-the binary/profile pair and owned source inputs before enforcing 100% line and region coverage.
-Hardware tests require an already installed model and an explicit audio fixture:
-
-```sh
-SUPERSCRIBE_INTEGRATION_TESTS=1 \
-SUPERSCRIBE_INTEGRATION_AUDIO=/absolute/path/to/speech.wav \
-SUPERSCRIBE_INTEGRATION_MODEL=v3 \
-swift test --no-parallel --filter ParakeetIntegrationTests
-```
-
-Hardware results are separate from unit coverage. The default suite does not run
-inference, reserve/release system Speech assets, or download ASR models.
-
-Additional 1.0 API changes:
-
-```swift
-let configuration = try UserConfig.load()
-try await UserConfig.update { $0.setDefaultModel("v3", for: .parakeet) }
-try SuperscribeFS.atomicReplace(staging: stagingURL, final: finalURL, policy: .replaceExisting)
-```
-
-`ModelRegistry.installedModels()` is async when called through the protocol.
-Corrupt configuration is preserved and reported instead of replaced with defaults.
-
-Backend instances own model identity in 1.0. Remove the `model` argument from
-`TranscriptionConfig` and add `try` to validated backend constructors, analyzer
-entry points, merge/formatter calls, and model install-path resolution. Registry
-methods are async through `Backend` and `ModelRegistry`:
-
-```swift
-let model = try await Backend.appleSpeech.resolveModelId()
-let transcriber = try Backend.appleSpeech.makeTranscriber(model: model)
-let installed = try await Backend.appleSpeech.installedModels()
-let text = try TranscriptRenderer.render(transcript, configuration: .init(format: .txt))
-```
-
-Apple Speech registry entries distinguish installed assets from this application's
-reservations using `ModelInstallationState`. Removing a locale releases the
-reservation, including an incomplete installation; it does not delete system assets.
-
-Use `AudioPreparer.prepare(url:)` and `PreparedAudio.samples(in:)` for bounded
-file-backed audio. `loadAndConvert(url:)` remains an explicit whole-array convenience.
-Set `PipelineConfig.maxConcurrentConversions` and `maxConcurrentTranscriptions`
-to positive limits. The sample-array API requires mono audio and positive rates.
-
-Explicit Whisper downloads repair missing published encoders and incomplete model
-files. Existing installed binary transcription remains usable offline through
-Metal fallback. Shared encoders remain until their last installed variant is removed.
-Filesystem publication is atomic; configuration and cache/catalog transactions use
-process-wide file locks. Unreadable audio caches are reconverted; corrupt user
-configuration is preserved and reported.
