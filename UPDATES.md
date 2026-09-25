@@ -4,6 +4,13 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-09-25 (v1.0.8, open reminder: nemotron 3 speech analyzer)
+
+- **open reminder for the user:** at the start of the next session, remind the user to check out the Nemotron 3 speech analyzer
+- no decision made yet; this is a note to look into it, possibly as a future ASR backend
+- rationale: cloud sessions don't keep memory, and every session reads this file at startup
+- version: unchanged at 1.0.8 (documentation only, no code change)
+
 ### 2026-09-13 (v1.0.8, 17:38 github actions node 24 upgrades)
 
 - upgraded checkout, cache, artifact upload, and artifact download to their current Node 24 action generations
