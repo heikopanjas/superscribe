@@ -13,7 +13,7 @@ struct TranscribeCommand: AsyncParsableCommand {
     @Option(
         name: .long,
         help: ArgumentHelp(
-            "Scan a directory for audio files and write tracks.superscribe.json. Cannot be combined with --track or --input.",
+            "Scan a directory for audio files and write tracks.superscribe.json. Cannot be combined with --track, --mixed, or --input.",
             valueName: "directory"
         )
     )
@@ -22,20 +22,20 @@ struct TranscribeCommand: AsyncParsableCommand {
     @Option(
         name: .long,
         help: ArgumentHelp(
-            "Load track mapping from a file created with --create-input. Cannot be combined with --track.",
+            "Load track mapping from a file created with --create-input. Cannot be combined with --track or --mixed.",
             valueName: "file"
         )
     )
     var input: String?
 
     mutating func validate() throws -> Void {
-        let hasTrack = !self.options.track.isEmpty
+        let hasTrack = self.options.trackInputs.isEmpty == false
         if self.createInput != nil {
-            if hasTrack == true { throw ValidationError("--create-input may not be combined with --track.") }
+            if hasTrack == true { throw ValidationError("--create-input may not be combined with --track or --mixed.") }
             if self.input != nil { throw ValidationError("--create-input may not be combined with --input.") }
         }
         if self.input != nil, hasTrack == true {
-            throw ValidationError("--input may not be combined with --track.")
+            throw ValidationError("--input may not be combined with --track or --mixed.")
         }
     }
 

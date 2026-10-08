@@ -28,29 +28,37 @@ public struct TranscribePipeline: Sendable {
         try self.config.analyzerConfig.validate()
         try self.config.transcriptionConfig.validate()
         guard self.config.maxConcurrentTranscriptions > 0, self.config.maxConcurrentConversions > 0 else { throw BoundedTaskGroupError.invalidLimit }
-        let analyzer = Analyzer(config: self.config.analyzerConfig)
+        let diarizer = self.config.diarizer
+        let analyzerConfig = self.config.analyzerConfig
+        let analyzer = Analyzer(config: analyzerConfig)
         let preparer = AudioPreparer(for: self.transcriber.capabilities, cache: self.audioCache)
         let conversionProgress = self.onConversionProgress
-        let trackData = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(limit: self.config.maxConcurrentConversions, items: self.config.tracks) { track in
+        let preparedTracks = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(limit: self.config.maxConcurrentConversions, items: self.config.tracks) { track in
             let dependencies = SuperscribeKitTestHooks.testState
             let buffers = AudioBuffers.dependencies
             let locks = FileTransaction.lockOperation
-            return try await BlockingWorker(label: "superscribe.audio.prepare").run { cancellation in
+            let (audio, segments) = try await BlockingWorker(label: "superscribe.audio.prepare").run { cancellation in
                 return try SuperscribeKitTestHooks.$testState.withValue(dependencies) {
                     return try AudioBuffers.$dependencies.withValue(buffers) {
                         return try FileTransaction.$lockOperation.withValue(locks) {
                             let audio = try preparer.prepare(url: track.file, onProgress: conversionProgress, checkCancellation: cancellation.check)
-                            let segments = try analyzer.detectSpeech(in: audio)
-                            return (audio, segments)
+                            if track.diarization != nil { return (audio, [SpeechSegment]?.none) }
+                            return (audio, try analyzer.detectSpeech(in: audio))
                         }
                     }
                 }
             }
+            if let segments { return (audio, [segments]) }
+            guard let diarizer else { throw InputValidationError("Mixed tracks require a diarizer") }
+            let activity = try await diarizer.speakerActivity(in: audio)
+            let duration = Double(audio.frameCount) / Double(audio.format.sampleRate)
+            return (audio, SpeakerTurnBuilder.speakers(from: activity, duration: duration, config: analyzerConfig))
         }
+        let trackData = Self.speakerTracks(self.config.tracks, prepared: preparedTracks)
         let jobs = trackData.enumerated().flatMap { trackIndex, data in
-            data.1.enumerated().map { (trackIndex, $0.offset, $0.element) }
+            data.segments.enumerated().map { (trackIndex, $0.offset, $0.element) }
         }
-        var results = trackData.map { [IntermediateTranscript.TranscribedSegment?](repeating: nil, count: $0.1.count) }
+        var results = trackData.map { [IntermediateTranscript.TranscribedSegment?](repeating: nil, count: $0.segments.count) }
         var completed = 0
         try await ConcurrencyHelpers.collect(
             limit: self.config.maxConcurrentTranscriptions, items: jobs,
@@ -59,7 +67,7 @@ public struct TranscribePipeline: Sendable {
                 let buffers = AudioBuffers.dependencies
                 let samples = try await BlockingWorker(label: "superscribe.audio.segment").run { _ in
                     return try AudioBuffers.$dependencies.withValue(buffers) {
-                        return try trackData[trackIndex].0.samples(in: segment)
+                        return try trackData[trackIndex].audio.samples(in: segment)
                     }
                 }
                 return try await self.transcribe(samples: samples, segment: segment)
@@ -70,10 +78,10 @@ public struct TranscribePipeline: Sendable {
                 completed += 1
                 self.onProgress?(
                     TranscriptionProgress(
-                        speaker: self.config.tracks[trackIndex].speaker, segmentIndex: segmentIndex + 1, totalSegments: trackData[trackIndex].1.count, overallCompleted: completed,
-                        overallTotal: jobs.count))
+                        speaker: trackData[trackIndex].speaker, segmentIndex: segmentIndex + 1, totalSegments: trackData[trackIndex].segments.count,
+                        overallCompleted: completed, overallTotal: jobs.count))
             })
-        let transcribedTracks = self.config.tracks.enumerated().compactMap { index, track -> IntermediateTranscript.Track? in
+        let transcribedTracks = trackData.enumerated().compactMap { index, track -> IntermediateTranscript.Track? in
             let segments = results[index].compactMap { $0 }
             if segments.isEmpty == true { return nil }
             return IntermediateTranscript.Track(speaker: track.speaker, file: track.file.path, segments: segments)
@@ -96,6 +104,32 @@ public struct TranscribePipeline: Sendable {
     }
 
     // MARK: - Private
+
+    /// One transcription track per isolated input or diarized speaker, in input order.
+    /// Unnamed diarized speakers are numbered `Speaker 1…N` across all mixed tracks.
+    internal static func speakerTracks(
+        _ tracks: [TrackInput],
+        prepared: [(PreparedAudio, [[SpeechSegment]])]
+    ) -> [(speaker: String, file: URL, audio: PreparedAudio, segments: [SpeechSegment])] {
+        var unnamed = 0
+        var result: [(speaker: String, file: URL, audio: PreparedAudio, segments: [SpeechSegment])] = []
+        for (track, (audio, speakers)) in zip(tracks, prepared) {
+            for (slot, segments) in speakers.enumerated() {
+                var speaker = track.speaker
+                if let names = track.diarization?.speakerNames {
+                    if slot < names.count {
+                        speaker = names[slot]
+                    }
+                    else {
+                        unnamed += 1
+                        speaker = "Speaker \(unnamed)"
+                    }
+                }
+                result.append((speaker, track.file, audio, segments))
+            }
+        }
+        return result
+    }
 
     internal func transcribeSegments(
         _ segments: [SpeechSegment],

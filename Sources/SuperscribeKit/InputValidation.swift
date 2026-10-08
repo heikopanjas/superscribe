@@ -13,7 +13,8 @@ extension AnalyzerConfig {
 
 extension TrackInput {
     public func validate() throws -> Void {
-        guard self.speaker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { throw InputValidationError("Speaker names must not be blank") }
+        let names = [self.speaker] + (self.diarization?.speakerNames ?? [])
+        guard names.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }) == true else { throw InputValidationError("Speaker names must not be blank") }
         let values = try self.file.resourceValues(forKeys: [.isRegularFileKey, .isReadableKey])
         guard values.isRegularFile == true, values.isReadable == true else { throw InputValidationError("Track must be a readable regular file: \(self.file.path)") }
     }

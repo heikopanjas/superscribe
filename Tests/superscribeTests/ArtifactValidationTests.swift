@@ -31,10 +31,8 @@ struct ArtifactValidationTests {
         #expect(try ParakeetBackend.mapRepos([.init(id: "unrelated/parakeet-tdt-0.6b-v3-coreml", lastModified: nil)]).isEmpty == true)
     }
 
-    @Test(arguments: [false, true])
-    func descriptorRejectsForeignRepositoryOrSubdirectory(foreign: Bool) async throws -> Void {
-        let repository = try ParakeetBackend.huggingFaceRepoId(for: "v3")
-        let model = RemoteModelInfo(id: "v3", repoId: foreign ? "other/repository" : repository, subpath: foreign ? nil : "other", repoURL: URL(fileURLWithPath: "/unused"))
+    @Test func descriptorRejectsForeignRepository() async throws -> Void {
+        let model = RemoteModelInfo(id: "v3", repoId: "other/repository", repoURL: URL(fileURLWithPath: "/unused"))
         await #expect(throws: UnsupportedModelError.self) { _ = try await ModelInstaller.install(model: model, backend: .parakeet) }
     }
 

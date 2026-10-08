@@ -35,7 +35,7 @@ Check the version with `superscribe --version` (currently **1.0.8**).
 
 ## Speech detection and time-sliced transcription
 
-Most transcription tools assume a single mixed recording and run the recognizer over the entire file. **superscribe is built for multi-track podcast production:** each guest or host is recorded on an isolated track, so speaker identity comes from the file mapping — no diarization step, no guessing who spoke when.
+Most transcription tools assume a single mixed recording and run the recognizer over the entire file. **superscribe is built for multi-track podcast production:** each guest or host is recorded on an isolated track, so speaker identity comes from the file mapping — no diarization step, no guessing who spoke when. When speakers share a microphone, a mixed recording can still be added with `--mixed`; see [Mixed recordings](#mixed-recordings-speaker-diarization).
 
 The second major difference is **silence-aware time slicing.** Long stretches of a track are often silent (a guest who is not talking, room tone between takes, music beds on other channels). Running ASR on those regions wastes time and can produce hallucinated text from noise. superscribe scans each track first, finds where speech actually occurs, and sends **only those windows** to the model. Word timestamps are mapped back onto the full episode timeline so merge still produces one coherent subtitle file.
 
@@ -73,8 +73,22 @@ Conversion and detection use at most **2** workers by default. PCM lives in cach
 |---|---|---|
 | Single mixed file + diarization | Model must infer who spoke | Full duration transcribed |
 | **superscribe (per-track + slicing)** | Track name = speaker | Skipped before ASR |
+| **superscribe `--mixed`** | On-device diarizer separates up to 8 voices | Skipped before ASR |
 
 Example: a 45-minute episode with two hosts might have a 40-minute “Alice” file where she speaks for 12 minutes and a “Bob” file that is mostly silence until his segment. Diarization on a mix still processes ~45 minutes of audio; superscribe might run ASR on ~12 + ~8 minutes total across both tracks.
+
+### Mixed recordings (speaker diarization)
+
+A track passed with `--mixed path` (or marked `"diarize": true` in the mapping file) holds several speakers. Instead of silence detection, superscribe runs [NVIDIA Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) on the Neural Engine via FluidAudio (Core ML, streaming `fast128` preset, up to **8** speakers):
+
+1. The prepared 16 kHz PCM is streamed through the diarizer in 30-second windows, producing per-speaker probabilities every 10 ms.
+2. Each frame goes to its most likely speaker at or above 0.5, so overlapping speech in the shared recording is transcribed once.
+3. Turns are smoothed with the same `--min-silence`, `--padding`, and minimum-segment rules as silence detection; padding never crosses into a neighbor's turn.
+4. Every diarized speaker becomes its own track in the intermediate transcript, so merging and all output formats work unchanged.
+
+Speakers are numbered `Speaker 1…N` in order of first appearance (numbering continues across several mixed tracks). Name them in the mapping file with `"speakers"`, in order of first appearance; mapping two slots to the same name merges them. Mixed and isolated tracks can be combined in one session.
+
+The diarizer model (~190 MiB, `FluidInference/nemotron-3-diarization-coreml`, OpenMDW-1.1) downloads into `~/.cache/superscribe/models/diarizer/` on the first mixed run, or ahead of time with `superscribe model --diarizer --download nemotron-3-diarization`.
 
 ### Silence detection algorithm
 
@@ -130,7 +144,8 @@ Studio vocals on isolated tracks often work well at the defaults. Noisy rooms, d
 |---|---|
 | `Analyzer` / `AnalyzerConfig` | Speech span detection |
 | `AudioPreparer` | Convert, cache, and slice PCM |
-| `TranscribePipeline` | Orchestrates detect → slice → transcribe |
+| `TranscribePipeline` | Orchestrates detect (or diarize) → slice → transcribe |
+| `Diarizer` / `NemotronDiarizer` / `DiarizerModel` | Speaker activity for mixed tracks (`TrackInput.diarization`) |
 | `Merger` | Cross-speaker timeline (separate from detection) |
 
 Implementations: `Sources/SuperscribeKit/Analyzer.swift`, `AudioPreparer.swift`, `TranscribePipeline.swift`, `Merger.swift`.
@@ -197,10 +212,15 @@ User defaults (backend, model) persist to `~/.config/superscribe/config.json`.
 | User config | `~/.config/superscribe/config.json` |
 | Model catalog cache | `~/.cache/superscribe/catalog.json` (Parakeet/whisper from Hugging Face; Apple Speech from system locale APIs) |
 | Converted audio cache | `~/.cache/superscribe/audio/` |
-| Parakeet models | `~/Library/Application Support/FluidAudio/Models/<folder>/` |
-| whisper.cpp GGML weights | `~/Library/Caches/superscribe/whisper/<id>.bin` |
-| whisper.cpp Core ML encoder | `~/Library/Caches/superscribe/whisper/<base>-encoder.mlmodelc/` (auto-downloaded with the `.bin`) |
+| Parakeet models | `~/.cache/superscribe/models/parakeet/<folder>/` |
+| whisper.cpp GGML weights | `~/.cache/superscribe/models/whisper/<id>.bin` |
+| whisper.cpp Core ML encoder | `~/.cache/superscribe/models/whisper/<base>-encoder.mlmodelc/` (auto-downloaded with the `.bin`) |
+| Speaker diarizer | `~/.cache/superscribe/models/diarizer/nemotron-3-diarization-fast128/` |
 | Apple Speech locales | System-managed via `AssetInventory` (install marker: `apple-speech://locale/<id>`) |
+
+superscribe downloads every model itself; FluidAudio runs in offline mode and never fetches or replaces files.
+
+**Upgrading from 1.x:** models now live under `~/.cache/superscribe/models` and are downloaded again on first use. Earlier installs are no longer read and can be deleted: superscribe's folders in `~/Library/Application Support/FluidAudio/Models` (`parakeet-tdt-0.6b-v2`, `parakeet-tdt-0.6b-v3`, `parakeet-tdt-ctc-110m`, `parakeet-ja`) and `~/Library/Caches/superscribe/whisper`. Leave other folders in the FluidAudio directory alone if another app uses FluidAudio.
 
 ## Subcommands
 
@@ -219,7 +239,8 @@ superscribe transcribe \
 
 | Option | Default | Description |
 |---|---|---|
-| `--track name=path` | — | Speaker track; repeatable (required unless `--input` or `--create-input`) |
+| `--track name=path` | — | Speaker track; repeatable (required unless `--mixed`, `--input`, or `--create-input`) |
+| `--mixed path` | — | Mixed multi-speaker recording, diarized into `Speaker 1…N`; repeatable, combinable with `--track` |
 | `--input file` | — | Load track mapping JSON from `--create-input` |
 | `--create-input dir` | — | Scan directory → write `tracks.superscribe.json` in cwd |
 | `--backend` | configured default | `parakeet`, `whisper.cpp`, or `appleSpeech` |
@@ -251,6 +272,15 @@ Example mapping file:
 {
   "speaker-1": "recordings/alice.flac",
   "speaker-2": "recordings/bob.flac"
+}
+```
+
+A value can also be an object describing a mixed recording; `speakers` names diarized voices in order of first appearance (unnamed ones become `Speaker N`):
+
+```json
+{
+  "host": "recordings/host.flac",
+  "panel": { "file": "recordings/panel.flac", "diarize": true, "speakers": ["Carol", "Dave"] }
 }
 ```
 
@@ -302,7 +332,7 @@ superscribe run \
 
 | Option | Default | Description |
 |---|---|---|
-| (transcribe options) | — | `--track`, `--backend`, `--model`, silence tuning, `--no-cache`, etc. |
+| (transcribe options) | — | `--track`, `--mixed`, `--backend`, `--model`, silence tuning, `--no-cache`, etc. |
 | (merge options) | — | `--format`, `--overlap-policy`, `--gap-threshold`, `--include-words`, `--merge-output`, etc. |
 | `--keep-intermediate` | off | Also write `transcript.superscribe.<backend>.json` (discarded by default) |
 
@@ -333,6 +363,11 @@ superscribe model --download de-DE --backend appleSpeech
 # Defaults and machine-readable output
 superscribe model --set-default v3 --backend parakeet
 superscribe model --json --remote
+
+# Speaker diarizer for --mixed tracks
+superscribe model --diarizer
+superscribe model --diarizer --download nemotron-3-diarization
+superscribe model --diarizer --rm nemotron-3-diarization --yes
 ```
 
 | Option | Description |
@@ -344,9 +379,10 @@ superscribe model --json --remote
 | `--download <id>` | Install a model (HF download or Apple Speech locale asset) |
 | `--rm <id>` | Remove an installed model or release a locale (`--yes` to skip confirmation) |
 | `--set-default <id>` | Set the default model for the backend |
+| `--diarizer` | Manage the speaker diarizer instead of a backend; combines only with `--list`, `--download`, `--rm`, `--yes` |
 | `--json` | JSON output for list operations (explicit `--list` or implicit default); invalid with `--download`, `--rm`, or `--set-default` |
 
-Parakeet and whisper.cpp downloads show live byte progress on stderr and use atomic stage-then-rename installs. Apple Speech locale installs show asset progress and are system-managed via `AssetInventory`.
+Parakeet installs fetch only the Core ML bundles and vocabulary FluidAudio loads (v3 ≈ 460 MiB instead of the 3.4 GiB repository). Parakeet and whisper.cpp downloads show live byte progress on stderr and use atomic stage-then-rename installs. Apple Speech locale installs show asset progress and are system-managed via `AssetInventory`.
 
 ### `backend`
 
@@ -467,6 +503,7 @@ Sources/
     Backends/              ParakeetBackend, WhisperBackend, AppleSpeechBackend (+ registries, LiveAPI)
     AppleSpeechAssetInstaller.swift  Locale install via AssetInventory
     Format/                VTT/SRT/TXT/JSON formatters and shared cue utilities
+    Diarization/           Diarizer protocol, Nemotron 3 diarizer + model registry, speaker turn building
     Analyzer.swift         Silence detection
     AudioPreparer.swift    Audio conversion + slicing (16 kHz mono f32 PCM)
     ConvertedAudioCache.swift

@@ -17,6 +17,7 @@ struct PipelineRunnerTests {
             resolveBackendAndModel: { _, _ in (.parakeet, "mock") },
             ensureModelInstalled: { _, _ in },
             makeTranscriber: { _, _ in MockTranscriber() },
+            makeDiarizer: { try StubDiarizer(slots: []) },
             logBackend: { backend, _ in probe.setBackend(backend) },
             clearProgressLine: { probe.markCleared() }
         )

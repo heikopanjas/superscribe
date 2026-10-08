@@ -15,8 +15,9 @@ cd "$ROOT"
 COVERAGE_MIN="${COVERAGE_MIN:-100}"
 SCOPE="Sources/SuperscribeKit"
 # whisper.cpp C API paths in WhisperLiveAPI.swift require a real GGML model;
-# unit tests use stub hooks instead — exclude from the 100% gate.
-IGNORE_LIVE_API='WhisperLiveAPI\.swift|AppleSpeechLiveAPI\.swift|AppleSpeechTranscriberBridge\.swift'
+# unit tests use stub hooks instead — exclude from the 100% gate. Nemotron 3
+# diarization calls in NemotronDiarizerLiveAPI.swift likewise need the Core ML model.
+IGNORE_LIVE_API='WhisperLiveAPI\.swift|AppleSpeechLiveAPI\.swift|AppleSpeechTranscriberBridge\.swift|NemotronDiarizerLiveAPI\.swift'
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/superscribe-coverage.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
 REPORT="$WORK_DIR/report.txt"

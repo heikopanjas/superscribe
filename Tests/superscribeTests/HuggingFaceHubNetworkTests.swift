@@ -42,6 +42,7 @@ struct HuggingFaceHubNetworkTests {
         try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
+                #expect(url.query == "blobs=true")
                 let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                 return (resp, Data(payload.utf8))
             },

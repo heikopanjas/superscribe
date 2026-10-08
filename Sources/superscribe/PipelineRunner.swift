@@ -7,6 +7,7 @@ enum PipelineRunner {
         var resolveBackendAndModel: @Sendable (Backend?, String?) async throws -> (Backend, String)
         var ensureModelInstalled: @Sendable (String, Backend) async throws -> Void
         var makeTranscriber: @Sendable (Backend, String) throws -> any Transcriber
+        var makeDiarizer: @Sendable () async throws -> any Diarizer
         var logBackend: @Sendable (Backend, String) -> Void
         var clearProgressLine: @Sendable () -> Void
 
@@ -19,6 +20,11 @@ enum PipelineRunner {
             },
             ensureModelInstalled: ModelManager.ensureModelInstalled,
             makeTranscriber: BackendManager.makeTranscriber,
+            makeDiarizer: {
+                try await ModelManager.ensureDiarizerInstalled()
+                FileHandle.standardError.write(Data("Using speaker diarizer: \(DiarizerModel.id)\n".utf8))
+                return try NemotronDiarizer()
+            },
             logBackend: { backend, model in
                 FileHandle.standardError.write(
                     Data("Using backend: \(backend.rawValue), model: \(model)\n".utf8)
@@ -44,13 +50,17 @@ enum PipelineRunner {
         try configuration.validate()
         let transcriber = try dependencies.makeTranscriber(backend, model)
         try await dependencies.ensureModelInstalled(model, backend)
+        let diarizer: (any Diarizer)? =
+            if options.tracks.contains(where: { $0.diarization != nil }) == true { try await dependencies.makeDiarizer() }
+            else { nil }
 
         let pipelineConfig = PipelineConfig(
             tracks: options.tracks,
             backend: backend,
             transcriptionConfig: configuration,
             analyzerConfig: options.analyzerConfig,
-            session: nil
+            session: nil,
+            diarizer: diarizer
         )
 
         let audioCache: ConvertedAudioCache? = options.useCache ? ConvertedAudioCache() : nil

@@ -7,17 +7,17 @@ import Testing
 struct InstallPathTests {
 
     @Test func whisperInstallPathUsesBinCacheConvention() throws -> Void {
-        SuperscribePaths.overrideWhisperModelCacheDirectory = nil
+        SuperscribePaths.overrideModelsDirectory = nil
         let path = WhisperBackend.installPath(for: "large-v3-turbo")
         #expect(path.lastPathComponent == "large-v3-turbo.bin")
-        #expect(path.path.contains("superscribe/whisper/large-v3-turbo.bin"))
+        #expect(path.path.contains(".cache/superscribe/models/whisper/large-v3-turbo.bin"))
     }
 
-    @Test func parakeetInstallPathMatchesFluidAudioConvention() throws -> Void {
-        SuperscribePaths.overrideFluidAudioModelsDirectory = nil
+    @Test func parakeetInstallPathUsesFluidAudioFolderName() throws -> Void {
+        SuperscribePaths.overrideModelsDirectory = nil
         let path = try ParakeetBackend.installPath(for: "v3")
         #expect(path.lastPathComponent == "parakeet-tdt-0.6b-v3")
-        #expect(path.path.contains("FluidAudio/Models/parakeet-tdt-0.6b-v3"))
+        #expect(path.path.contains(".cache/superscribe/models/parakeet/parakeet-tdt-0.6b-v3"))
     }
 
     @Test func parakeetInstallPathRejectsUnknownIds() throws -> Void {

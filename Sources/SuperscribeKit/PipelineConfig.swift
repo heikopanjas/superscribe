@@ -11,6 +11,8 @@ public struct PipelineConfig: Sendable {
     public let maxConcurrentConversions: Int
     /// Optional session label stored in the intermediate transcript.
     public let session: String?
+    /// Separates speakers in tracks marked with `TrackInput.diarization`; required when any track is mixed.
+    public let diarizer: (any Diarizer)?
 
     public init(
         tracks: [TrackInput],
@@ -19,7 +21,8 @@ public struct PipelineConfig: Sendable {
         analyzerConfig: AnalyzerConfig = AnalyzerConfig(),
         maxConcurrentTranscriptions: Int = 2,
         maxConcurrentConversions: Int = 2,
-        session: String? = nil
+        session: String? = nil,
+        diarizer: (any Diarizer)? = nil
     ) {
         self.tracks = tracks
         self.backend = backend
@@ -28,5 +31,6 @@ public struct PipelineConfig: Sendable {
         self.maxConcurrentTranscriptions = maxConcurrentTranscriptions
         self.maxConcurrentConversions = maxConcurrentConversions
         self.session = session
+        self.diarizer = diarizer
     }
 }

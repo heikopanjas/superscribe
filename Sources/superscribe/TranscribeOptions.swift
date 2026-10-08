@@ -11,6 +11,13 @@ struct TranscribeOptions: ParsableArguments {
     )
     var track: [TrackSpec] = []
 
+    @Option(
+        name: .long,
+        parsing: .singleValue,
+        help: ArgumentHelp("Mixed multi-speaker recording; speakers are diarized into `Speaker 1…N`.", valueName: "path")
+    )
+    var mixed: [String] = []
+
     @Option(name: .long, help: "Transcription backend (parakeet, whisper.cpp, appleSpeech). Uses configured default if omitted.")
     var backend: Backend?
 
@@ -51,8 +58,14 @@ struct TranscribeOptions: ParsableArguments {
 // MARK: - Convenience bridges from CLI options to library types
 
 extension TranscribeOptions {
+    /// Isolated `--track` inputs followed by diarized `--mixed` inputs named after their files.
     var trackInputs: [TrackInput] {
-        return self.track.map { TrackInput(speaker: $0.speaker, file: URL(fileURLWithPath: $0.path)) }
+        let isolated = self.track.map { TrackInput(speaker: $0.speaker, file: URL(fileURLWithPath: $0.path)) }
+        let mixed = self.mixed.map { path in
+            let file = URL(fileURLWithPath: path)
+            return TrackInput(speaker: file.deletingPathExtension().lastPathComponent, file: file, diarization: TrackDiarization())
+        }
+        return isolated + mixed
     }
 
     var transcriptionConfig: TranscriptionConfig {

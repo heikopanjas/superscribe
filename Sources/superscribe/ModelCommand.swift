@@ -35,6 +35,9 @@ struct ModelCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Emit machine-readable JSON (only with --list).")
     var json: Bool = false
 
+    @Flag(name: .long, help: "Manage the speaker diarizer used for --mixed tracks (with --list, --download, or --rm).")
+    var diarizer: Bool = false
+
     mutating func validate() throws -> Void {
         try assertMutuallyExclusive([
             ("--list", self.list),
@@ -54,9 +57,16 @@ struct ModelCommand: AsyncParsableCommand {
         if self.json == true && (self.setDefault != nil || self.download != nil || self.rm != nil) {
             throw ValidationError("--json applies only to --list.")
         }
+        if self.diarizer == true && (self.backend != nil || self.setDefault != nil || self.remote == true || self.refresh == true || self.json == true) {
+            throw ValidationError("--diarizer applies only to --list, --download, and --rm.")
+        }
     }
 
     mutating func run() async throws -> Void {
+        if self.diarizer == true {
+            try await self.runDiarizer()
+            return
+        }
         let backend = try BackendManager.resolveBackend(cliBackend: self.backend)
 
         if let modelId = self.download {
@@ -175,6 +185,31 @@ struct ModelCommand: AsyncParsableCommand {
         }
         try await UserConfig.update { $0.setDefaultModel(modelId, for: backend) }
         print("Default model for '\(backend.rawValue)' set to '\(modelId)'.")
+    }
+
+    private func runDiarizer() async throws -> Void {
+        if let modelId = self.download ?? self.rm {
+            guard modelId == DiarizerModel.id else { throw ValidationError("Unknown diarizer model '\(modelId)'. Available: \(DiarizerModel.id)") }
+        }
+        let path = try DiarizerModel.installPath()
+        if self.download != nil {
+            print("Installed at \(try await ModelManager.installDiarizer().path)")
+            return
+        }
+        if self.rm != nil {
+            guard FileManager.default.fileExists(atPath: path.path) == true else { throw ValidationError("Diarizer model '\(DiarizerModel.id)' is not installed.") }
+            guard confirm(prompt: "Remove '\(DiarizerModel.id)'?\n  \(path.path)\n[y/N] ", skip: self.yes) == true else {
+                print("Aborted.")
+                return
+            }
+            try await ModelInstaller.removeDiarizer()
+            print("Removed \(path.path)")
+            return
+        }
+        let status =
+            if DiarizerModel.isInstalled(at: path) == true { path.path }
+            else { "not installed (downloads on the first --mixed run)" }
+        print("  \(DiarizerModel.id)  \(status)")
     }
 
     // MARK: - Rendering

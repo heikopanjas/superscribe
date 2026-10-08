@@ -13,50 +13,23 @@ public enum ModelDownloader {
 
     public static let maxParallelFiles = 4
 
-    /// Downloads every file for `model` (filtered by `model.subpath` if set)
-    /// from Hugging Face into `stagingDir`. Files are placed at their
-    /// repo-relative path with the `subpath/` prefix stripped (if any).
+    /// Downloads an explicit file selection from `model.repoId` into `stagingDir` with bounded parallelism.
     ///
-    /// - Throws: `ModelInstallationError.downloadFailed`,
-    ///           `ModelInstallationError.httpError`.
-    public static func download(
+    /// - Throws: `ModelInstallationError.downloadFailed`, `ModelInstallationError.httpError`.
+    internal static func download(
+        files: [ModelDownloadFile],
         model: RemoteModelInfo,
-        backend: Backend,
+        backend: Backend?,
         into stagingDir: URL,
-        session: URLSession = .shared,
+        session: URLSession,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void
     ) async throws -> Void {
-        try ModelPathValidation.identifier(model.id)
-        if let subpath = model.subpath {
-            _ = try ModelPathValidation.components(subpath.hasSuffix("/") ? String(subpath.dropLast()) : subpath)
-        }
-        // Re-fetch the latest sibling list so we never miss files added since
-        // the catalog was cached.
-        let info = try await HuggingFaceHub.repoInfo(repoId: model.repoId, session: session)
-
-        // Filter + compute relative install paths.
-        let files: [(rfilename: String, relPath: String, expectedSize: Int64?)] = info.siblings
-            .compactMap { sibling in
-                if let subpath = model.subpath {
-                    let prefix =
-                        if subpath.hasSuffix("/") == true { subpath }
-                        else { subpath + "/" }
-                    guard sibling.rfilename.hasPrefix(prefix) == true else { return nil }
-                    let rel = String(sibling.rfilename.dropFirst(prefix.count))
-                    guard rel.isEmpty == false else { return nil }
-                    return (sibling.rfilename, rel, sibling.size)
-                }
-                else {
-                    return (sibling.rfilename, sibling.rfilename, sibling.size)
-                }
-            }
-
         guard files.isEmpty == false else {
             throw ModelInstallationError.downloadFailed(
                 url: model.repoURL,
                 underlying: NSError(
                     domain: "ModelDownloader", code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "No files matched model subpath."]
+                    userInfo: [NSLocalizedDescriptionKey: "No repository files matched the model."]
                 )
             )
         }
@@ -65,12 +38,8 @@ public enum ModelDownloader {
             at: stagingDir, withIntermediateDirectories: true
         )
 
-        // Total may be nil if any file size is unknown; in that case overall
-        // percentage will be nil too.
-        let knownTotal: Int64? =
-            files.allSatisfy { $0.expectedSize != nil }
-            ? files.compactMap(\.expectedSize).reduce(Int64(0), +)
-            : model.totalSizeBytes
+        // Fall back to the catalog total when any file size is unknown; without either, percentages are unavailable.
+        let knownTotal = ModelDownloadFile.totalSize(of: files) ?? model.totalSizeBytes
 
         let progressActor = DownloadProgressTracker(
             modelId: model.id,
@@ -85,9 +54,9 @@ public enum ModelDownloader {
             items: files
         ) { file in
             try await Self.downloadOne(
-                model: model,
+                repoId: model.repoId,
                 file: file.rfilename,
-                relPath: file.relPath,
+                relPath: file.relativePath,
                 expectedSize: file.expectedSize,
                 stagingDir: stagingDir,
                 session: session,
@@ -134,7 +103,7 @@ public enum ModelDownloader {
         )
         let rfilename = "ggml-\(model.id).bin"
         try await Self.downloadOne(
-            model: model,
+            repoId: model.repoId,
             file: rfilename,
             relPath: dest.lastPathComponent,
             expectedSize: sibling.size,
@@ -183,9 +152,12 @@ public enum ModelDownloader {
             }
             catch {
                 bytes.task.cancel()
-                // Consume the cancelled iterator so an unconsumed response cannot retain the session.
-                var iterator = bytes.makeAsyncIterator()
-                _ = try? await iterator.next()
+                // Consume the cancelled iterator so an unconsumed response cannot retain the session. A cancelled
+                // caller's iterator throws before reading, so drain from a task that does not inherit cancellation.
+                await Task.detached {
+                    var iterator = bytes.makeAsyncIterator()
+                    _ = try? await iterator.next()
+                }.value
                 throw error
             }
         }
@@ -279,7 +251,7 @@ public enum ModelDownloader {
     // MARK: - Single-file download (internal)
 
     private static func downloadOne(
-        model: RemoteModelInfo,
+        repoId: String,
         file rfilename: String,
         relPath: String,
         expectedSize: Int64?,
@@ -289,7 +261,7 @@ public enum ModelDownloader {
     ) async throws -> Void {
         let dest = try ModelPathValidation.resolve(relPath, under: stagingDir)
         await progress.startFile(name: rfilename)
-        try await Self.downloadBytes(repoId: model.repoId, filename: rfilename, into: dest, expectedSize: expectedSize, session: session) { chunk, _ in
+        try await Self.downloadBytes(repoId: repoId, filename: rfilename, into: dest, expectedSize: expectedSize, session: session) { chunk, _ in
             await progress.add(bytes: chunk)
         }
         await progress.completeFile()

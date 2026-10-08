@@ -4,6 +4,8 @@
 
 podscribe is a command-line tool that transcribes podcasts from pre-mix isolated speaker tracks. By working with individual tracks rather than a mixed-down recording, podscribe gets speaker attribution for free — no diarization needed — and skips silence to reduce transcription time, producing a precise, speaker-attributed podcast transcript.
 
+> **Update (v2.0.0, 2026-10-08):** isolated tracks remain the primary model, but mixed recordings are now supported via `--mixed`: FluidAudio's Nemotron 3 diarizer splits a shared recording into per-speaker tracks before transcription. See README → "Mixed recordings (speaker diarization)".
+
 The tool is written in Swift, targeting macOS on Apple Silicon.
 
 
@@ -700,7 +702,7 @@ The original design listed `whisper` (whisper.cpp), `mlx`, `speech` (Apple), and
 
 - Audio I/O helper: `AudioConverter().resampleAudioFile(url)` produces 16 kHz mono Float samples directly from any `AVAudioFile`-supported container.
 - Auto-downloads CoreML model bundles to `~/.cache/fluidaudio/Models/...` on first use.
-- Diarization features are not needed by Superscribe (one track = one speaker) but are available if a future feature ever wants them.
+- Diarization features are not needed by Superscribe (one track = one speaker) but are available if a future feature ever wants them. (v2.0.0 uses Nemotron 3 Diarization for `--mixed` tracks.)
 
 ### whisper.cpp (`ggerganov/whisper.cpp`) — secondary backend
 

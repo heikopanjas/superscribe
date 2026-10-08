@@ -67,6 +67,21 @@ final class ModelManager {
         )
     }
 
+    /// Installs the speaker diarizer when it is missing or stale.
+    static func ensureDiarizerInstalled() async throws -> Void {
+        if DiarizerModel.isInstalled(at: try DiarizerModel.installPath()) == true { return }
+        FileHandle.standardError.write(Data("Speaker diarizer '\(DiarizerModel.id)' not installed; downloading...\n".utf8))
+        let path = try await Self.installDiarizer()
+        FileHandle.standardError.write(Data("Installed speaker diarizer at \(path.path).\n".utf8))
+    }
+
+    /// Installs the speaker diarizer with stderr download progress and returns its directory.
+    static func installDiarizer() async throws -> URL {
+        let path = try await ModelInstaller.installDiarizer(onProgress: Self.makeDownloadProgressHandler())
+        FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
+        return path
+    }
+
     /// Returns a throttled stderr progress handler for `ModelInstaller`/`ModelDownloader`.
     ///
     /// Every column has a fixed character width so the line never reflows as

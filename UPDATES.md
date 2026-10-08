@@ -4,6 +4,51 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-10-08 (v2.0.0, 13:40 selective parakeet downloads)
+
+- parakeet installs download only the descriptor's core ml bundles plus vocabulary, exactly what fluidaudio 0.17.7 `AsrModels.load` reads at `.int8`; repos also carry encoder variants, `.mlpackage` sources, and `mlpackages/`
+- measured download size: v3 3420 to 461 MiB (87% less), v2 2456 to 443 MiB, tdt-ctc-110m 434 to 217 MiB, tdt-ja 1192 to 590 MiB; existing full installs stay valid (superset)
+- `ModelDownloadFile.select` is the single selection helper for parakeet and the diarizer; `ModelDownloadFile.totalSize` replaces three copies of the all-sizes-known sum
+- `fetchRepoSizes` fetches only supported repos and reports the selected size and file count, so catalog sizes, disk preflight, and progress totals match the actual download
+- fixed: `HuggingFaceHub.repoInfo` now requests `blobs=true`; without it hugging face omits sibling sizes, so catalog sizes showed "—", disk preflight and per-file size validation never ran, and progress had no percentage
+- breaking: removed the unused whole-repository `ModelDownloader.download(model:backend:…)`, `RemoteModelInfo.subpath`, and `ParakeetBackend.knownRepoAliases`; older catalog files with a `subpath` key still decode
+- rationale: user asked to evaluate the reduction; the loader code and hugging face file trees show no required file is skipped
+- version bump: included in 2.0.0
+
+### 2026-10-08 (v2.0.0, 13:05 models under ~/.cache/superscribe/models)
+
+- every downloaded model now lives under `~/.cache/superscribe/models/{parakeet,whisper,diarizer}` instead of fluidaudio's application support folder and `~/Library/Caches/superscribe/whisper`
+- `SuperscribePaths.modelsDirectory()` is the single overridable root; `parakeetModelsDirectory()`, `whisperModelsDirectory()`, and `diarizerModelsDirectory()` replace `fluidAudioModelsDirectory()` and `whisperModelCacheDirectory()`; removed the `ParakeetBackend.fluidAudioCacheDirectory()` forwarder; tests use one models-root override
+- parakeet folder names already equal fluidaudio's `Repo.folderName`, and offline mode keeps fluidaudio from fetching, so loading works from any root
+- no migration: earlier installs are re-downloaded on first use; the readme lists the old folders that can be deleted
+- rationale: user decision to keep all superscribe state in its own cache folder, out of fluidaudio's shared directory where fluidaudio may purge or replace files
+- version bump: included in 2.0.0 (public path api renames)
+
+### 2026-10-08 (v2.0.0, mixed-track diarization with nemotron 3)
+
+- added mixed-track input: `--mixed <path>` and template objects `{file, diarize: true, speakers: [...]}` split one recording into per-speaker tracks with nvidia nemotron 3 diarization (fluidaudio core ml, `fast128` preset, up to 8 speakers)
+- diarized speakers become virtual tracks in the intermediate transcript (mapped names, else `Speaker N` numbered across mixed tracks), so the intermediate format stays version 1 and merge/renderers are unchanged; duplicate names are allowed and merge speakers
+- frames go to the most likely speaker at or above 0.5 so overlapping speech is transcribed once; `SpeechTimeline.finalize` now holds the gap-merge/padding/min-duration rules shared by `Analyzer` and diarization
+- padding is now capped at half of the adjacent silence; default analyzer output is unchanged, only configurations where 2 × padding exceeds the gap stop producing overlapping segments
+- diarizer model installs to `nemotron-3-diarization-fast128` (flattened, weights-version marker); auto-installed on first mixed run and managed with `model --diarizer --list/--download/--rm`
+- `ModelInstaller.stageAndPublish` and `ModelDownloader.download(files:…)` are now shared by asr and diarizer installs
+- breaking: `DownloadProgress.backend` is now `Backend?` (`nil` for diarizer downloads); user chose the honest model over a misleading `.parakeet` label
+- excluded `NemotronDiarizerLiveAPI.swift` from coverage (core ml calls need the real model); orchestration stays covered via `NemotronDiarizer.openSession`
+- added opt-in `NemotronDiarizerIntegrationTests` (`SUPERSCRIBE_INTEGRATION_MIXED_AUDIO`); on a synthetic two-voice recording turns matched ground truth within ~30 ms at ~115× real time
+- resolves the 2026-09-25 reminder to look into nemotron 3 speech models; nemotron 3.5 asr was evaluated and not adopted (streaming focus, parakeet already covers offline multilingual)
+- rationale: users with shared-microphone recordings could not use superscribe; the diarizer reuses fluidaudio and keeps all downstream stages unchanged
+- version bump: 1.0.8 to 2.0.0 (MAJOR - public `DownloadProgress.backend` type change, plus new public api)
+
+### 2026-10-08 (v2.0.0, fluidaudio 0.17.7 upgrade)
+
+- upgraded fluidaudio from 0.14.3 to 0.17.7 (nemotron 3 diarization needs at least 0.17.4 for neural-engine bundles); declared with `traits: []` to skip the unused NemoTextProcessing binary
+- `ModelNames.ASR.requiredModelsV3` became a function; removed `AsrModelVersion.ctcZhCn` replaced in fast-fail tests by a missing-directory `.v3` load
+- set `ModelHub.offlineMode = true` before fluidaudio loads: 0.17.x `AsrModels.load` downloads missing files into the parent folder (a unit test fetched 469 MB into /tmp) and purges caches on load failure; superscribe owns downloads
+- `Language(rawValue:)` now also recognizes nl, da, sv, fi, hu, et, lv, lt, mt, and el, enabling fluidaudio's script filter for those `--language` values; long-form parakeet decoding defaults changed upstream
+- fixed a downloader hang: a stream whose download task was cancelled was never drained (the cancelled iterator throws before reading), so the url session never invalidated; draining now runs in a detached task
+- rationale: required for diarization; also removes hidden network access from fluidaudio
+- version bump: included in 2.0.0
+
 ### 2026-09-25 (v1.0.8, open reminder: nemotron 3 speech analyzer)
 
 - **open reminder for the user:** at the start of the next session, remind the user to check out the Nemotron 3 speech analyzer

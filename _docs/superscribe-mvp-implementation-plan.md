@@ -42,7 +42,7 @@ Viable on-device candidates surveyed (April 2026):
 
 - ANE inference frees the GPU and lets us transcribe N speaker tracks largely in parallel without contention.
 - Word timestamps are first-class (needed by the merger).
-- Diarization is irrelevant for us (one track = one speaker), so we use only FluidAudio's ASR slice.
+- Diarization is irrelevant for us (one track = one speaker), so we use only FluidAudio's ASR slice. (Superseded in v2.0.0: `--mixed` tracks use FluidAudio's Nemotron 3 diarizer.)
 - macOS 14 deployment target stays.
 
 **Backend enum:** rename `.mlx` → `.parakeet` (default). Keep `.whisper` (whisper.cpp) as a secondary, `.appleSpeech` reserved for when we accept a macOS 26 floor. `.openai` deferred.

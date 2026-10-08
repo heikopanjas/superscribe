@@ -1,5 +1,4 @@
 import AVFoundation
-import FluidAudio
 import Foundation
 import Testing
 
@@ -50,9 +49,9 @@ struct FinalLineCoverageGapTests {
     @Test func whisperInstalledModelsWhenCacheDirMissing() throws -> Void {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("missing-wh-\(UUID().uuidString)")
-        let prior = SuperscribePaths.overrideWhisperModelCacheDirectory
-        SuperscribePaths.overrideWhisperModelCacheDirectory = missing
-        defer { SuperscribePaths.overrideWhisperModelCacheDirectory = prior }
+        let prior = SuperscribePaths.overrideModelsDirectory
+        SuperscribePaths.overrideModelsDirectory = missing
+        defer { SuperscribePaths.overrideModelsDirectory = prior }
         #expect(try WhisperBackend.installedModels().isEmpty == true)
     }
 
@@ -247,10 +246,9 @@ struct FinalLineCoverageGapTests {
                     let model = RemoteModelInfo(
                         id: "m",
                         repoId: repoId,
-                        subpath: nil,
                         repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
-                    try await ModelDownloader.download(
+                    try await TestHelpers.downloadRepository(
                         model: model,
                         backend: .parakeet,
                         into: staging,
@@ -264,10 +262,10 @@ struct FinalLineCoverageGapTests {
     }
 
     @Test func fetchRepoSizesNilTotalWhenSizesMissing() async throws -> Void {
-        let repos = [HuggingFaceHub.HFRepo(id: "FluidInference/empty-sizes", lastModified: nil)]
+        let repos = [HuggingFaceHub.HFRepo(id: "FluidInference/parakeet-tdt-0.6b-v3-coreml", lastModified: nil)]
         let info = """
-            {"id":"FluidInference/empty-sizes","lastModified":null,"siblings":[
-              {"rfilename":"a.bin","size":null}
+            {"id":"FluidInference/parakeet-tdt-0.6b-v3-coreml","lastModified":null,"siblings":[
+              {"rfilename":"parakeet_vocab.json","size":null}
             ]}
             """
         try await MockURLSessionHelpers.withMockHandler(
@@ -281,7 +279,9 @@ struct FinalLineCoverageGapTests {
                     for: repos,
                     session: session
                 )
-                #expect(sizes["FluidInference/empty-sizes"]?.totalBytes == nil)
+                let entry = try #require(sizes["FluidInference/parakeet-tdt-0.6b-v3-coreml"])
+                #expect(entry.totalBytes == nil)
+                #expect(entry.fileCount == 1)
             }
         )
     }
@@ -499,48 +499,6 @@ struct FinalLineCoverageGapTests {
         #expect(SuperscribeFS.isExistingDirectory(at: file) == false)
     }
 
-    @Test func downloadSubpathWithoutTrailingSlash() async throws -> Void {
-        let repoId = "FluidInference/subpath-no-slash"
-        let payload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"weights/a.bin","size":3}
-            ]}
-            """
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let s = url.absoluteString
-                if s.contains("/api/models/\(repoId)") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data(payload.utf8))
-                }
-                if s.contains("/resolve/main/weights/a.bin") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data("abc".utf8))
-                }
-                throw URLError(.unsupportedURL)
-            },
-            { session in
-                try await TestHelpers.withTempDirectory(prefix: "dl-sub") { staging in
-                    let model = RemoteModelInfo(
-                        id: "m",
-                        repoId: repoId,
-                        subpath: "weights",
-                        repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                    )
-                    try await ModelDownloader.download(
-                        model: model,
-                        backend: .parakeet,
-                        into: staging,
-                        session: session,
-                        onProgress: { _ in }
-                    )
-                    #expect(FileManager.default.fileExists(atPath: staging.appendingPathComponent("a.bin").path) == true)
-                }
-            }
-        )
-    }
-
     @Test func cacheKeyNilForMissingFile() throws -> Void {
         let cache = try ConvertedAudioCache(root: TestHelpers.makeTempDir(prefix: "key-missing"))
         defer { try? FileManager.default.removeItem(at: cache.root) }
@@ -638,7 +596,7 @@ struct FinalLineCoverageGapTests {
                         repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
                     nonisolated(unsafe) var lastProgress: DownloadProgress?
-                    try await ModelDownloader.download(
+                    try await TestHelpers.downloadRepository(
                         model: model,
                         backend: .parakeet,
                         into: staging,
@@ -717,46 +675,4 @@ struct FinalLineCoverageGapTests {
         #expect(mapped.isEmpty == true)
     }
 
-    @Test func downloadSkipsSiblingWithEmptyRelativePath() async throws -> Void {
-        let repoId = "FluidInference/empty-rel"
-        let payload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"weights/","size":null},
-              {"rfilename":"weights/a.bin","size":3}
-            ]}
-            """
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let s = url.absoluteString
-                if s.contains("/api/models/\(repoId)") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data(payload.utf8))
-                }
-                if s.contains("/resolve/main/weights/a.bin") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data("abc".utf8))
-                }
-                throw URLError(.unsupportedURL)
-            },
-            { session in
-                try await TestHelpers.withTempDirectory(prefix: "dl-empty-rel") { staging in
-                    let model = RemoteModelInfo(
-                        id: "m",
-                        repoId: repoId,
-                        subpath: "weights",
-                        repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                    )
-                    try await ModelDownloader.download(
-                        model: model,
-                        backend: .parakeet,
-                        into: staging,
-                        session: session,
-                        onProgress: { _ in }
-                    )
-                    #expect(FileManager.default.fileExists(atPath: staging.appendingPathComponent("a.bin").path) == true)
-                }
-            }
-        )
-    }
 }

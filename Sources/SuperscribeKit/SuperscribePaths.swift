@@ -1,28 +1,22 @@
 import Foundation
 
-/// Named on-disk roots used across superscribe. Paths are intentionally
-/// different per subsystem — do not collapse to a single cache root.
+/// Named on-disk roots used across superscribe. Configuration lives in `~/.config/superscribe`;
+/// the catalog, converted audio, and every downloaded model live under `~/.cache/superscribe`,
+/// with models grouped as `models/<kind>/`.
 public enum SuperscribePaths {
     @TaskLocal internal static var testState = TestDependencyStorage(TestState())
 
     internal struct TestState {
-        var overrideFluidAudioModelsDirectory: URL?
-        var overrideWhisperModelCacheDirectory: URL?
+        var overrideModelsDirectory: URL?
     }
 
     /// Task-local override (parallel-safe); checked before the static override.
-    @TaskLocal static var taskFluidAudioModelsDirectory: URL?
-    @TaskLocal static var taskWhisperModelCacheDirectory: URL?
+    @TaskLocal static var taskModelsDirectory: URL?
 
-    /// Override for unit tests; nil uses the real FluidAudio models directory.
-    internal static var overrideFluidAudioModelsDirectory: URL? {
-        get { return Self.testState[\.overrideFluidAudioModelsDirectory] }
-        set { Self.testState[\.overrideFluidAudioModelsDirectory] = newValue }
-    }
-    /// Override for unit tests; nil uses the real whisper model cache directory.
-    internal static var overrideWhisperModelCacheDirectory: URL? {
-        get { return Self.testState[\.overrideWhisperModelCacheDirectory] }
-        set { Self.testState[\.overrideWhisperModelCacheDirectory] = newValue }
+    /// Override for unit tests; nil uses the real models directory.
+    internal static var overrideModelsDirectory: URL? {
+        get { return Self.testState[\.overrideModelsDirectory] }
+        set { Self.testState[\.overrideModelsDirectory] = newValue }
     }
 
     /// `~/.config/superscribe`
@@ -42,30 +36,29 @@ public enum SuperscribePaths {
         return Self.catalogCacheDirectory().appendingPathComponent("audio", isDirectory: true)
     }
 
-    /// `~/Library/Caches/superscribe/whisper`
-    public static func whisperModelCacheDirectory() -> URL {
-        if let taskWhisperModelCacheDirectory = Self.taskWhisperModelCacheDirectory {
-            return taskWhisperModelCacheDirectory
+    /// `~/.cache/superscribe/models`
+    public static func modelsDirectory() -> URL {
+        if let taskModelsDirectory = Self.taskModelsDirectory {
+            return taskModelsDirectory
         }
-        if let overrideWhisperModelCacheDirectory = Self.overrideWhisperModelCacheDirectory {
-            return overrideWhisperModelCacheDirectory
+        if let overrideModelsDirectory = Self.overrideModelsDirectory {
+            return overrideModelsDirectory
         }
-        let base = URL.cachesDirectory
-        return base.appendingPathComponent("superscribe/whisper", isDirectory: true)
+        return Self.catalogCacheDirectory().appendingPathComponent("models", isDirectory: true)
     }
 
-    /// `~/Library/Application Support/FluidAudio/Models`
-    public static func fluidAudioModelsDirectory() -> URL {
-        if let taskFluidAudioModelsDirectory = Self.taskFluidAudioModelsDirectory {
-            return taskFluidAudioModelsDirectory
-        }
-        if let overrideFluidAudioModelsDirectory = Self.overrideFluidAudioModelsDirectory {
-            return overrideFluidAudioModelsDirectory
-        }
-        let base = URL.applicationSupportDirectory
-        return
-            base
-            .appendingPathComponent("FluidAudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
+    /// `~/.cache/superscribe/models/parakeet`; folder names match FluidAudio's `Repo.folderName`.
+    public static func parakeetModelsDirectory() -> URL {
+        return Self.modelsDirectory().appendingPathComponent("parakeet", isDirectory: true)
+    }
+
+    /// `~/.cache/superscribe/models/whisper`
+    public static func whisperModelsDirectory() -> URL {
+        return Self.modelsDirectory().appendingPathComponent("whisper", isDirectory: true)
+    }
+
+    /// `~/.cache/superscribe/models/diarizer`
+    public static func diarizerModelsDirectory() -> URL {
+        return Self.modelsDirectory().appendingPathComponent("diarizer", isDirectory: true)
     }
 }

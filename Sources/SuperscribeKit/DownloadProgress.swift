@@ -4,7 +4,8 @@ import Foundation
 /// Snapshot of an in-progress model download.
 public struct DownloadProgress: Sendable, Hashable {
     public let modelId: String
-    public let backend: Backend
+    /// ASR backend whose model is downloading; `nil` for the speaker diarizer.
+    public let backend: Backend?
     public let currentFile: String
     public let filesCompleted: Int
     public let filesTotal: Int
@@ -14,7 +15,7 @@ public struct DownloadProgress: Sendable, Hashable {
 
     public init(
         modelId: String,
-        backend: Backend,
+        backend: Backend?,
         currentFile: String,
         filesCompleted: Int,
         filesTotal: Int,

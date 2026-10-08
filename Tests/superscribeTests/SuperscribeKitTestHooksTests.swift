@@ -167,9 +167,9 @@ struct SuperscribeKitTestHooksTests {
         defer { self.resetHooks() }
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("missing-pk-cache-\(UUID().uuidString)")
-        let prior = SuperscribePaths.overrideFluidAudioModelsDirectory
-        SuperscribePaths.overrideFluidAudioModelsDirectory = missing
-        defer { SuperscribePaths.overrideFluidAudioModelsDirectory = prior }
+        let prior = SuperscribePaths.overrideModelsDirectory
+        SuperscribePaths.overrideModelsDirectory = missing
+        defer { SuperscribePaths.overrideModelsDirectory = prior }
         #expect(try ParakeetBackend.installedModels().isEmpty == true)
     }
 
@@ -327,12 +327,12 @@ struct SuperscribeKitTestHooksTests {
         }
     }
 
-    @Test func loadAsrModelsFromFluidAudioRejectsCtcOnlyModel() async -> Void {
+    @Test func loadAsrModelsFromFluidAudioRejectsMissingDirectory() async -> Void {
         defer { self.resetHooks() }
         await #expect(throws: Error.self) {
             _ = try await ParakeetBackend.loadAsrModelsFromFluidAudio(
-                from: URL(fileURLWithPath: "/tmp/parakeet-ctc-\(UUID().uuidString)"),
-                version: .ctcZhCn
+                from: URL(fileURLWithPath: "/tmp/parakeet-missing-\(UUID().uuidString)"),
+                version: .v3
             )
         }
     }
@@ -407,12 +407,12 @@ struct SuperscribeKitTestHooksTests {
         try await ParakeetBackend.loadParakeetModelsIntoManager(AsrManager(), models: models)
     }
 
-    @Test func loadAsrModelsUsesFluidAudioFallbackForCtcOnly() async -> Void {
+    @Test func loadAsrModelsUsesFluidAudioFallbackForMissingDirectory() async -> Void {
         defer { self.resetHooks() }
         await #expect(throws: Error.self) {
             _ = try await ParakeetBackend.materializeFromDiskUsingFluidAudio(
-                installDir: URL(fileURLWithPath: "/tmp/parakeet-ctc-fallback-\(UUID().uuidString)"),
-                modelVersion: .ctcZhCn
+                installDir: URL(fileURLWithPath: "/tmp/parakeet-missing-fallback-\(UUID().uuidString)"),
+                modelVersion: .v3
             )
         }
     }
@@ -511,7 +511,7 @@ struct SuperscribeKitTestHooksTests {
                         repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
                     await #expect(throws: ModelInstallationError.self) {
-                        try await ModelDownloader.download(
+                        try await TestHelpers.downloadRepository(
                             model: model,
                             backend: .parakeet,
                             into: staging,

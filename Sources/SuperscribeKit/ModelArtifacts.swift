@@ -13,12 +13,14 @@ internal enum ModelArtifacts {
 
     internal static func parakeet(at url: URL, descriptor: ParakeetBackend.ModelDescriptor) -> Bool {
         guard Self.nonemptyFile(at: url.appendingPathComponent(descriptor.vocabulary)) == true else { return false }
-        return descriptor.bundles.allSatisfy { name in
-            let bundle = url.appendingPathComponent(name)
-            guard SuperscribeFS.isExistingDirectory(at: bundle) == true,
-                let entries = try? FileManager.default.contentsOfDirectory(at: bundle, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey])
-            else { return false }
-            return entries.contains { Self.nonemptyFile(at: $0) }
-        }
+        return descriptor.bundles.allSatisfy { Self.bundle(at: url.appendingPathComponent($0)) }
+    }
+
+    /// A compiled Core ML bundle directory holding at least one nonempty file.
+    internal static func bundle(at url: URL) -> Bool {
+        guard SuperscribeFS.isExistingDirectory(at: url) == true,
+            let entries = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey])
+        else { return false }
+        return entries.contains { Self.nonemptyFile(at: $0) }
     }
 }

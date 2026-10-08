@@ -14,7 +14,6 @@ extension AppleSpeechBackend: ModelRegistry {
             RemoteModelInfo(
                 id: id,
                 repoId: AppleSpeechSupport.catalogRepoId,
-                subpath: nil,
                 totalSizeBytes: nil,
                 fileCount: nil,
                 lastModified: nil,

@@ -1,12 +1,12 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-09-13 (v1.0.8, GitHub Actions Node 24 upgrades)
+**Last updated:** 2026-10-08 (v2.0.0, selective Parakeet downloads)
 
 <!-- {mission} -->
 
 ## Mission Statement
 
-**superscribe** is a macOS command-line tool and Swift library that transcribes multi-track podcast recordings into a single time-aligned subtitle file (VTT, SRT, JSON, or TXT). Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a publish-ready output.
+**superscribe** is a macOS command-line tool and Swift library that transcribes multi-track podcast recordings into a single time-aligned subtitle file (VTT, SRT, JSON, or TXT). Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a publish-ready output. Mixed recordings (several speakers on one track, `--mixed`) are split on-device by NVIDIA Nemotron 3 Diarization (FluidAudio Core ML, up to 8 speakers) into one virtual track per speaker.
 
 Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Silicon; Apple Speech on macOS 26+):
 
@@ -20,7 +20,7 @@ Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Si
 - **Platform:** macOS 14+, Apple Silicon (arm64) only
 - **Package Manager:** Swift Package Manager
 - **Build dependencies (one-time):** `cmake`, `ninja` (for the whisper.cpp xcframework build script)
-- **Runtime dependencies:** swift-argument-parser, FluidAudio, whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/bootstrap.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
+- **Runtime dependencies:** swift-argument-parser, FluidAudio ≥ 0.17.7 (declared with `traits: []`, which drops the unused NemoTextProcessing binary), whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/bootstrap.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
 - **Version Control:** Git
 - **License:** MIT
 
@@ -30,6 +30,7 @@ Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Si
 Sources/
   SuperscribeKit/          Core library (importable by Swift apps)
     Backends/              ParakeetBackend, WhisperBackend, AppleSpeechBackend (+Registry, separate framework LiveAPI shims)
+    Diarization/           Diarizer protocol, SpeakerActivity, SpeakerTurnBuilder, NemotronDiarizer (+LiveAPI shim), DiarizerModel
     AppleSpeechAssetInstaller.swift  Locale asset install via AssetInventory
     Format/                Shared rendering, cue splitting, VTT/SRT/JSON/TXT formatters
     Analyzer.swift         Silence detection
@@ -37,6 +38,7 @@ Sources/
     ConvertedAudioCache.swift  On-disk PCM cache with manifest sidecar
     HuggingFaceHub.swift   Remote model catalog client
     CatalogStore.swift     ~/.cache/superscribe/catalog.json
+    SuperscribePaths.swift Storage roots; all models under ~/.cache/superscribe/models/{parakeet,whisper,diarizer}
     ModelDownloader.swift  Bounded-parallel byte-stream downloader
     ModelInstaller.swift   Atomic stage-then-rename installer
     ModelRegistry.swift    Per-backend model id registry protocol
@@ -53,14 +55,14 @@ _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v1.0.8)
+## Subcommand Surface (v2.0.0)
 
 | Subcommand | Purpose |
 |---|---|
-| `transcribe` | Detect speech + run ASR; writes `transcript.superscribe.<backend>.json`. Also: `--create-input <dir>` (scan dir → template), `--input <file>` (load template) |
+| `transcribe` | Detect speech + run ASR; writes `transcript.superscribe.<backend>.json`. Also: `--mixed <path>` (diarized mixed track), `--create-input <dir>` (scan dir → template), `--input <file>` (load template; values are paths or `{file, diarize, speakers}` objects) |
 | `merge` | Read intermediate JSON → render VTT, SRT, JSON, or TXT |
 | `run` | `transcribe` + `merge` in one pass |
-| `model` | `--list`, `--remote`, `--download`, `--rm`, `--set-default`, `--refresh` |
+| `model` | `--list`, `--remote`, `--download`, `--rm`, `--set-default`, `--refresh`; `--diarizer` manages the diarizer model (`--list`/`--download`/`--rm`) |
 | `backend` | List backends and capabilities |
 | `cache` | Audio-conversion cache: info, `--list`, `--clear`, `--rm` |
 
@@ -144,14 +146,14 @@ Use `AGENTS.md` for current coding standards, conventions, and project decisions
 
 - Every new or changed line in `SuperscribeKit` must be covered by a test, or the change is not done.
 - Tests must be **CI-safe**: no downloaded whisper GGML models, no Hugging Face model fetches, no reliance on machine-local cache contents. Use test hooks and stubs (see v0.7.8–v0.7.9 entries).
-- Hardware integration tests live in `Tests/superscribeIntegrationTests/` and enter the package graph only with `SUPERSCRIBE_INTEGRATION_TESTS=1`. Supply `SUPERSCRIBE_INTEGRATION_AUDIO` and an already-installed `SUPERSCRIBE_INTEGRATION_MODEL`; invoke with `--filter ParakeetIntegrationTests`.
+- Hardware integration tests live in `Tests/superscribeIntegrationTests/` and enter the package graph only with `SUPERSCRIBE_INTEGRATION_TESTS=1`. Supply `SUPERSCRIBE_INTEGRATION_AUDIO` and an already-installed `SUPERSCRIBE_INTEGRATION_MODEL`; invoke with `--filter ParakeetIntegrationTests`. For the diarizer, install it (`model --diarizer --download nemotron-3-diarization`), supply a recording with two or more voices as `SUPERSCRIBE_INTEGRATION_MIXED_AUDIO`, and use `--filter NemotronDiarizerIntegrationTests`.
 - Core ML unit fixtures are repository-owned (`Tests/superscribeTests/Fixtures/Scalar.mlmodel`); compile into temporary storage. Never load undocumented system model bundles.
 - Mock URL sessions intercept every request and fail for missing handlers; await invalidation before unregistering handlers. Cancelled or failed download streams are closed before session cleanup.
 - Mutable test overrides use per-test task-local storage protected by a lock. Capture storage before entering synchronous framework callbacks. Default test scopes redirect model, catalog, and configuration storage to temporary directories. Keep the serial test runner during migration.
 - Apple Speech lifecycle orchestration lives in covered `AppleSpeechAssetInstaller`, `AppleSpeechInstallation`, and `AppleSpeechAnalysis`. The framework shim supplies injectable operations; failed analysis cancels the framework and joins result collection, and failed installation rolls back only a new reservation.
 - Coverage uses the selected SwiftPM build output and rejects missing, stale, or changed binary/profile pairs using a SHA-256 receipt. Swift Build and native SwiftPM binary layouts are supported.
 
-- **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusions: `WhisperLiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk), `AppleSpeechLiveAPI.swift` and `AppleSpeechTranscriberBridge.swift` (the same Speech framework calls and availability bridge previously housed together; unit tests use stub hooks in `AppleSpeechBackend.swift` and `AppleSpeechSupport.swift`).
+- **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusions: `WhisperLiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk), `AppleSpeechLiveAPI.swift` and `AppleSpeechTranscriberBridge.swift` (the same Speech framework calls and availability bridge previously housed together; unit tests use stub hooks in `AppleSpeechBackend.swift` and `AppleSpeechSupport.swift`), `NemotronDiarizerLiveAPI.swift` (FluidAudio Nemotron 3 Core ML calls; unit tests inject `NemotronDiarizer.openSession`).
 - If coverage drops, add tests or refactor untestable code into an excluded shim — never weaken the gate.
 
 ### GitHub CI
@@ -215,6 +217,21 @@ After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm
 
 <!-- {integration} -->
 
+### Speaker diarization (mixed tracks)
+
+- A `TrackInput` with `diarization` is a mixed track; `PipelineConfig.diarizer` must be set when any track is mixed (the pipeline throws `InputValidationError` otherwise). The CLI injects `NemotronDiarizer` through `PipelineRunner.Dependencies.makeDiarizer`, auto-installing the model first.
+- Mixed tracks skip silence detection. `NemotronDiarizer` streams `PreparedAudio.samples(in: Range<Int>)` in 30 s windows on a `BlockingWorker`; `SpeakerTurnBuilder` assigns each 10 ms frame to its most likely speaker at or above 0.5 (exclusive, so overlapping speech is transcribed once) and orders speakers by first appearance.
+- `SpeechTimeline.finalize` is the single post-processing for `Analyzer` and diarized turns: merge same-speaker gaps below `minSilenceDuration`, pad into at most half of the adjacent silence, drop runs below `minSegmentDuration`.
+- Each diarized speaker becomes a virtual `IntermediateTranscript.Track` (mapped name or global `Speaker N`, file = the mixed recording), so the intermediate format stays version 1 and `Merger`/renderers are unchanged. Duplicate names are allowed and merge speakers.
+- `DiarizerModel` takes repo, preset (`fast128`), and asset names from FluidAudio constants and installs a flattened `nemotron-3-diarization-fast128` folder under `SuperscribePaths.diarizerModelsDirectory()` with FluidAudio's weights-version marker; a marker mismatch reinstalls atomically. `ModelInstaller.installDiarizer`/`removeDiarizer` share `stageAndPublish` with ASR installs.
+- `DownloadProgress.backend` is optional (`nil` for the diarizer).
+
+### FluidAudio integration
+
+- All models live under `SuperscribePaths.modelsDirectory()` (`~/.cache/superscribe/models`) in `parakeet/`, `whisper/`, and `diarizer/`; tests redirect the single `overrideModelsDirectory`/`taskModelsDirectory` root. `AsrModels.load` resolves `parent/<Repo.folderName>`, so Parakeet install folder names must equal FluidAudio's folder names. Older installs (FluidAudio's Application Support folder, `~/Library/Caches/superscribe/whisper`) are not migrated.
+- superscribe owns every model download. `ParakeetBackend` sets `ModelHub.offlineMode = true` once before FluidAudio loads, so FluidAudio never downloads, purges, or replaces an installation (it would otherwise fetch missing files into the parent directory's repo folder).
+- Download streams that end in error are drained from a detached task: a cancelled caller's iterator throws before reading, and an unconsumed `URLSession.AsyncBytes` keeps its session from invalidating.
+
 ### Persistence and cancellation
 
 - Filesystem replacement uses atomic exclusive rename or swap; failed promotion preserves the destination. `AtomicReplacePolicy.replaceExisting` replaces the old remove-then-move policy.
@@ -224,7 +241,7 @@ After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm
 
 ## Model and persistence integrity
 
-- Parakeet installation accepts the descriptor's canonical repository and requires every model bundle plus vocabulary. Whisper installation checks nonempty regular files and known artifact size before taking its fast path.
+- Parakeet installation accepts the descriptor's canonical repository and requires every model bundle plus vocabulary. It downloads only those files (`ModelDescriptor.files(in:)` via `ModelDownloadFile.select`), matching what FluidAudio's `AsrModels.load` reads at the default `.int8` precision; catalog sizes count the same selection. `HuggingFaceHub.repoInfo` requests `blobs=true` so sibling sizes drive progress, disk preflight, and size validation. There is no whole-repository download path and no `RemoteModelInfo.subpath`. Whisper installation checks nonempty regular files and known artifact size before taking its fast path.
 - Downloads constrain paths to their roots, validate known byte sizes, and clean staging after failure. Explicit Whisper downloads repair incomplete files and missing encoders; installed binaries remain usable offline.
 - Atomic same-volume rename/swap preserves prior destinations on promotion failure. Cache, catalog, and preference read-modify-write transactions use filesystem locks; async callers acquire locks on the blocking-I/O worker.
 - Coverage receipts bind binary, profile, owned sources, tests, and package inputs. Edits during a run or stale report inputs require a new test run.
@@ -239,7 +256,7 @@ After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm
 
 ## Semantic Versioning
 
-The authoritative product version is `SuperscribeVersion.current` in `Sources/SuperscribeKit/SuperscribeVersion.swift`; CLI output and the HTTP user agent use it. Version 1.0.0 begins the authorized breaking API cleanup. `ParakeetBackend` construction now throws for unsupported models; aliases and model versions come from the descriptor table.
+The authoritative product version is `SuperscribeVersion.current` in `Sources/SuperscribeKit/SuperscribeVersion.swift`; CLI output and the HTTP user agent use it. Version 1.0.0 begins the authorized breaking API cleanup. Version 2.0.0 makes `DownloadProgress.backend` optional (user-approved breaking change). `ParakeetBackend` construction now throws for unsupported models; aliases and model versions come from the descriptor table.
 
 Automatically bump the project version after every code change and include it in the same commit. Load the `semantic-versioning` skill for the full PATCH/MINOR/MAJOR decision rules.
 

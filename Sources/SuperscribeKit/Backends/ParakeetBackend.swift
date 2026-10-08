@@ -5,8 +5,7 @@ import Foundation
 /// FluidAudio Parakeet TDT v3 backend for on-device speech-to-text.
 ///
 /// Uses the Apple Neural Engine for inference, keeping the GPU free.
-/// Models are downloaded automatically on first use and cached at
-/// `~/.cache/fluidaudio/Models/`.
+/// superscribe installs models under `~/.cache/superscribe/models/parakeet/`.
 public actor ParakeetBackend: Transcriber {
     @TaskLocal internal static var testState = TestDependencyStorage(TestState())
 
@@ -150,11 +149,17 @@ public actor ParakeetBackend: Transcriber {
         return mgr as any ParakeetASRSession
     }
 
+    /// superscribe owns model downloads; FluidAudio must never fetch, purge, or replace an installation.
+    private static let fluidAudioOfflineMode: Void = {
+        ModelHub.offlineMode = true
+    }()
+
     /// FluidAudio `AsrModels.load` wrapper (integration + fast-fail unit tests).
     internal static func loadAsrModelsFromFluidAudio(
         from installDir: URL,
         version: AsrModelVersion
     ) async throws -> AsrModels {
+        _ = Self.fluidAudioOfflineMode
         return try await AsrModels.load(from: installDir, version: version)
     }
 

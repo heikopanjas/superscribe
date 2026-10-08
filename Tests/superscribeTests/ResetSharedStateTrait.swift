@@ -20,28 +20,30 @@ struct ResetSharedStateTrait: SuiteTrait, TestTrait, TestScoping {
                         try await WhisperLiveAPI.$testState.withValue(TestDependencyStorage(WhisperLiveAPI.TestState())) {
                             try await AppleSpeechSupport.$testState.withValue(TestDependencyStorage(AppleSpeechSupport.TestState())) {
                                 try await ParakeetBackend.$testState.withValue(TestDependencyStorage(ParakeetBackend.TestState())) {
-                                    try await WhisperBackend.$testState.withValue(TestDependencyStorage(WhisperBackend.TestState())) {
-                                        if #available(macOS 26, *) {
-                                            try await AppleSpeechLiveAPI.$testState.withValue(
-                                                TestDependencyStorage(AppleSpeechLiveAPI.TestState())
-                                            ) {
-                                                try await AppleSpeechBackend.$testState.withValue(
-                                                    TestDependencyStorage(AppleSpeechBackend.TestState())
+                                    try await NemotronDiarizer.$testState.withValue(TestDependencyStorage(NemotronDiarizer.TestState())) {
+                                        try await WhisperBackend.$testState.withValue(TestDependencyStorage(WhisperBackend.TestState())) {
+                                            if #available(macOS 26, *) {
+                                                try await AppleSpeechLiveAPI.$testState.withValue(
+                                                    TestDependencyStorage(AppleSpeechLiveAPI.TestState())
                                                 ) {
-                                                    TestIsolation.resetSharedState()
-                                                    try await AppleSpeechLiveAPI.$releaseOperation.withValue(
-                                                        { _ in
-                                                            Issue.record("Unexpected Apple Speech locale release in a unit test")
-                                                        },
-                                                        operation: {
-                                                            try await TestIsolation.runInTemporaryStorage(function)
-                                                        })
+                                                    try await AppleSpeechBackend.$testState.withValue(
+                                                        TestDependencyStorage(AppleSpeechBackend.TestState())
+                                                    ) {
+                                                        TestIsolation.resetSharedState()
+                                                        try await AppleSpeechLiveAPI.$releaseOperation.withValue(
+                                                            { _ in
+                                                                Issue.record("Unexpected Apple Speech locale release in a unit test")
+                                                            },
+                                                            operation: {
+                                                                try await TestIsolation.runInTemporaryStorage(function)
+                                                            })
+                                                    }
                                                 }
                                             }
-                                        }
-                                        else {
-                                            TestIsolation.resetSharedState()
-                                            try await TestIsolation.runInTemporaryStorage(function)
+                                            else {
+                                                TestIsolation.resetSharedState()
+                                                try await TestIsolation.runInTemporaryStorage(function)
+                                            }
                                         }
                                     }
                                 }

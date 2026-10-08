@@ -24,20 +24,22 @@ struct SuperscribePathsTests {
         #expect(path.path == self.home().appendingPathComponent(".cache/superscribe/audio").path)
     }
 
-    @Test func whisperModelCacheDirectory() throws -> Void {
-        SuperscribePaths.overrideWhisperModelCacheDirectory = nil
-        let path = SuperscribePaths.whisperModelCacheDirectory()
-        let caches = (try #require(FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first))
-        #expect(path.path == caches.appendingPathComponent("superscribe/whisper").path)
+    @Test func modelsLiveUnderTheSuperscribeCache() -> Void {
+        SuperscribePaths.overrideModelsDirectory = nil
+        let models = self.home().appendingPathComponent(".cache/superscribe/models")
+        #expect(SuperscribePaths.modelsDirectory().path == models.path)
+        #expect(SuperscribePaths.parakeetModelsDirectory().path == models.appendingPathComponent("parakeet").path)
+        #expect(SuperscribePaths.whisperModelsDirectory().path == models.appendingPathComponent("whisper").path)
+        #expect(SuperscribePaths.diarizerModelsDirectory().path == models.appendingPathComponent("diarizer").path)
     }
 
-    @Test func fluidAudioModelsDirectory() throws -> Void {
-        SuperscribePaths.overrideFluidAudioModelsDirectory = nil
-        let path = SuperscribePaths.fluidAudioModelsDirectory()
-        let appSupport = (try #require(FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first))
-        #expect(
-            path.path
-                == appSupport.appendingPathComponent("FluidAudio/Models").path
-        )
+    @Test func taskLocalModelsDirectoryTakesPrecedence() async -> Void {
+        let override = URL(fileURLWithPath: "/override/models")
+        let task = URL(fileURLWithPath: "/task/models")
+        SuperscribePaths.overrideModelsDirectory = override
+        #expect(SuperscribePaths.modelsDirectory() == override)
+        SuperscribePaths.$taskModelsDirectory.withValue(task) {
+            #expect(SuperscribePaths.parakeetModelsDirectory().path == "/task/models/parakeet")
+        }
     }
 }

@@ -19,6 +19,11 @@ extension ParakeetBackend: ModelRegistry {
         internal let version: AsrModelVersion
         internal let bundles: Set<String>
         internal let vocabulary: String
+
+        /// The bundles and vocabulary FluidAudio loads; every other repository file is skipped.
+        internal func files(in siblings: [HuggingFaceHub.HFSibling]) -> [ModelDownloadFile] {
+            return ModelDownloadFile.select(from: siblings, bundles: self.bundles, files: [self.vocabulary])
+        }
     }
 
     public static let knownDescriptors: [ModelDescriptor] = [
@@ -26,7 +31,7 @@ extension ParakeetBackend: ModelRegistry {
             id: "v2", hfRepoBareName: "parakeet-tdt-0.6b-v2-coreml", installFolderName: "parakeet-tdt-0.6b-v2", aliases: [], version: .v2, bundles: ModelNames.ASR.requiredModels,
             vocabulary: ModelNames.ASR.vocabularyFile),
         .init(
-            id: "v3", hfRepoBareName: "parakeet-tdt-0.6b-v3-coreml", installFolderName: "parakeet-tdt-0.6b-v3", aliases: [], version: .v3, bundles: ModelNames.ASR.requiredModelsV3,
+            id: "v3", hfRepoBareName: "parakeet-tdt-0.6b-v3-coreml", installFolderName: "parakeet-tdt-0.6b-v3", aliases: [], version: .v3, bundles: ModelNames.ASR.requiredModelsV3(),
             vocabulary: ModelNames.ASR.vocabularyFile),
         .init(
             id: "tdt-ctc-110m", hfRepoBareName: "parakeet-tdt-ctc-110m-coreml", installFolderName: "parakeet-tdt-ctc-110m", aliases: ["tdtctc110m", "110m"], version: .tdtCtc110m,
@@ -44,10 +49,10 @@ extension ParakeetBackend: ModelRegistry {
         return descriptor
     }
 
-    /// HF repo bare name → short id (for catalog mapping).
-    public static let knownRepoAliases: [String: String] = Dictionary(
-        uniqueKeysWithValues: ParakeetBackend.knownDescriptors.map { ($0.hfRepoBareName, $0.id) }
-    )
+    /// Full HF repo id → descriptor; `nil` for repos superscribe does not support.
+    internal static func descriptor(forRepoId repoId: String) -> ModelDescriptor? {
+        return Self.knownDescriptors.first { "\(Self.huggingFaceAuthor)/\($0.hfRepoBareName)" == repoId }
+    }
 
     /// On-disk folder name → short id (for installed-model scan).
     public static let knownFolderAliases: [String: String] = Dictionary(
@@ -83,7 +88,7 @@ extension ParakeetBackend: ModelRegistry {
         return try Self.mapRepos(repos, sizes: sizes)
     }
 
-    /// Fetches total bytes + file counts for HF repos with bounded concurrency.
+    /// Fetches the download size and file count of each supported repo's selected files with bounded concurrency.
     static func fetchRepoSizes(
         for repos: [HuggingFaceHub.HFRepo],
         maxConcurrent: Int = ModelDownloader.maxParallelFiles,
@@ -94,13 +99,13 @@ extension ParakeetBackend: ModelRegistry {
             repoInfo ?? { repoId in
                 try await HuggingFaceHub.repoInfo(repoId: repoId, session: session)
             }
+        let supported = repos.compactMap { repo in Self.descriptor(forRepoId: repo.id).map { (repo.id, $0) } }
         let pairs = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(
             limit: maxConcurrent,
-            items: repos
-        ) { repo in
-            let info = try await resolveInfo(repo.id)
-            let total = info.siblings.reduce(0 as Int64) { $0 + ($1.size ?? 0) }
-            return (repo.id, total > 0 ? total : nil, info.siblings.count)
+            items: supported
+        ) { repoId, descriptor in
+            let files = descriptor.files(in: try await resolveInfo(repoId).siblings)
+            return (repoId, ModelDownloadFile.totalSize(of: files), files.count)
         }
         var sizes: [String: (totalBytes: Int64?, fileCount: Int?)] = [:]
         for (repoId, total, count) in pairs {
@@ -109,12 +114,11 @@ extension ParakeetBackend: ModelRegistry {
         return sizes
     }
 
-    /// On-disk location for an installed Parakeet model.
-    /// Matches FluidAudio's `defaultCacheDirectory` so previously-downloaded
-    /// models continue to work without migration.
+    /// On-disk location for an installed Parakeet model. FluidAudio loads `parent/<Repo.folderName>`,
+    /// so every descriptor's install folder name must equal FluidAudio's folder name.
     public static func installPath(for modelId: String) throws -> URL {
         let folder = try Self.installFolderName(for: modelId)
-        return Self.fluidAudioCacheDirectory().appendingPathComponent(folder, isDirectory: true)
+        return SuperscribePaths.parakeetModelsDirectory().appendingPathComponent(folder, isDirectory: true)
     }
 
     /// Short id → on-disk folder name. Unknown ids throw.
@@ -128,7 +132,7 @@ extension ParakeetBackend: ModelRegistry {
     }
 
     public static func installedModels() throws -> [InstalledModelInfo] {
-        let dir = Self.fluidAudioCacheDirectory()
+        let dir = SuperscribePaths.parakeetModelsDirectory()
         guard SuperscribeFS.isExistingDirectory(at: dir) == true else {
             return []
         }
@@ -146,13 +150,6 @@ extension ParakeetBackend: ModelRegistry {
         .sortedById()
     }
 
-    /// FluidAudio's on-disk cache root for ASR models, matching
-    /// `MLModelConfigurationUtils.defaultModelsDirectory()`:
-    /// `~/Library/Application Support/FluidAudio/Models/`.
-    public static func fluidAudioCacheDirectory() -> URL {
-        return SuperscribePaths.fluidAudioModelsDirectory()
-    }
-
     // MARK: - Pure helpers (testable)
 
     /// Map a list of HF repos (and their pre-fetched size info) to
@@ -162,13 +159,11 @@ extension ParakeetBackend: ModelRegistry {
         sizes: [String: (totalBytes: Int64?, fileCount: Int?)] = [:]
     ) throws -> [RemoteModelInfo] {
         return try repos.compactMap { repo -> RemoteModelInfo? in
-            let bareName = repo.id.split(separator: "/").last.map(String.init) ?? repo.id
-            guard repo.id == "\(Self.huggingFaceAuthor)/\(bareName)", let shortId = Self.knownRepoAliases[bareName] else { return nil }
+            guard let descriptor = Self.descriptor(forRepoId: repo.id) else { return nil }
             let sizeInfo = sizes[repo.id] ?? (nil, nil)
             return RemoteModelInfo(
-                id: shortId,
+                id: descriptor.id,
                 repoId: repo.id,
-                subpath: nil,
                 totalSizeBytes: sizeInfo.totalBytes,
                 fileCount: sizeInfo.fileCount,
                 lastModified: repo.lastModified,
