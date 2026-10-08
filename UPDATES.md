@@ -4,6 +4,15 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-10-08 (v2.0.0, 18:39 readme audit)
+
+- corrected mixed-track flow, bounded padding, absolute backend timestamps, speaker numbering, and silence-threshold tuning against the implementation
+- clarified runtime versus build requirements, input-option restrictions, remote catalog behavior, and local package bootstrap requirements for library users
+- removed the stale product version, duplicate option/component references, repeated bootstrap instructions, and unsupported comparison with other transcription tools
+- linked development details to `AGENTS.md` so coverage exclusions and integration requirements have one authoritative reference
+- rationale: keep user-facing documentation accurate for 2.0.0 and reduce duplicated details that can drift
+- version: unchanged at 2.0.0 (documentation only, no code change)
+
 ### 2026-10-08 (v2.0.0, 13:40 selective parakeet downloads)
 
 - parakeet installs download only the descriptor's core ml bundles plus vocabulary, exactly what fluidaudio 0.17.7 `AsrModels.load` reads at `.int8`; repos also carry encoder variants, `.mlpackage` sources, and `mlpackages/`

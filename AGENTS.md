@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-10-08 (v2.0.0, selective Parakeet downloads)
+**Last updated:** 2026-10-08 (v2.0.0, README audit)
 
 <!-- {mission} -->
 
@@ -129,6 +129,8 @@ Use `AGENTS.md` for current coding standards, conventions, and project decisions
 5. **Code Review**: [Describe your code review process]
 6. **Date Changes**: Update the "Last updated" timestamp in this file when making changes
 7. **Log Updates**: Add entries to `UPDATES.md` using the `recent-updates` skill
+
+`README.md` documents user-facing behavior and source-build requirements. Keep one command-option reference per subcommand and link to this file for detailed testing policies and coverage exclusions; use `superscribe --version` instead of duplicating the current product version in prose.
 
 ### Test Coverage (mandatory)
 

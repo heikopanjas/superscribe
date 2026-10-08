@@ -1,28 +1,33 @@
 # superscribe
 
-Transcribe multi-track podcast recordings into time-aligned VTT, SRT, JSON, or TXT output. Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a subtitle file ready for editing or publishing.
+Transcribe podcast recordings into time-aligned VTT, SRT, JSON, or TXT output. Use isolated tracks for named speakers, mixed recordings with on-device speaker diarization, or both. superscribe transcribes speech segments in parallel, aligns the results on a shared timeline, and merges them into output ready for editing or publishing.
 
 Core logic lives in **SuperscribeKit**, a Swift library you can import from your own macOS apps; the `superscribe` CLI is a thin wrapper around it.
 
 ## Requirements
 
-- macOS 14 or later
-- Apple Silicon (M1 or later) — Parakeet and whisper.cpp use Neural Engine / Metal GPU acceleration
-- macOS 26 or later — required only for the **Apple Speech** backend (`appleSpeech`); Parakeet and whisper.cpp run on macOS 14+
+Runtime:
+
+- macOS 14 or later on Apple Silicon (M1 or later)
+- macOS 26 or later for the **Apple Speech** backend (`appleSpeech`)
+
+Building from source also requires:
+
 - Swift 6.2 or later (Xcode 26 or later)
 - `cmake` and `ninja` — required once to build the whisper.cpp xcframework (`brew install cmake ninja`)
 
 ## Quick start
 
 ```sh
-# 1. Build the whisper.cpp static xcframework (one-time, ~2 min)
+# 1. Build the whisper.cpp static xcframework (one-time)
 ./_scripts/bootstrap.sh
 
 # 2. Build superscribe
 swift build -c release
+export PATH="$(swift build -c release --show-bin-path):$PATH"
 
 # 3. Transcribe two tracks and produce a VTT file
-"$(swift build -c release --show-bin-path)/superscribe" run \
+superscribe run \
   --track Alice=alice.wav \
   --track Bob=bob.wav \
   --language en \
@@ -31,13 +36,13 @@ swift build -c release
 
 Parakeet and whisper.cpp models download automatically on first use (progress on stderr). Apple Speech requires macOS 26+ and also installs locale assets automatically on first use; `model --download` is optional when you want to pre-install a model or locale.
 
-Check the version with `superscribe --version` (currently **1.0.8**).
+The PATH change applies to the current shell. Check the installed version with `superscribe --version`.
 
 ## Speech detection and time-sliced transcription
 
-Most transcription tools assume a single mixed recording and run the recognizer over the entire file. **superscribe is built for multi-track podcast production:** each guest or host is recorded on an isolated track, so speaker identity comes from the file mapping — no diarization step, no guessing who spoke when. When speakers share a microphone, a mixed recording can still be added with `--mixed`; see [Mixed recordings](#mixed-recordings-speaker-diarization).
+For isolated tracks, speaker identity comes from the file mapping. For shared-microphone recordings, use `--mixed` to infer speakers; see [Mixed recordings](#mixed-recordings-speaker-diarization).
 
-The second major difference is **silence-aware time slicing.** Long stretches of a track are often silent (a guest who is not talking, room tone between takes, music beds on other channels). Running ASR on those regions wastes time and can produce hallucinated text from noise. superscribe scans each track first, finds where speech actually occurs, and sends **only those windows** to the model. Word timestamps are mapped back onto the full episode timeline so merge still produces one coherent subtitle file.
+**Silence-aware time slicing** avoids running ASR over long silent stretches. superscribe uses energy-based detection on isolated tracks and speaker activity on mixed tracks, then transcribes only the resulting speech spans. Word timestamps are mapped back onto the full recording timeline.
 
 ### End-to-end flow
 
@@ -45,8 +50,12 @@ The second major difference is **silence-aware time slicing.** Long stretches of
 flowchart TB
   subgraph per_track ["Per track (bounded conversion)"]
     A[Source file] --> B[Convert to 16 kHz mono f32 PCM]
-    B --> C[Windowed silence detection on PCM file]
+    B --> K{Track type}
+    K -->|Isolated| C[Windowed silence detection]
+    K -->|Mixed| L[Nemotron speaker diarization]
     C --> D["List of SpeechSegment start/end"]
+    L --> M[Virtual track per speaker]
+    M --> D
   end
   subgraph transcribe ["Per speech segment (bounded parallel)"]
     D --> E[Slice PCM for segment]
@@ -54,28 +63,18 @@ flowchart TB
     F --> G[Words with absolute timestamps]
   end
   subgraph merge_phase ["All tracks"]
-    G --> H[Intermediate JSON per track]
+    G --> H[Intermediate transcript containing all tracks]
     H --> I[Flatten + sort by time]
     I --> J[Merge → VTT / SRT / JSON / TXT]
   end
 ```
 
 1. **Convert** — Each track is read through AVFoundation and normalized to the backend format (today: **16 kHz, mono, 32-bit float PCM**). Conversion can be cached under `~/.cache/superscribe/audio/` so repeat runs skip re-decoding.
-2. **Detect** — The prepared PCM file is analyzed in bounded windows for speech spans (`Analyzer` in `Sources/SuperscribeKit/Analyzer.swift`). Boundaries are in **seconds on the full track timeline**, not relative to each slice.
-3. **Slice and transcribe** — For each span, `AudioPreparer` reads only the active segment samples, the backend runs inference on that chunk only, and token/word times are shifted by the segment’s `start` so they line up with the original recording.
-4. **Merge** — Per-track JSON is combined chronologically across speakers (overlap policies, paragraph breaks, cue formatting). Silence detection does not run again at merge time.
+2. **Detect or diarize** — Find speech spans using `Analyzer` for isolated tracks or `NemotronDiarizer` for mixed tracks. Boundaries are in **seconds on the full track timeline**, not relative to each slice.
+3. **Slice and transcribe** — `PreparedAudio` reads the active segment samples, and the backend converts its slice-relative model timings to absolute track timestamps.
+4. **Merge** — The intermediate transcript is combined chronologically across speakers (overlap policies, paragraph breaks, cue formatting). Detection and diarization do not run again at merge time.
 
-Conversion and detection use at most **2** workers by default. PCM lives in cache files or temporary files that are removed when the pipeline exits. Segments across all tracks share one global limit of **2** concurrent ASR calls. A Whisper context has exclusive access on its own serial worker; it is never shared by concurrent C inference calls.
-
-### Why isolated tracks plus slicing matters
-
-| Approach | Speaker attribution | Silent regions |
-|---|---|---|
-| Single mixed file + diarization | Model must infer who spoke | Full duration transcribed |
-| **superscribe (per-track + slicing)** | Track name = speaker | Skipped before ASR |
-| **superscribe `--mixed`** | On-device diarizer separates up to 8 voices | Skipped before ASR |
-
-Example: a 45-minute episode with two hosts might have a 40-minute “Alice” file where she speaks for 12 minutes and a “Bob” file that is mostly silence until his segment. Diarization on a mix still processes ~45 minutes of audio; superscribe might run ASR on ~12 + ~8 minutes total across both tracks.
+Preparation (conversion plus detection or diarization) handles at most **2** input tracks at once by default. Cached PCM persists; uncached temporary PCM is removed when its final owner releases it. Segments across all tracks share one global limit of **2** concurrent ASR calls. A Whisper context has exclusive access on its own serial worker; it is never shared by concurrent C inference calls.
 
 ### Mixed recordings (speaker diarization)
 
@@ -86,7 +85,11 @@ A track passed with `--mixed path` (or marked `"diarize": true` in the mapping f
 3. Turns are smoothed with the same `--min-silence`, `--padding`, and minimum-segment rules as silence detection; padding never crosses into a neighbor's turn.
 4. Every diarized speaker becomes its own track in the intermediate transcript, so merging and all output formats work unchanged.
 
-Speakers are numbered `Speaker 1…N` in order of first appearance (numbering continues across several mixed tracks). Name them in the mapping file with `"speakers"`, in order of first appearance; mapping two slots to the same name merges them. Mixed and isolated tracks can be combined in one session.
+Name speakers in the mapping file with `"speakers"`, in order of first appearance; mapping two slots to the same name merges them. Unnamed speakers receive consecutive `Speaker 1…N` labels across all mixed tracks. Mixed and isolated tracks can be combined in one session.
+
+```sh
+superscribe run --mixed panel.wav --language en > panel.vtt
+```
 
 The diarizer model (~190 MiB, `FluidInference/nemotron-3-diarization-coreml`, OpenMDW-1.1) downloads into `~/.cache/superscribe/models/diarizer/` on the first mixed run, or ahead of time with `superscribe model --diarizer --download nemotron-3-diarization`.
 
@@ -100,9 +103,9 @@ Detection is **energy-based**, not ML-based: fast, deterministic, and tunable fr
 
 **Step 3 — Merge short gaps.** Regions separated by less than `--min-silence` (default **0.5 s**) are merged into a single segment. Brief pauses inside a sentence therefore do not split transcription into dozens of tiny calls.
 
-**Step 4 — Padding.** Each merged region is expanded by `--padding` (default **0.15 s**) before and after, then clamped to `[0, track duration]`. Padding reduces clipped plosives and trailing consonants at segment edges.
+**Step 4 — Padding.** Each merged region is expanded by up to `--padding` (default **0.15 s**) before and after, capped at half of the adjacent silence and clamped to `[0, track duration]`. Padding reduces clipped consonants without making neighboring segments overlap.
 
-**Step 5 — Drop noise bursts.** Regions shorter than **0.1 s** (`minSegmentDuration` in code, not exposed on the CLI) are discarded as clicks or glitches.
+**Step 5 — Drop short segments.** Padded regions shorter than **0.1 s** (`minSegmentDuration` in code, not exposed on the CLI) are discarded.
 
 The result is an ordered list of `SpeechSegment` values `{ start, end }` in seconds. When you transcribe, superscribe writes an **intermediate transcript** (default `transcript.superscribe.<backend>.json`). Its `metadata` block includes an `analyzer` object with `silence_threshold_db`, `min_silence`, and `padding` so you can see exactly which detection settings were used when you merge later.
 
@@ -111,10 +114,9 @@ The result is an ordered list of `SpeechSegment` values `{ start, end }` in seco
 For each `SpeechSegment`:
 
 1. **Slice** — `PreparedAudio.samples(in:)` maps `start`/`end` to sample indices and reads that subrange from the prepared file.
-2. **Transcribe** — The backend receives only those samples. All backends return token- or word-level times **relative to the start of the slice** (offset 0).
-3. **Re-anchor** — Superscribe adds the segment’s `start` time to every word (via `TokenAccumulator` / result mapping) so the intermediate file uses **absolute** times on the track clock — the same clock used when merging multiple speakers into one timeline.
+2. **Transcribe and re-anchor** — The backend receives only those samples and adds the segment’s `start` to model timings when mapping its result. The `Transcriber` API returns **absolute** word times on the track clock, which are stored directly in the intermediate file.
 
-Segment boundaries in the JSON (`start` / `end`) come from the analyzer; word timestamps usually sit inside that range but can extend slightly when the model’s internal alignment differs from the energy detector.
+Segment boundaries in the JSON (`start` / `end`) come from detection or diarization. Word timestamps usually sit inside that range but can extend slightly when model alignment differs.
 
 ### What gets omitted
 
@@ -123,32 +125,13 @@ After transcription, the pipeline drops:
 - **Segments with no words** — e.g. breath, FX, or music that crossed the RMS threshold but produced no ASR output.
 - **Entire tracks with no surviving segments** — typical for FX or noise-only stems.
 
-Those tracks do not appear in the intermediate transcript. This keeps merge output clean but means very quiet speech or heavily compressed audio may need a lower `--silence-threshold` (more negative, e.g. `−50`) or more `--padding`.
+Those tracks do not appear in the intermediate transcript.
 
-### Tuning flags (`transcribe` / `run`)
+### Tuning detection
 
-| Flag | Default | Effect |
-|---|---|---|
-| `--silence-threshold` | `−40` dB | Lower (e.g. `−50`) = more sensitive, more segments; higher (e.g. `−30`) = stricter, fewer segments |
-| `--min-silence` | `0.5` s | Require a longer gap before splitting one speech region into two |
-| `--padding` | `0.15` s | Extra audio included before/after each detected region |
-| `--verbose` | off | Currently accepted but unused; conversion and segment progress are always shown on stderr |
-
-Studio vocals on isolated tracks often work well at the defaults. Noisy rooms, distant mics, or bleed from other speakers may need a lower threshold. Very dense back-and-forth with short pauses may need a smaller `--min-silence` so turns split into separate ASR calls (more accurate boundaries, more overhead).
+On isolated tracks, lower `--silence-threshold` (e.g. `-50`) if quiet speech is missed; raise it (e.g. `-30`) if noise or microphone bleed causes false detections. Reduce `--min-silence` to split at shorter pauses, or increase `--padding` to include more audio at segment edges. Mixed tracks use the diarizer's activity threshold, so `--silence-threshold` does not affect them; `--min-silence` and `--padding` still apply. See the [option reference](#transcribe) for defaults.
 
 `transcribe` and `run` currently always emit progress on stderr: conversion lines such as `Converting alice.wav [42%]`, then segment lines such as `[Alice] segment 3/12  —  overall 7/18 (38%)`.
-
-### Library entry points
-
-| Component | Role |
-|---|---|
-| `Analyzer` / `AnalyzerConfig` | Speech span detection |
-| `AudioPreparer` | Convert, cache, and slice PCM |
-| `TranscribePipeline` | Orchestrates detect (or diarize) → slice → transcribe |
-| `Diarizer` / `NemotronDiarizer` / `DiarizerModel` | Speaker activity for mixed tracks (`TrackInput.diarization`) |
-| `Merger` | Cross-speaker timeline (separate from detection) |
-
-Implementations: `Sources/SuperscribeKit/Analyzer.swift`, `AudioPreparer.swift`, `TranscribePipeline.swift`, `Merger.swift`.
 
 ## Backends
 
@@ -171,10 +154,10 @@ superscribe model --set-default large-v3-turbo --backend whisper.cpp
 |---|---|
 | `v3` | Multilingual TDT (default) |
 | `v2` | English-only TDT |
-| `tdt-ctc-110m` | Compact 110M CTC model |
+| `tdt-ctc-110m` | Compact 110M TDT/CTC model |
 | `tdt-ja` | Japanese |
 
-The descriptor table is authoritative: unknown repositories and model identifiers are rejected.
+Only these supported model families are offered in the catalog; unknown model identifiers are rejected.
 
 ### whisper.cpp models
 
@@ -197,15 +180,13 @@ superscribe run \
 
 Default intermediate output: `transcript.superscribe.appleSpeech.json`. The `metadata.backend` field uses the same string (`appleSpeech`).
 
-On macOS versions below 26, `superscribe backend` shows `appleSpeech  (requires macOS 26+)`. The package still builds on macOS 14; selecting Apple Speech on an unsupported OS fails with a clear error.
+Selecting Apple Speech on macOS versions below 26 fails with a clear error.
 
-`--prompt` is accepted on the CLI and stored in configuration, but it is ignored at Apple Speech inference time. Use `model --rm <locale> --backend appleSpeech` to release a locale allocation when you hit system limits.
-
-`backend --capabilities` prints the resolved backend display name. For example, Parakeet appears as a concrete model family such as `Parakeet TDT v3 (FluidAudio)`.
+Use `model --rm <locale> --backend appleSpeech` to release a locale reservation when you hit system limits.
 
 ## Configuration and storage
 
-User defaults (backend, model) persist to `~/.config/superscribe/config.json`.
+User defaults persist in the configuration file below.
 
 | What | Location |
 |---|---|
@@ -218,7 +199,7 @@ User defaults (backend, model) persist to `~/.config/superscribe/config.json`.
 | Speaker diarizer | `~/.cache/superscribe/models/diarizer/nemotron-3-diarization-fast128/` |
 | Apple Speech locales | System-managed via `AssetInventory` (install marker: `apple-speech://locale/<id>`) |
 
-superscribe downloads every model itself; FluidAudio runs in offline mode and never fetches or replaces files.
+superscribe owns Parakeet, whisper.cpp, and diarizer downloads; Apple Speech assets are system-managed. FluidAudio runs in offline mode and never fetches or replaces files.
 
 **Upgrading from 1.x:** models now live under `~/.cache/superscribe/models` and are downloaded again on first use. Earlier installs are no longer read and can be deleted: superscribe's folders in `~/Library/Application Support/FluidAudio/Models` (`parakeet-tdt-0.6b-v2`, `parakeet-tdt-0.6b-v3`, `parakeet-tdt-ctc-110m`, `parakeet-ja`) and `~/Library/Caches/superscribe/whisper`. Leave other folders in the FluidAudio directory alone if another app uses FluidAudio.
 
@@ -241,18 +222,20 @@ superscribe transcribe \
 |---|---|---|
 | `--track name=path` | — | Speaker track; repeatable (required unless `--mixed`, `--input`, or `--create-input`) |
 | `--mixed path` | — | Mixed multi-speaker recording, diarized into `Speaker 1…N`; repeatable, combinable with `--track` |
-| `--input file` | — | Load track mapping JSON from `--create-input` |
+| `--input file` | — | Load a track mapping JSON file |
 | `--create-input dir` | — | Scan directory → write `tracks.superscribe.json` in cwd |
 | `--backend` | configured default | `parakeet`, `whisper.cpp`, or `appleSpeech` |
 | `--model` | configured default | Model variant (see [Backends](#backends)); Apple Speech locale id |
 | `--language` | auto-detect | ISO language code (e.g. `en`, `de`, `ja`); does not affect `appleSpeech` recognition, but may appear in intermediate metadata |
 | `--prompt` | — | Context hint for `whisper.cpp`; accepted but ignored for Parakeet and `appleSpeech` |
-| `--output` | `transcript.superscribe.<backend>.json` | Intermediate path (`<backend>` is the raw flag value, e.g. `appleSpeech`) |
-| `--silence-threshold` | `-40.0` dB | Silence detection threshold |
+| `--output` | `transcript.superscribe.<backend>.json` | Intermediate path (`<backend>` is the resolved backend, e.g. `appleSpeech`) |
+| `--silence-threshold` | `-40.0` dB | Energy threshold for isolated tracks; unused for mixed tracks |
 | `--min-silence` | `0.5` s | Minimum gap to count as silence |
-| `--padding` | `0.15` s | Padding around speech segments |
+| `--padding` | `0.15` s | Padding around speech segments, capped at half the adjacent silence |
 | `--verbose` | off | Currently accepted but unused; progress is always shown on stderr |
 | `--no-cache` | off | Disable the audio conversion cache |
+
+`--input` cannot be combined with `--track` or `--mixed`. `--create-input` cannot be combined with any of those input options. Relative paths in mapping files resolve against the current working directory; absolute paths stay absolute.
 
 **Directory workflow**
 
@@ -315,11 +298,11 @@ superscribe merge transcript.superscribe.whisper.cpp.json \
 - TXT writes `Speaker: text` runs with blank lines at paragraph breaks. With word output, each word is prefixed by `[HH:MM:SS.mmm]`.
 - JSON emits a version-1 document with a `segments` array. Each segment has `speaker`, numeric-second `start`/`end`, `text`, `paragraphBreak`, `overlap`, and complete `words`. Keys are sorted deterministically.
 
-`merge` and `run` use the same renderer. Invalid transcript versions, nonfinite timestamps, reversed intervals, and invalid numeric options throw before rendering. Absolute track mapping paths stay absolute; relative paths resolve against the current working directory.
+`merge` and `run` use the same renderer. Invalid transcript versions, nonfinite timestamps, reversed intervals, and invalid numeric options throw before rendering.
 
 ### `run`
 
-Transcribe and merge in one pass. Accepts `transcribe` and `merge` options **except** `--create-input` and `--input` (those are `transcribe`-only; use `--track` or run `transcribe` first).
+Transcribe and merge in one pass. Accepts `transcribe` and `merge` options **except** `--create-input` and `--input` (those are `transcribe`-only; use `--track` / `--mixed`, or run `transcribe` followed by `merge`).
 
 ```sh
 superscribe run \
@@ -374,7 +357,7 @@ superscribe model --diarizer --rm nemotron-3-diarization --yes
 |---|---|
 | `--backend` | Target backend (defaults to configured backend) |
 | `--list` | List models (implicit default) |
-| `--remote` | Include remote catalog entries |
+| `--remote` | Show the remote catalog; with explicit `--list`, use the cache; alone, refresh first |
 | `--refresh` | Re-fetch the catalog only; combine with `--list --remote` to refresh and print remote entries |
 | `--download <id>` | Install a model (HF download or Apple Speech locale asset) |
 | `--rm <id>` | Remove an installed model or release a locale (`--yes` to skip confirmation) |
@@ -399,7 +382,7 @@ superscribe backend --capabilities   # alias: --caps
 |---|---|
 | `--list` | List backends (implicit default) |
 | `--set-default <backend>` | Persist default backend to config |
-| `--capabilities` / `--caps` | Print audio format and default model for the configured backend |
+| `--capabilities` / `--caps` | Print the resolved model's backend display name, audio format, and built-in default model |
 
 `appleSpeech` is annotated with `(requires macOS 26+)` when the host OS is below 26.
 
@@ -417,7 +400,7 @@ superscribe cache --clear --yes
 
 ## Intermediate format
 
-`transcribe` writes a `transcript.superscribe.<backend>.json` file with raw per-track results. The `<backend>` segment matches the CLI flag value (`parakeet`, `whisper.cpp`, or `appleSpeech`). Tracks with no speech and segments with no words are omitted. A top-level `session` field may be present when set by library callers.
+The intermediate document has version 1 and contains results for every surviving track. Diarized speakers appear as separate tracks referencing the same mixed source file. A top-level `session` field may be present when set by library callers.
 
 ```json
 {
@@ -454,7 +437,9 @@ superscribe cache --clear --yes
 
 ## Using SuperscribeKit in a Swift app
 
-Add the package to your `Package.swift` and import `SuperscribeKit`:
+The package references a local, generated whisper.cpp xcframework. Clone the repository and run `_scripts/bootstrap.sh` before adding that checkout as a local package dependency (`.package(path: "/path/to/superscribe")`). Add the `SuperscribeKit` product to your target's dependencies, then import it. See [Building the whisper.cpp xcframework](#building-the-whispercpp-xcframework).
+
+Given an input URL `audioURL`, run the following from an async context:
 
 ```swift
 import SuperscribeKit
@@ -481,17 +466,13 @@ let vtt = try TranscriptRenderer.render(
 
 `audioCache` is opt-in for library callers; pass `ConvertedAudioCache()` to match the CLI default. See `Sources/SuperscribeKit/` for `TranscribePipeline`, `Analyzer`, `Merger`, and backends. The CLI under `Sources/superscribe/` demonstrates model install, `BackendManager`, and formatters.
 
+For mixed inputs, set `TrackInput.diarization` to `TrackDiarization(speakerNames: [...])` and supply `try NemotronDiarizer()` as `PipelineConfig.diarizer`. Install the diarizer model first; a mixed input without a configured diarizer throws.
+
 ## Building the whisper.cpp xcframework
 
-The xcframework is not in the repository (gitignored). Build it once before the first `swift build`:
+The [quick start](#quick-start) runs `_scripts/bootstrap.sh` before SwiftPM. The script downloads whisper.cpp v1.7.5, compiles with CMake/Ninja for `arm64` with **Metal and Core ML in a single static archive**, and produces the gitignored `whisper-build/whisper.xcframework`. Re-running is a no-op if the xcframework already exists. After a whisper build change, delete `whisper-build/` and run the script again.
 
-```sh
-./_scripts/bootstrap.sh
-```
-
-The script downloads whisper.cpp v1.7.5, compiles with CMake/Ninja for `arm64` with **Metal and Core ML in a single static archive**, and produces `whisper-build/whisper.xcframework`. Re-running is a no-op if the xcframework already exists. After upgrading superscribe when the whisper build changes, delete `whisper-build/` and re-run.
-
-CPU compilation uses `GGML_NATIVE=OFF` and an explicit M1-compatible `armv8.4-a+dotprod+fp16` target. This keeps binaries independent of the build host and avoids GGML's inconsistent native `i8mm` detection on GitHub runners. Metal and Core ML remain enabled. Bootstrap changes must be verified with a fresh whisper build, not just the existing-xcframework fast path.
+CPU compilation uses `GGML_NATIVE=OFF` and an explicit M1-compatible `armv8.4-a+dotprod+fp16` target so binaries remain independent of the build host.
 
 The first transcription with a newly installed Core ML encoder bundle may be slow while macOS compiles the graph for the Neural Engine.
 
@@ -524,7 +505,7 @@ _scripts/
 
 ## Development
 
-Swift Testing parallelizes suites by default; this project uses shared hooks and path overrides, so run tests **serially**:
+Run the isolated unit suite **serially**, as required by the project's test harness:
 
 ```sh
 _scripts/test.sh
@@ -532,15 +513,13 @@ _scripts/test.sh
 swift test --no-parallel -Xswiftc -strict-concurrency=complete
 ```
 
-Plain `swift test` (parallel) can flake on hook/network mock tests.
-
 Coverage gate (SuperscribeKit line **and** region coverage must stay at 100%):
 
 ```sh
 _scripts/coverage.sh --run-tests
 ```
 
-The gate excludes `WhisperLiveAPI.swift`, `AppleSpeechLiveAPI.swift`, and `AppleSpeechTranscriberBridge.swift`; those files isolate live C/Speech framework paths that require real models, macOS 26+ APIs, or system-managed assets. Unit tests exercise the coverable shims and stubs around them.
+Unit tests use stubs and repository-owned fixtures without downloading models or relying on local caches. Hardware integration tests are opt-in via `SUPERSCRIBE_INTEGRATION_TESTS=1` and require supplied audio and installed models. See [AGENTS.md](AGENTS.md#test-coverage-mandatory) for the integration commands, documented coverage exclusions, and coverage receipt rules.
 
 ## License
 
