@@ -27,10 +27,10 @@ public struct AudioPreparer: Sendable {
 
     /// A persistent cache hit is reused; otherwise conversion is staged beside its destination.
     public func prepare(
-        url: URL, onProgress: (@Sendable (ConversionProgress) -> Void)? = nil,
+        url: URL, cacheKey: ConvertedAudioCache.CacheKey? = nil, onProgress: (@Sendable (ConversionProgress) -> Void)? = nil,
         checkCancellation: () throws -> Void = {}
     ) throws -> PreparedAudio {
-        do { return try self.prepareCached(url: url, onProgress: onProgress, checkCancellation: checkCancellation) }
+        do { return try self.prepareCached(url: url, cacheKey: cacheKey, onProgress: onProgress, checkCancellation: checkCancellation) }
         catch {
             guard self.cache != nil else { throw error }
             try checkCancellation()
@@ -38,24 +38,15 @@ public struct AudioPreparer: Sendable {
         }
     }
 
-    private func prepareCached(url: URL, onProgress: (@Sendable (ConversionProgress) -> Void)?, checkCancellation: () throws -> Void) throws -> PreparedAudio {
+    private func prepareCached(
+        url: URL, cacheKey: ConvertedAudioCache.CacheKey?, onProgress: (@Sendable (ConversionProgress) -> Void)?, checkCancellation: () throws -> Void
+    ) throws -> PreparedAudio {
         try AudioValidation.validate(self.targetFormat)
         try checkCancellation()
-        let key = self.cache?.key(for: url, targetFormat: self.targetFormat)
-        if let cache = self.cache, let key, let cached = cache.lookup(key) {
-            do {
-                let prepared = try PreparedAudio(url: cached, format: self.targetFormat, temporary: false)
-                // Verify the tail is readable before trusting a cached container's advertised length.
-                _ = try prepared.samples(
-                    in: SpeechSegment(
-                        start: max(0, Double(prepared.frameCount - 1) / Double(self.targetFormat.sampleRate)), end: Double(prepared.frameCount) / Double(self.targetFormat.sampleRate)))
-                onProgress?(ConversionProgress(source: url, framesProcessed: prepared.frameCount, framesTotal: prepared.frameCount, fraction: 1))
-                return prepared
-            }
-            catch {
-                try? FileManager.default.removeItem(at: cached)
-                try? cache.updateManifest(removingDigest: key.digest)
-            }
+        let key = cacheKey ?? self.cache?.key(for: url, targetFormat: self.targetFormat)
+        if let cache = self.cache, let key, let prepared = try cache.preparedAudio(for: key, format: self.targetFormat) {
+            onProgress?(ConversionProgress(source: url, framesProcessed: prepared.frameCount, framesTotal: prepared.frameCount, fraction: 1))
+            return prepared
         }
         let destination: URL
         if let cache = self.cache, let key {
@@ -89,7 +80,7 @@ public struct AudioPreparer: Sendable {
         do { file = try AVAudioFile(forReading: url) }
         catch { throw AudioPreparerError.cannotReadFile(url, underlying: error) }
         let format = try AudioBuffers.format(self.targetFormat)
-        let output = try AVAudioFile(forWriting: destination, settings: format.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        let output = try AVAudioFile(forWriting: destination, settings: AudioBuffers.fileSettings(for: format), commonFormat: .pcmFormatFloat32, interleaved: false)
         try StreamingAudioConverter.convert(file: file, to: format, checkCancellation: checkCancellation) { buffer in
             try output.write(from: buffer)
             if file.length > 0, file.framePosition < file.length {

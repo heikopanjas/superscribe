@@ -13,7 +13,7 @@ Runtime:
 
 Building from source also requires:
 
-- Swift 6.2 or later (Xcode 26 or later)
+- Swift 6.4.2, managed with Swiftly (`.swift-version`), plus Xcode 26 or later for Apple SDKs and native tools
 - `cmake` and `ninja` — required once to build the whisper.cpp xcframework (`brew install cmake ninja`)
 
 ## Quick start
@@ -23,6 +23,8 @@ Building from source also requires:
 ./_scripts/bootstrap.sh
 
 # 2. Build superscribe
+swiftly install
+source "$HOME/.swiftly/env.sh"
 swift build -c release
 export PATH="$(swift build -c release --show-bin-path):$PATH"
 
@@ -234,6 +236,8 @@ superscribe transcribe \
 | `--padding` | `0.15` s | Padding around speech segments, capped at half the adjacent silence |
 | `--verbose` | off | Currently accepted but unused; progress is always shown on stderr |
 | `--no-cache` | off | Disable the audio conversion cache |
+| `--isolate` | off | Isolate vocals with `htdemucs` before transcription; downloads once |
+| `--fine-tune` | off | Select `htdemucs_ft`; requires `--isolate` |
 
 `--input` cannot be combined with `--track` or `--mixed`. `--create-input` cannot be combined with any of those input options. Relative paths in mapping files resolve against the current working directory; absolute paths stay absolute.
 
@@ -363,6 +367,7 @@ superscribe model --diarizer --rm nemotron-3-diarization --yes
 | `--rm <id>` | Remove an installed model or release a locale (`--yes` to skip confirmation) |
 | `--set-default <id>` | Set the default model for the backend |
 | `--diarizer` | Manage the speaker diarizer instead of a backend; combines only with `--list`, `--download`, `--rm`, `--yes` |
+| `--isolator` | Manage `htdemucs` or `htdemucs_ft`; combines only with `--list`, `--download`, `--rm`, `--yes` |
 | `--json` | JSON output for list operations (explicit `--list` or implicit default); invalid with `--download`, `--rm`, or `--set-default` |
 
 Parakeet installs fetch only the Core ML bundles and vocabulary FluidAudio loads (v3 ≈ 460 MiB instead of the 3.4 GiB repository). Parakeet and whisper.cpp downloads show live byte progress on stderr and use atomic stage-then-rename installs. Apple Speech locale installs show asset progress and are system-managed via `AssetInventory`.
@@ -397,6 +402,32 @@ superscribe cache --rm /path/to/recording.flac
 superscribe cache --clear      # prompts [y/N]
 superscribe cache --clear --yes
 ```
+
+## Vocal isolation
+
+Add `--isolate` to `transcribe` or `run` to remove accompaniment before speech detection, speaker diarization, and transcription. It applies to all tracks in that invocation, including mixed recordings and input templates. Source filenames and timestamps are preserved.
+
+```sh
+superscribe run --track "Alice=alice.wav" --isolate --merge-output transcript.vtt
+superscribe run --mixed panel.m4a --isolate --fine-tune --merge-output panel.vtt
+```
+
+`--isolate` selects `htdemucs`; add `--fine-tune` for `htdemucs_ft`. `--fine-tune` requires `--isolate`. The selected model downloads on its first use (about 160 MiB or 641 MiB respectively), with size and SHA-256 verification. Subsequent use is entirely local, without model update checks or automatic replacement downloads. Audio is never uploaded.
+
+Models live in `~/.cache/superscribe/models/isolator/<model-id>/`. Successful-installation receipts live alongside configuration under `~/.config/superscribe/`; removal preserves the receipt. If a previously installed model is missing or corrupt, restore it explicitly:
+
+```sh
+superscribe model --isolator --list
+superscribe model --isolator --download htdemucs
+superscribe model --isolator --download htdemucs_ft
+superscribe model --isolator --rm htdemucs --yes
+```
+
+Explicit downloads reuse valid installations and repair missing or invalid ones. Failed initial downloads can be retried. Existing ASR and diarizer model installation policies still apply.
+
+Isolation processes 30-second sections with two-second overlaps, retaining stereo input until separation and blending the mono vocals before backend conversion. Memory is bounded independently of recording length; temporary PCM needs disk space proportional to the recording. Fine-tuning runs only the vocals member of the ensemble, though the full upstream weights file is downloaded. The converted vocals are cached separately for each model; `--no-cache` recomputes them, and `cache --rm <source>` removes all cached variants.
+
+Demucs separates music sources; improvement in spoken-word recognition depends on the recording. Input decoding uses the existing macOS audio facilities. Release archives include a required Metal resource bundle: keep it beside the executable when installing or moving superscribe. If installing into a directory on `PATH`, copy the executable and every `.bundle` directory together. Alternatively, keep the extracted directory intact and symlink its executable into your tools directory; resource lookup follows the executable symlink.
 
 ## Intermediate format
 
@@ -505,7 +536,7 @@ _scripts/
 
 ## Development
 
-Run the isolated unit suite **serially**, as required by the project's test harness:
+Run the isolated unit suite **serially**, as required by the project's test harness. Select the pinned toolchain through Swiftly first:
 
 ```sh
 _scripts/test.sh

@@ -38,7 +38,13 @@ struct ModelCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Manage the speaker diarizer used for --mixed tracks (with --list, --download, or --rm).")
     var diarizer: Bool = false
 
+    @Flag(name: .long, help: "Manage vocal-isolation models (with --list, --download, or --rm).")
+    var isolator: Bool = false
+
     mutating func validate() throws -> Void {
+        if self.isolator == true && (self.diarizer == true || self.backend != nil || self.setDefault != nil || self.remote == true || self.refresh == true || self.json == true) {
+            throw ValidationError("--isolator applies only to --list, --download, and --rm.")
+        }
         try assertMutuallyExclusive([
             ("--list", self.list),
             ("--set-default", self.setDefault != nil),
@@ -63,6 +69,10 @@ struct ModelCommand: AsyncParsableCommand {
     }
 
     mutating func run() async throws -> Void {
+        if self.isolator == true {
+            try await self.runIsolator()
+            return
+        }
         if self.diarizer == true {
             try await self.runDiarizer()
             return
@@ -87,6 +97,25 @@ struct ModelCommand: AsyncParsableCommand {
         }
         // Default verb is --list (with optional --remote and/or --refresh).
         try await self.runList(backend: backend)
+    }
+
+    private func runIsolator() async throws -> Void {
+        if let id = self.download ?? self.rm {
+            guard let model = IsolatorModel(rawValue: id) else { throw ValidationError("Unknown isolation model '\(id)'. Choose htdemucs or htdemucs_ft.") }
+            if self.download != nil {
+                let path = try await ModelManager.installIsolator(model, allowRepair: true)
+                print("Installed \(id) at \(path.path)")
+            }
+            else if confirm(prompt: "Remove isolation model '\(id)'? [y/N] ", skip: self.yes) == true {
+                let removed = try await ModelInstaller.removeIsolator(model: model)
+                print(removed ? "Removed \(id)." : "\(id) is not installed.")
+            }
+            return
+        }
+        for model in IsolatorModel.allCases {
+            let installed = await ModelInstaller.isIsolatorInstalled(model)
+            print("\(model.rawValue)\t\(installed ? "installed" : "not installed")")
+        }
     }
 
     // MARK: - Verbs

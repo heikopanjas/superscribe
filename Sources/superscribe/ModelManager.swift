@@ -82,6 +82,12 @@ final class ModelManager {
         return path
     }
 
+    /// Installs or explicitly repairs an isolation model and drains its progress line.
+    static func installIsolator(_ model: IsolatorModel, allowRepair: Bool = false) async throws -> URL {
+        defer { FileHandle.standardError.write(Data("\r\u{1B}[K".utf8)) }
+        return try await ModelInstaller.installIsolator(model: model, allowRepair: allowRepair, onProgress: Self.makeDownloadProgressHandler())
+    }
+
     /// Returns a throttled stderr progress handler for `ModelInstaller`/`ModelDownloader`.
     ///
     /// Every column has a fixed character width so the line never reflows as

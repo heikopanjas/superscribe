@@ -12,9 +12,20 @@ runs:
         export DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer
         echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
         xcodebuild -version
-        swift --version
         echo "id=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
         echo "image=$(printenv ImageOS)-$(printenv ImageVersion)" >> "$GITHUB_OUTPUT"
+
+    - name: Install pinned Swift with Swiftly
+      shell: bash
+      run: |
+        command -v swiftly >/dev/null || brew install swiftly
+        swiftly init --skip-install --no-modify-profile --assume-yes
+        swift_version="$(cat .swift-version)"
+        swiftly install "$swift_version" --assume-yes
+        swift_bin="$HOME/Library/Developer/Toolchains/swift-$swift_version-RELEASE.xctoolchain/usr/bin"
+        test -x "$swift_bin/swift"
+        echo "$swift_bin" >> "$GITHUB_PATH"
+        "$swift_bin/swift" --version
 
     - name: Install missing build and coverage tools
       shell: bash
@@ -31,8 +42,12 @@ runs:
       uses: actions/cache@v6
       with:
         path: whisper-build/whisper.xcframework
-        key: whisper-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.image }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('_scripts/bootstrap.sh') }}
+        key: whisper-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.image }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('.swift-version', '_scripts/bootstrap.sh') }}
 
     - name: Bootstrap whisper with Metal and Core ML
       shell: bash
       run: _scripts/bootstrap.sh
+
+    - name: Compile and check Metal runtime
+      shell: bash
+      run: SUPERSCRIBE_INTEGRATION_TESTS=1 swift test --no-parallel -Xswiftc -strict-concurrency=complete --filter MetalCompilationTests

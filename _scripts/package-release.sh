@@ -21,6 +21,12 @@ staging="$(mktemp -d "$output/.package.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
 mkdir "$staging/$archive_root"
 cp "$binary" "$staging/$archive_root/superscribe"
+binary_dir="$(dirname "$binary")"
+test -s "$binary_dir/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+for bundle in "$binary_dir"/*.bundle; do
+    test -d "$bundle" || continue
+    cp -R "$bundle" "$staging/$archive_root/"
+done
 cp "$root/LICENSE" "$root/README.md" "$staging/$archive_root/"
 COPYFILE_DISABLE=1 tar -czf "$output/$archive_root.tar.gz" -C "$staging" "$archive_root"
 (

@@ -10,6 +10,11 @@ enum PipelineRunner {
         var makeDiarizer: @Sendable () async throws -> any Diarizer
         var logBackend: @Sendable (Backend, String) -> Void
         var clearProgressLine: @Sendable () -> Void
+        var makeIsolator: @Sendable (IsolatorModel) async throws -> any VocalIsolator = { model in
+            _ = try await ModelManager.installIsolator(model)
+            printErr("Using vocal isolator: \(model.rawValue)\n")
+            return try DemucsVocalIsolator(model: model)
+        }
 
         static let live = Dependencies(
             resolveBackendAndModel: { cliBackend, cliModel in
@@ -53,6 +58,13 @@ enum PipelineRunner {
         let diarizer: (any Diarizer)? =
             if options.tracks.contains(where: { $0.diarization != nil }) == true { try await dependencies.makeDiarizer() }
             else { nil }
+        let isolator: (any VocalIsolator)?
+        if let model = options.isolationModel {
+            isolator = try await dependencies.makeIsolator(model)
+        }
+        else {
+            isolator = nil
+        }
 
         let pipelineConfig = PipelineConfig(
             tracks: options.tracks,
@@ -60,7 +72,8 @@ enum PipelineRunner {
             transcriptionConfig: configuration,
             analyzerConfig: options.analyzerConfig,
             session: nil,
-            diarizer: diarizer
+            diarizer: diarizer,
+            isolator: isolator
         )
 
         let audioCache: ConvertedAudioCache? = options.useCache ? ConvertedAudioCache() : nil
@@ -71,7 +84,8 @@ enum PipelineRunner {
             config: pipelineConfig,
             audioCache: audioCache,
             onProgress: reporter.transcription,
-            onConversionProgress: reporter.conversion
+            onConversionProgress: reporter.conversion,
+            onIsolationProgress: reporter.isolation
         )
 
         let start = Date()

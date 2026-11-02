@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-10-08 (v2.0.0, README audit)
+**Last updated:** 2026-11-02 (v2.1.1, Metal resource loading)
 
 <!-- {mission} -->
 
@@ -16,11 +16,11 @@ Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Si
 
 ## Technology Stack
 
-- **Language:** Swift 6.2 (strict concurrency)
+- **Language:** Swift 6.4.2 via Swiftly and `.swift-version` (strict concurrency)
 - **Platform:** macOS 14+, Apple Silicon (arm64) only
 - **Package Manager:** Swift Package Manager
 - **Build dependencies (one-time):** `cmake`, `ninja` (for the whisper.cpp xcframework build script)
-- **Runtime dependencies:** swift-argument-parser, FluidAudio ≥ 0.17.7 (declared with `traits: []`, which drops the unused NemoTextProcessing binary), whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/bootstrap.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
+- **Runtime dependencies:** DemucsMLX and DemucsAudio 0.1.0 (MLX Swift, local vocal isolation), swift-argument-parser, FluidAudio ≥ 0.17.7 (declared with `traits: []`, which drops the unused NemoTextProcessing binary), whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/bootstrap.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
 - **Version Control:** Git
 - **License:** MIT
 
@@ -38,7 +38,7 @@ Sources/
     ConvertedAudioCache.swift  On-disk PCM cache with manifest sidecar
     HuggingFaceHub.swift   Remote model catalog client
     CatalogStore.swift     ~/.cache/superscribe/catalog.json
-    SuperscribePaths.swift Storage roots; all models under ~/.cache/superscribe/models/{parakeet,whisper,diarizer}
+    SuperscribePaths.swift Storage roots; all models under ~/.cache/superscribe/models/{parakeet,whisper,diarizer,isolator}
     ModelDownloader.swift  Bounded-parallel byte-stream downloader
     ModelInstaller.swift   Atomic stage-then-rename installer
     ModelRegistry.swift    Per-backend model id registry protocol
@@ -55,14 +55,14 @@ _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v2.0.0)
+## Subcommand Surface (v2.1.0)
 
 | Subcommand | Purpose |
 |---|---|
-| `transcribe` | Detect speech + run ASR; writes `transcript.superscribe.<backend>.json`. Also: `--mixed <path>` (diarized mixed track), `--create-input <dir>` (scan dir → template), `--input <file>` (load template; values are paths or `{file, diarize, speakers}` objects) |
+| `transcribe` | Detect speech + run ASR; writes `transcript.superscribe.<backend>.json`. Also: `--mixed <path>` (diarized mixed track), `--create-input <dir>` (scan dir → template), `--input <file>` (load template; values are paths or `{file, diarize, speakers}` objects), `--isolate`/`--fine-tune` (vocal isolation) |
 | `merge` | Read intermediate JSON → render VTT, SRT, JSON, or TXT |
 | `run` | `transcribe` + `merge` in one pass |
-| `model` | `--list`, `--remote`, `--download`, `--rm`, `--set-default`, `--refresh`; `--diarizer` manages the diarizer model (`--list`/`--download`/`--rm`) |
+| `model` | `--list`, `--remote`, `--download`, `--rm`, `--set-default`, `--refresh`; `--diarizer` and `--isolator` manage diarization and isolation models (`--list`/`--download`/`--rm`) |
 | `backend` | List backends and capabilities |
 | `cache` | Audio-conversion cache: info, `--list`, `--clear`, `--rm` |
 
@@ -148,6 +148,7 @@ Use `AGENTS.md` for current coding standards, conventions, and project decisions
 
 - Every new or changed line in `SuperscribeKit` must be covered by a test, or the change is not done.
 - Tests must be **CI-safe**: no downloaded whisper GGML models, no Hugging Face model fetches, no reliance on machine-local cache contents. Use test hooks and stubs (see v0.7.8–v0.7.9 entries).
+- For isolation integration, install both models explicitly, provide `SUPERSCRIBE_INTEGRATION_ISOLATION_AUDIO` (optionally select one installed model with `SUPERSCRIBE_INTEGRATION_ISOLATION_MODEL`), and run with `SUPERSCRIBE_INTEGRATION_TESTS=1` and `--filter IsolatorIntegrationTests`. The test never installs models. `--filter MetalCompilationTests` checks generated shaders without model assets; hosts without GPU access skip runtime execution explicitly.
 - Hardware integration tests live in `Tests/superscribeIntegrationTests/` and enter the package graph only with `SUPERSCRIBE_INTEGRATION_TESTS=1`. Supply `SUPERSCRIBE_INTEGRATION_AUDIO` and an already-installed `SUPERSCRIBE_INTEGRATION_MODEL`; invoke with `--filter ParakeetIntegrationTests`. For the diarizer, install it (`model --diarizer --download nemotron-3-diarization`), supply a recording with two or more voices as `SUPERSCRIBE_INTEGRATION_MIXED_AUDIO`, and use `--filter NemotronDiarizerIntegrationTests`.
 - Core ML unit fixtures are repository-owned (`Tests/superscribeTests/Fixtures/Scalar.mlmodel`); compile into temporary storage. Never load undocumented system model bundles.
 - Mock URL sessions intercept every request and fail for missing handlers; await invalidation before unregistering handlers. Cancelled or failed download streams are closed before session cleanup.
@@ -155,25 +156,30 @@ Use `AGENTS.md` for current coding standards, conventions, and project decisions
 - Apple Speech lifecycle orchestration lives in covered `AppleSpeechAssetInstaller`, `AppleSpeechInstallation`, and `AppleSpeechAnalysis`. The framework shim supplies injectable operations; failed analysis cancels the framework and joins result collection, and failed installation rolls back only a new reservation.
 - Coverage uses the selected SwiftPM build output and rejects missing, stale, or changed binary/profile pairs using a SHA-256 receipt. Swift Build and native SwiftPM binary layouts are supported.
 
-- **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusions: `WhisperLiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk), `AppleSpeechLiveAPI.swift` and `AppleSpeechTranscriberBridge.swift` (the same Speech framework calls and availability bridge previously housed together; unit tests use stub hooks in `AppleSpeechBackend.swift` and `AppleSpeechSupport.swift`), `NemotronDiarizerLiveAPI.swift` (FluidAudio Nemotron 3 Core ML calls; unit tests inject `NemotronDiarizer.openSession`).
+- **Documented exclusions only:** files excluded via `-ignore-filename-regex` in `_scripts/coverage.sh` must be listed here and must contain code that cannot be exercised without external artifacts (real models, hardware-only paths, etc.). Current exclusions: `WhisperLiveAPI.swift` (whisper.cpp C API; live paths need a real GGML model on disk), `AppleSpeechLiveAPI.swift` and `AppleSpeechTranscriberBridge.swift` (the same Speech framework calls and availability bridge previously housed together; unit tests use stub hooks in `AppleSpeechBackend.swift` and `AppleSpeechSupport.swift`), `NemotronDiarizerLiveAPI.swift` (FluidAudio Nemotron 3 Core ML calls; unit tests inject `NemotronDiarizer.openSession`), `IsolatorLiveAPI.swift` (verified upstream model assets and MLX GPU calls require real Demucs weights; tests inject model operations and isolation sessions).
 - If coverage drops, add tests or refactor untestable code into an excluded shim — never weaken the gate.
 
 ### GitHub CI
 
 - `.github/workflows/build.yml` runs on pushes and PRs targeting `develop` or `feature/**`; `.github/workflows/release.yml` runs on PRs targeting `main` and pushes to `main`.
-- Both use macOS 26 ARM64 with Xcode 26.2 and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. `.github/actions/build-release/action.yml` owns optimized ARM64 builds, smoke tests, and version metadata from the CLI. Push builds upload artifacts for separate publishing jobs; release PRs upload unsigned archive/checksum artifacts for 14 days without publishing.
+- Both use macOS 26 ARM64 with Xcode 26.2 for SDK/native tools, install the pinned Swift 6.4.2 toolchain through Swiftly, and enforce `_scripts/coverage.sh --run-tests` at 100% line and region coverage. `.github/actions/build-release/action.yml` owns optimized ARM64 builds, smoke tests, and version metadata from the CLI. Push builds upload artifacts for separate publishing jobs; release PRs upload unsigned archive/checksum artifacts for 14 days without publishing.
 - Workflows use the Node 24 action generations: `actions/checkout@v7`, `actions/cache@v6`, `actions/upload-artifact@v7`, and `actions/download-artifact@v8`. Hosted runners must meet each action's minimum runner version.
-- Successful pushes to `develop` and `feature/**` publish unsigned pre-releases containing the raw CLI, matching aranet-kit: tag `R<version>_BUILD_<run-number>_<YYYYMMDD>_<HHMMSS>`, title `superscribe-build-<run-number>-<YYYYMMDD>-<HHMMSS>` (UTC). Main pushes publish signed/notarized stable releases with tag and title `v<version>`, `superscribe-<version>-macos-arm64.tar.gz`, and `SHA256SUMS.txt`. The archive contains a versioned directory with the CLI, README, and license.
+- Successful pushes to `develop` and `feature/**` publish unsigned pre-releases containing the CLI and required Metal resources in a checksummed archive: tag `R<version>_BUILD_<run-number>_<YYYYMMDD>_<HHMMSS>`, title `superscribe-build-<run-number>-<YYYYMMDD>-<HHMMSS>` (UTC). Main pushes publish signed/notarized stable releases with tag and title `v<version>`, `superscribe-<version>-macos-arm64.tar.gz`, and `SHA256SUMS.txt`. The archive contains a versioned directory with the CLI, resource bundles, README, and license. Preserve the complete extracted directory. CI compiles the Metal integration test and executes it when a GPU is available; hosts without a Metal device explicitly skip runtime execution.
 - `_scripts/package-release.sh` owns packaging; `_scripts/publish-release.sh` owns naming and publication. Only push-only publisher jobs receive `contents: write`, depend on successful builds, and reuse their artifacts. Tags target the exact tested SHA; existing tags/releases are never overwritten, so each stable release requires a new version. Pre-releases cannot become Latest. Push runs are not cancelled in progress by newer pushes; PR checks remain cancellable.
 - `_scripts/release-common.sh` shares product-version validation and archive naming. Local checks use `ruby _scripts/test-release-workflows.rb /bin/bash` with fake GitHub tools; validate release tooling under Bash 3.2 and the developer's Bash without publishing test releases.
 - Release PRs produce explicitly named unsigned artifacts without signing credentials. Main pushes sign with Developer ID, hardened runtime, and a secure timestamp, then require Apple notarization acceptance before packaging. The six signing/notarization secret names match `heikopanjas/aranet-kit` and are exposed only to the signing step.
 - `_scripts/sign-release.sh` owns certificate import into a temporary keychain, signature verification, notarization, and exit cleanup. `_scripts/test-sign-release.sh` provides optional local checks with fake tools and credentials; do not run it in CI. Bare executables cannot be stapled; the notarization ticket is associated with the signature.
 - Match aranet-kit's keychain setup: create and unlock the temporary keychain, import the P12 with `-A` and codesign access, set key partitions, and register it in the user search list before signing. Check for a valid code-signing identity after import; restore the prior search list on exit. Passing `codesign --keychain` alone does not replace search-list registration.
 - Run optional signing tests with `/bin/bash`; the signer and stubs inherit the harness's selected interpreter. Stub failures and argument checks must exit explicitly rather than rely on `set -e` behavior across Bash versions. Validate harness changes with macOS Bash 3.2 as well as the developer's selected Bash.
-- `.github/actions/setup-build/action.yml` owns shared tool setup and whisper bootstrapping before SwiftPM. Cache only the finished xcframework using an exact runner-image, architecture, Xcode-build, and bootstrap-script hash key; do not restore incompatible fallback keys or cache downloaded ASR models.
+- `.github/actions/setup-build/action.yml` owns shared tool setup and whisper bootstrapping before SwiftPM. Cache only the finished xcframework using an exact runner-image, architecture, Xcode-build, pinned-Swift, and bootstrap-script hash key; do not restore incompatible fallback keys or cache downloaded ASR models.
 - `_scripts/bootstrap.sh` disables host-specific GGML tuning with `GGML_NATIVE=OFF` and targets `armv8.4-a+dotprod+fp16` for M1-compatible CPU code. Keep Metal and Core ML enabled. Verify bootstrap changes with a fresh native build; an existing xcframework bypasses compilation and cannot validate changed flags.
 
 ### Audio preparation and execution
+
+- Vocal isolation is opt-in (`--isolate`, with `--fine-tune` selecting `htdemucs_ft` instead of `htdemucs`). It precedes speech detection and diarization, processes 30-second stereo sections with two-second linear overlaps, and preserves source paths and timing. DemucsMLX/DemucsAudio 0.1.0 provide local inference; a fixed seed makes processing reproducible.
+- Isolation models live under `models/isolator/<id>`. Only a model with no successful-installation receipt may auto-download; subsequent missing or invalid assets require explicit `model --isolator --download <id>`. Removal preserves the configuration receipt. Inference always disables upstream downloads.
+- Before opening a Demucs session, resolve the shipped Metal library relative to the executable or its owning bundle and configure MLX once. Only MLX-specific resources qualify; normalize base-relative bundle URLs to absolute paths. Missing shaders throw an actionable error before background GPU initialization. WAV file settings use interleaved storage while processing buffers remain planar.
+- Swift 6.4.2 `swift build` compiles MLX Metal shaders; Debug and Release GPU probes passed locally. CI must select the same toolchain and ship the Metal resource bundle with the CLI. Isolated audio cache identities include the model and processing revision; `--no-cache` bypasses processed-audio caching.
 
 - `StreamingAudioConverter` is the single finite-input converter for files and Speech buffers. Input errors fail conversion; output is drained through end of stream.
 - `PreparedAudio` owns file-backed PCM. The pipeline retains file references, reads active segment slices, and bounds conversion concurrency to two by default. Temporary PCM is removed when its final owner leaves scope.
@@ -226,11 +232,11 @@ After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm
 - `SpeechTimeline.finalize` is the single post-processing for `Analyzer` and diarized turns: merge same-speaker gaps below `minSilenceDuration`, pad into at most half of the adjacent silence, drop runs below `minSegmentDuration`.
 - Each diarized speaker becomes a virtual `IntermediateTranscript.Track` (mapped name or global `Speaker N`, file = the mixed recording), so the intermediate format stays version 1 and `Merger`/renderers are unchanged. Duplicate names are allowed and merge speakers.
 - `DiarizerModel` takes repo, preset (`fast128`), and asset names from FluidAudio constants and installs a flattened `nemotron-3-diarization-fast128` folder under `SuperscribePaths.diarizerModelsDirectory()` with FluidAudio's weights-version marker; a marker mismatch reinstalls atomically. `ModelInstaller.installDiarizer`/`removeDiarizer` share `stageAndPublish` with ASR installs.
-- `DownloadProgress.backend` is optional (`nil` for the diarizer).
+- `DownloadProgress.backend` is optional (`nil` for the diarizer and isolator).
 
 ### FluidAudio integration
 
-- All models live under `SuperscribePaths.modelsDirectory()` (`~/.cache/superscribe/models`) in `parakeet/`, `whisper/`, and `diarizer/`; tests redirect the single `overrideModelsDirectory`/`taskModelsDirectory` root. `AsrModels.load` resolves `parent/<Repo.folderName>`, so Parakeet install folder names must equal FluidAudio's folder names. Older installs (FluidAudio's Application Support folder, `~/Library/Caches/superscribe/whisper`) are not migrated.
+- All models live under `SuperscribePaths.modelsDirectory()` (`~/.cache/superscribe/models`) in `parakeet/`, `whisper/`, `diarizer/`, and `isolator/`; tests redirect the single `overrideModelsDirectory`/`taskModelsDirectory` root. `AsrModels.load` resolves `parent/<Repo.folderName>`, so Parakeet install folder names must equal FluidAudio's folder names. Older installs (FluidAudio's Application Support folder, `~/Library/Caches/superscribe/whisper`) are not migrated.
 - superscribe owns every model download. `ParakeetBackend` sets `ModelHub.offlineMode = true` once before FluidAudio loads, so FluidAudio never downloads, purges, or replaces an installation (it would otherwise fetch missing files into the parent directory's repo folder).
 - Download streams that end in error are drained from a detached task: a cancelled caller's iterator throws before reading, and an unconsumed `URLSession.AsyncBytes` keeps its session from invalidating.
 

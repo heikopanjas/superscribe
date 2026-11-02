@@ -18,8 +18,10 @@ struct AudioAllocationTests {
         let integerBuffer = try AudioBuffers.make(format: integerFormat, frames: 1)
         #expect(throws: AudioPreparerError.self) { _ = try AudioBuffers.channels(integerBuffer) }
         let stereo = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 2, interleaved: false))
+        try StreamingAudioConverter.convert(from: format, to: stereo, read: { _ in nil }, emit: { _ in })
+        let invalid = AVAudioFormat()
         #expect(throws: AudioPreparerError.self) {
-            try StreamingAudioConverter.convert(from: format, to: stereo, read: { _ in nil }, emit: { _ in })
+            try StreamingAudioConverter.convert(from: format, to: invalid, read: { _ in nil }, emit: { _ in })
         }
     }
 

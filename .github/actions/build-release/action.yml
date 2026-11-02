@@ -19,8 +19,15 @@ runs:
         source _scripts/release-common.sh
         swift build -c release -Xswiftc -strict-concurrency=complete
         release_dir="$(swift build -c release --show-bin-path)"
-        binary="$RUNNER_TEMP/superscribe"
+        payload="$RUNNER_TEMP/superscribe-release"
+        mkdir -p "$payload"
+        binary="$payload/superscribe"
         install -m 755 "$release_dir/superscribe" "$binary"
+        for bundle in "$release_dir"/*.bundle; do
+          test -d "$bundle" || continue
+          cp -R "$bundle" "$payload/"
+        done
+        test -s "$payload/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
         test "$(lipo -archs "$binary")" = arm64
         version="$("$binary" --version)"
         version="$(release_version "$version")"

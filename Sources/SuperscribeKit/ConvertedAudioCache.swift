@@ -49,7 +49,7 @@ public struct ConvertedAudioCache: Sendable {
 
     /// Build a cache key from a source file URL and a target audio format.
     /// Returns `nil` if the file's size or mtime cannot be read.
-    public func key(for url: URL, targetFormat: AudioFormat) -> CacheKey? {
+    public func key(for url: URL, targetFormat: AudioFormat, processingIdentity: String? = nil) -> CacheKey? {
         if SuperscribeKitTestHooks.forceCacheKeyAttributeParseFailure == true {
             return nil
         }
@@ -73,7 +73,7 @@ public struct ConvertedAudioCache: Sendable {
             sourcePath: absolute,
             sourceSize: size,
             sourceMtimeNanos: mtimeNanos,
-            formatKey: Self.formatKey(for: targetFormat)
+            formatKey: Self.formatKey(for: targetFormat) + (processingIdentity.map { "|\($0)" } ?? "")
         )
     }
 
@@ -92,6 +92,21 @@ public struct ConvertedAudioCache: Sendable {
         let url = self.cacheURL(for: key)
         return if FileManager.default.fileExists(atPath: url.path) == true { url }
         else { nil }
+    }
+
+    /// Verify cached PCM through its tail; remove corrupt entries before recomputing them.
+    internal func preparedAudio(for key: CacheKey, format: AudioFormat) throws -> PreparedAudio? {
+        guard let cached = self.lookup(key) else { return nil }
+        do {
+            let prepared = try PreparedAudio(url: cached, format: format, temporary: false)
+            _ = try prepared.samples(in: max(0, Int(prepared.frameCount) - 1) ..< Int(prepared.frameCount))
+            return prepared
+        }
+        catch {
+            try? FileManager.default.removeItem(at: cached)
+            try? self.updateManifest(removingDigest: key.digest)
+            return nil
+        }
     }
 
     // MARK: - Manifest

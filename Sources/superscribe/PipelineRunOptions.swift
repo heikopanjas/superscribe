@@ -8,4 +8,5 @@ struct PipelineRunOptions: Sendable {
     let transcriptionConfig: TranscriptionConfig
     let analyzerConfig: AnalyzerConfig
     let useCache: Bool
+    var isolationModel: IsolatorModel? = nil
 }

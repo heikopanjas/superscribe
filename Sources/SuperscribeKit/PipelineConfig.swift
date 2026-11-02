@@ -13,6 +13,8 @@ public struct PipelineConfig: Sendable {
     public let session: String?
     /// Separates speakers in tracks marked with `TrackInput.diarization`; required when any track is mixed.
     public let diarizer: (any Diarizer)?
+    /// Optional local vocal isolation, applied before speech detection or diarization.
+    public let isolator: (any VocalIsolator)?
 
     public init(
         tracks: [TrackInput],
@@ -22,7 +24,8 @@ public struct PipelineConfig: Sendable {
         maxConcurrentTranscriptions: Int = 2,
         maxConcurrentConversions: Int = 2,
         session: String? = nil,
-        diarizer: (any Diarizer)? = nil
+        diarizer: (any Diarizer)? = nil,
+        isolator: (any VocalIsolator)? = nil
     ) {
         self.tracks = tracks
         self.backend = backend
@@ -32,5 +35,6 @@ public struct PipelineConfig: Sendable {
         self.maxConcurrentConversions = maxConcurrentConversions
         self.session = session
         self.diarizer = diarizer
+        self.isolator = isolator
     }
 }

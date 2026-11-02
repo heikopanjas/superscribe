@@ -9,7 +9,10 @@ struct AppleSpeechLifecycleTests {
     func reservationResultsBothSucceed(acquired: Bool) async throws -> Void {
         let operations = Self.operations(acquired: acquired)
         let marker = try await AppleSpeechAssetInstaller.$operations.withValue(operations) {
-            return try await AppleSpeechAssetInstaller.ensureInstalled(localeId: "en-GB", backend: .appleSpeech, onProgress: { _ in })
+            if #available(macOS 26, *) {
+                return try await AppleSpeechAssetInstaller.ensureInstalled(localeId: "en-GB", backend: .appleSpeech, onProgress: { _ in })
+            }
+            return try await AppleSpeechAssetInstaller.install(localeId: "en-GB", backend: .appleSpeech, operations: operations, onProgress: { _ in })
         }
         #expect(AppleSpeechSupport.localeId(fromInstallMarker: marker) == "en-US")
     }

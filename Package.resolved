@@ -1,6 +1,15 @@
 {
-  "originHash" : "7cca3bf614147f23423a4db566c8e06c481ef11c7f9cacdbac6ec2df9eb77f2d",
+  "originHash" : "a0583a079a5b6dbbc894f958504ac8f225f7ee61add2b10a4202535e15802d66",
   "pins" : [
+    {
+      "identity" : "demucs-mlx-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ssmall256/demucs-mlx-swift",
+      "state" : {
+        "revision" : "781a74d927401f2f7ee807343cd7300ff8938d1d",
+        "version" : "0.1.0"
+      }
+    },
     {
       "identity" : "fluidaudio",
       "kind" : "remoteSourceControl",
@@ -11,12 +20,30 @@
       }
     },
     {
+      "identity" : "mlx-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ml-explore/mlx-swift",
+      "state" : {
+        "revision" : "19601207e9a0de51e03ee6ec0c3c5f3784275075",
+        "version" : "0.32.3"
+      }
+    },
+    {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser.git",
       "state" : {
-        "revision" : "626b5b7b2f45e1b0b1c6f4a309296d1d21d7311b",
-        "version" : "1.7.1"
+        "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+        "version" : "1.8.2"
+      }
+    },
+    {
+      "identity" : "swift-numerics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-numerics",
+      "state" : {
+        "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+        "version" : "1.1.1"
       }
     }
   ],

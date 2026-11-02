@@ -13,7 +13,7 @@ internal enum StreamingAudioConverter {
         emit: (AVAudioPCMBuffer) throws -> Void
     ) throws -> Void {
         guard source.sampleRate.isFinite == true, source.sampleRate > 0, source.channelCount > 0,
-            target.sampleRate.isFinite == true, target.sampleRate > 0, target.channelCount == 1,
+            target.sampleRate.isFinite == true, target.sampleRate > 0, target.channelCount > 0,
             let converter = AVAudioConverter(from: source, to: target)
         else { throw AudioPreparerError.conversionFailed("Invalid audio format or converter allocation") }
         let output = try AudioBuffers.make(format: target, frames: Self.chunkFrames)

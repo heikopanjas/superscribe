@@ -29,9 +29,10 @@ case "${GITHUB_REF:-}" in
         datetime="$(date -u +'%Y%m%d_%H%M%S')"
         tag="R${version}_BUILD_${GITHUB_RUN_NUMBER}_${datetime}"
         title="superscribe-build-${GITHUB_RUN_NUMBER}-${datetime/_/-}"
-        files=("$assets/superscribe")
+        files=("$assets/$(release_archive_root "$version").tar.gz" "$assets/SHA256SUMS.txt")
+        (cd "$assets" && shasum -a 256 --check SHA256SUMS.txt)
         flags=(--prerelease --latest=false)
-        notes="Unsigned development build from ${GITHUB_REF#refs/heads/} at $GITHUB_SHA. Not signed or notarized; run chmod +x superscribe after downloading."
+        notes="Unsigned development build from ${GITHUB_REF#refs/heads/} at $GITHUB_SHA. Extract the complete archive, including Metal resources, and verify SHA256SUMS.txt."
         ;;
     *) echo "error: branch is not eligible for release publication" >&2; exit 1 ;;
 esac

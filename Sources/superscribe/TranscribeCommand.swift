@@ -31,6 +31,7 @@ struct TranscribeCommand: AsyncParsableCommand {
     mutating func validate() throws -> Void {
         let hasTrack = self.options.trackInputs.isEmpty == false
         if self.createInput != nil {
+            if self.options.isolate == true { throw ValidationError("--isolate cannot be combined with --create-input.") }
             if hasTrack == true { throw ValidationError("--create-input may not be combined with --track or --mixed.") }
             if self.input != nil { throw ValidationError("--create-input may not be combined with --input.") }
         }
@@ -61,7 +62,8 @@ struct TranscribeCommand: AsyncParsableCommand {
                 tracks: resolvedTracks,
                 transcriptionConfig: opts.transcriptionConfig,
                 analyzerConfig: opts.analyzerConfig,
-                useCache: opts.noCache == false
+                useCache: opts.noCache == false,
+                isolationModel: opts.isolationModel
             )
         )
 

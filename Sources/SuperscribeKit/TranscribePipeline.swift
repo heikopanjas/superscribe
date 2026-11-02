@@ -6,6 +6,7 @@ public struct TranscribePipeline: Sendable {
     private let config: PipelineConfig
     private let onProgress: (@Sendable (TranscriptionProgress) -> Void)?
     private let onConversionProgress: (@Sendable (ConversionProgress) -> Void)?
+    private let onIsolationProgress: (@Sendable (ConversionProgress) -> Void)?
     private let audioCache: ConvertedAudioCache?
 
     public init(
@@ -13,13 +14,15 @@ public struct TranscribePipeline: Sendable {
         config: PipelineConfig,
         audioCache: ConvertedAudioCache? = nil,
         onProgress: (@Sendable (TranscriptionProgress) -> Void)? = nil,
-        onConversionProgress: (@Sendable (ConversionProgress) -> Void)? = nil
+        onConversionProgress: (@Sendable (ConversionProgress) -> Void)? = nil,
+        onIsolationProgress: (@Sendable (ConversionProgress) -> Void)? = nil
     ) {
         self.transcriber = transcriber
         self.config = config
         self.audioCache = audioCache
         self.onProgress = onProgress
         self.onConversionProgress = onConversionProgress
+        self.onIsolationProgress = onIsolationProgress
     }
 
     /// Run the full pipeline and return the intermediate transcript.
@@ -33,7 +36,17 @@ public struct TranscribePipeline: Sendable {
         let analyzer = Analyzer(config: analyzerConfig)
         let preparer = AudioPreparer(for: self.transcriber.capabilities, cache: self.audioCache)
         let conversionProgress = self.onConversionProgress
-        let preparedTracks = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(limit: self.config.maxConcurrentConversions, items: self.config.tracks) { track in
+        let isolator = self.config.isolator
+        let isolationProgress = self.onIsolationProgress
+        let preparationLimit = isolator == nil ? self.config.maxConcurrentConversions : 1
+        let preparedTracks = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(limit: preparationLimit, items: self.config.tracks) { track in
+            let isolated: PreparedAudio?
+            if let isolator {
+                isolated = try await isolator.prepare(source: track.file, targetFormat: preparer.targetFormat, cache: self.audioCache, onProgress: isolationProgress)
+            }
+            else {
+                isolated = nil
+            }
             let dependencies = SuperscribeKitTestHooks.testState
             let buffers = AudioBuffers.dependencies
             let locks = FileTransaction.lockOperation
@@ -41,7 +54,7 @@ public struct TranscribePipeline: Sendable {
                 return try SuperscribeKitTestHooks.$testState.withValue(dependencies) {
                     return try AudioBuffers.$dependencies.withValue(buffers) {
                         return try FileTransaction.$lockOperation.withValue(locks) {
-                            let audio = try preparer.prepare(url: track.file, onProgress: conversionProgress, checkCancellation: cancellation.check)
+                            let audio = try isolated ?? preparer.prepare(url: track.file, onProgress: conversionProgress, checkCancellation: cancellation.check)
                             if track.diarization != nil { return (audio, [SpeechSegment]?.none) }
                             return (audio, try analyzer.detectSpeech(in: audio))
                         }

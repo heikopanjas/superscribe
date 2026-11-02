@@ -23,7 +23,8 @@ struct RunCommand: AsyncParsableCommand {
                 tracks: opts.trackInputs,
                 transcriptionConfig: opts.transcriptionConfig,
                 analyzerConfig: opts.analyzerConfig,
-                useCache: opts.noCache == false
+                useCache: opts.noCache == false,
+                isolationModel: opts.isolationModel
             )
         )
 

@@ -4,6 +4,45 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-11-02 (v2.1.1, 21:44 runtime regression validation)
+
+- 509 serial strict-concurrency unit tests pass; shader discovery has 100 percent line and region coverage
+- real htdemucs isolation succeeds using existing weights and synthetic audio with network access denied, both from a relocated release payload and the installed cli
+- incomplete installations produce a normal actionable cli error; unrelated framework shader libraries are rejected; interleaved-file warnings are absent
+- updated the local tool to 2.1.1 with its shader bundle and preserved the previous executable in a private temporary backup
+- full coverage remains platform-limited on macos 15.8.2 at 96.37 percent lines and 95.18 percent regions; macos 26 validation is still required and thresholds are unchanged
+- rationale: verify the reported crash through the production loading path rather than a manually configured gpu test
+- version: unchanged at 2.1.1
+
+
+### 2026-11-02 (v2.1.1, 21:27 Metal runtime resources)
+
+- resolve and configure shipped metal shaders before demucs starts background gpu preparation; missing resources produce an actionable error
+- fix interleaved wav file settings and terminate the vocal-isolator status line correctly
+- regression tests cover bundle layouts, executable symlinks, missing or invalid resources, and on-disk pcm settings; model integration exercises production resource lookup
+- rationale: copying only the cli into the user's tools directory omitted the shader bundle and caused an mlx runtime abort
+- version bump: 2.1.0 to 2.1.1 (PATCH - runtime resource loading and diagnostic fixes)
+
+
+### 2026-11-02 (v2.1.0, 20:53 isolation validation)
+
+- 503 serial strict-concurrency unit tests pass; isolation orchestration, caching, model policy, and pipeline integration have 100 percent line and region coverage
+- debug and release swift 6.4.2 probes compile and execute metal shaders; the opt-in metal test and relocated resource probe pass
+- optimized cli, relocated archive smoke checks, and release tooling checks under bash 3.2 and the developer's bash pass
+- full coverage gate remains unmet on this macos 15.8.2 host: 96.35 percent lines and 95.15 percent regions, with remaining gaps in existing apple speech paths requiring macos 26; thresholds remain unchanged
+- real demucs inference requires the opt-in test with installed weights and a supplied recording; no models were downloaded during unit tests
+- rationale: distinguish verified local behavior from platform-dependent coverage and model inference still awaiting validation
+- version: unchanged at 2.1.0
+
+
+### 2026-11-02 (v2.1.0, vocal isolation and swift 6.4)
+
+- add optional local vocal isolation with htdemucs and htdemucs_ft, bounded sections, explicit model recovery, and separate processed-audio cache identities
+- pin swift 6.4.2 through swiftly for local development and ci; clean debug and release dependency probes compiled metal shaders and executed on the gpu
+- preserve first-use-only model downloads through persistent installation receipts; inference disables all upstream downloads
+- rationale: remove accompaniment before transcription while retaining bounded podcast memory use and local operation
+- version bump: 2.0.0 to 2.1.0 (MINOR - additive cli options and library capability)
+
 ### 2026-10-08 (v2.0.0, 18:39 readme audit)
 
 - corrected mixed-track flow, bounded padding, absolute backend timestamps, speaker numbering, and silence-threshold tuning against the implementation

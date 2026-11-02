@@ -61,4 +61,9 @@ public enum SuperscribePaths {
     public static func diarizerModelsDirectory() -> URL {
         return Self.modelsDirectory().appendingPathComponent("diarizer", isDirectory: true)
     }
+
+    /// `~/.cache/superscribe/models/isolator`.
+    public static func isolatorModelsDirectory() -> URL {
+        return Self.modelsDirectory().appendingPathComponent("isolator", isDirectory: true)
+    }
 }

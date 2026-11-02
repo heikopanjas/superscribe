@@ -52,12 +52,25 @@ struct TranscribeOptions: ParsableArguments {
     @Flag(name: .long, help: "Skip the converted-audio cache (always re-convert from the source file).")
     var noCache: Bool = false
 
-    mutating func validate() throws -> Void { try self.analyzerConfig.validate() }
+    @Flag(name: .long, help: "Isolate vocals locally with htdemucs before transcription. Downloads the model on first use.")
+    var isolate: Bool = false
+
+    @Flag(name: .long, help: "Use the fine-tuned htdemucs_ft vocal-isolation model. Requires --isolate.")
+    var fineTune: Bool = false
+
+    mutating func validate() throws -> Void {
+        try self.analyzerConfig.validate()
+        if self.fineTune == true && self.isolate == false { throw ValidationError("--fine-tune requires --isolate.") }
+    }
 }
 
 // MARK: - Convenience bridges from CLI options to library types
 
 extension TranscribeOptions {
+    var isolationModel: IsolatorModel? {
+        guard self.isolate == true else { return nil }
+        return self.fineTune ? .htdemucsFT : .htdemucs
+    }
     /// Isolated `--track` inputs followed by diarized `--mixed` inputs named after their files.
     var trackInputs: [TrackInput] {
         let isolated = self.track.map { TrackInput(speaker: $0.speaker, file: URL(fileURLWithPath: $0.path)) }

@@ -4,7 +4,7 @@ import Foundation
 /// Snapshot of an in-progress model download.
 public struct DownloadProgress: Sendable, Hashable {
     public let modelId: String
-    /// ASR backend whose model is downloading; `nil` for the speaker diarizer.
+    /// ASR backend whose model is downloading; `nil` for diarization or isolation models.
     public let backend: Backend?
     public let currentFile: String
     public let filesCompleted: Int

@@ -18,13 +18,22 @@ final class ProgressReporter: @unchecked Sendable {
     }
 
     func conversion(_ progress: ConversionProgress) -> Void {
+        self.audioProgress(progress, label: "Converting")
+    }
+
+    func isolation(_ progress: ConversionProgress) -> Void {
+        self.audioProgress(progress, label: "Isolating")
+    }
+
+    private func audioProgress(_ progress: ConversionProgress, label: String) -> Void {
         self.queue.async {
             guard self.finished == false else { return }
             let time = self.now()
-            let previous = self.last[progress.source.path] ?? -.infinity
+            let key = "\(label):\(progress.source.path)"
+            let previous = self.last[key] ?? -.infinity
             guard progress.fraction >= 1 || time - previous >= ProgressReporting.throttleInterval else { return }
-            self.last[progress.source.path] = time
-            self.write("\rConverting \(progress.source.lastPathComponent) [\(Int((progress.fraction * 100).rounded()))%]\u{1B}[K")
+            self.last[key] = time
+            self.write("\r\(label) \(progress.source.lastPathComponent) [\(Int((progress.fraction * 100).rounded()))%]\u{1B}[K")
         }
     }
 
