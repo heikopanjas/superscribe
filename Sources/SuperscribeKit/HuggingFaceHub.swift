@@ -87,7 +87,8 @@ public enum HuggingFaceHub {
         session: URLSession = .shared
     ) async throws -> HFRepoInfo {
         let repo = try ModelPathValidation.components(repoId).joined(separator: "/")
-        let url = try HTTPURL.make(host: "huggingface.co", path: "/api/models/\(repo)")
+        // `blobs=true` makes the API report sibling sizes, which drive progress, disk preflight, and size validation.
+        let url = try HTTPURL.make(host: "huggingface.co", path: "/api/models/\(repo)", query: [URLQueryItem(name: "blobs", value: "true")])
         let data = try await Self.fetch(url, session: session)
         return try Self.decode(HFRepoInfo.self, from: data, url: url)
     }

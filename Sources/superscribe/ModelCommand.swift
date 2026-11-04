@@ -5,7 +5,7 @@ import SuperscribeKit
 struct ModelCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "model",
-        abstract: "List, refresh, or set defaults for transcription models."
+        abstract: "List, download, or manage transcription, diarization, and isolation models."
     )
 
     @Option(name: .long, help: "Backend (parakeet, whisper.cpp, appleSpeech). Defaults to your configured backend.")
@@ -35,7 +35,12 @@ struct ModelCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Emit machine-readable JSON (only with --list).")
     var json: Bool = false
 
+    @OptionGroup var backendType: BackendTypeOptions
+
     mutating func validate() throws -> Void {
+        if self.backendType.isolator == true && (self.backend != nil || self.setDefault != nil || self.remote == true || self.refresh == true || self.json == true) {
+            throw ValidationError("--isolator applies only to --list, --download, and --rm.")
+        }
         try assertMutuallyExclusive([
             ("--list", self.list),
             ("--set-default", self.setDefault != nil),
@@ -54,9 +59,20 @@ struct ModelCommand: AsyncParsableCommand {
         if self.json == true && (self.setDefault != nil || self.download != nil || self.rm != nil) {
             throw ValidationError("--json applies only to --list.")
         }
+        if self.backendType.diarizer == true && (self.backend != nil || self.setDefault != nil || self.remote == true || self.refresh == true || self.json == true) {
+            throw ValidationError("--diarizer applies only to --list, --download, and --rm.")
+        }
     }
 
     mutating func run() async throws -> Void {
+        if self.backendType.isolator == true {
+            try await self.runIsolator()
+            return
+        }
+        if self.backendType.diarizer == true {
+            try await self.runDiarizer()
+            return
+        }
         let backend = try BackendManager.resolveBackend(cliBackend: self.backend)
 
         if let modelId = self.download {
@@ -77,6 +93,30 @@ struct ModelCommand: AsyncParsableCommand {
         }
         // Default verb is --list (with optional --remote and/or --refresh).
         try await self.runList(backend: backend)
+    }
+
+    private func runIsolator() async throws -> Void {
+        if let id = self.download ?? self.rm {
+            guard let model = IsolatorModel(rawValue: id) else { throw ValidationError("Unknown isolation model '\(id)'. Choose htdemucs or htdemucs_ft.") }
+            if self.download != nil {
+                let path = try await ModelManager.installIsolator(model, allowRepair: true)
+                print("Installed \(id) at \(path.path)")
+            }
+            else if confirm(prompt: "Remove isolation model '\(id)'? [y/N] ", skip: self.yes) == true {
+                let removed = try await ModelInstaller.removeIsolator(model: model)
+                print(removed ? "Removed \(id)." : "\(id) is not installed.")
+            }
+            return
+        }
+        let models = IsolatorModel.allCases
+        let idWidth = max(8, models.map(\.rawValue.count).max() ?? 0)
+        for model in models {
+            let installed = await ModelInstaller.isIsolatorInstalled(model)
+            let location =
+                if installed == true { try model.installPath().path }
+                else { "not installed" }
+            self.renderModelRow(id: model.rawValue, idWidth: idWidth, location: location)
+        }
     }
 
     // MARK: - Verbs
@@ -177,6 +217,31 @@ struct ModelCommand: AsyncParsableCommand {
         print("Default model for '\(backend.rawValue)' set to '\(modelId)'.")
     }
 
+    private func runDiarizer() async throws -> Void {
+        if let modelId = self.download ?? self.rm {
+            guard modelId == DiarizerModel.id else { throw ValidationError("Unknown diarizer model '\(modelId)'. Available: \(DiarizerModel.id)") }
+        }
+        let path = try DiarizerModel.installPath()
+        if self.download != nil {
+            print("Installed at \(try await ModelManager.installDiarizer().path)")
+            return
+        }
+        if self.rm != nil {
+            guard FileManager.default.fileExists(atPath: path.path) == true else { throw ValidationError("Diarizer model '\(DiarizerModel.id)' is not installed.") }
+            guard confirm(prompt: "Remove '\(DiarizerModel.id)'?\n  \(path.path)\n[y/N] ", skip: self.yes) == true else {
+                print("Aborted.")
+                return
+            }
+            try await ModelInstaller.removeDiarizer()
+            print("Removed \(path.path)")
+            return
+        }
+        let status =
+            if DiarizerModel.isInstalled(at: path) == true { path.path }
+            else { "not installed (downloads on the first --mixed run)" }
+        self.renderModelRow(id: DiarizerModel.id, idWidth: max(8, DiarizerModel.id.count), location: status)
+    }
+
     // MARK: - Rendering
 
     private func renderInstalledList(_ models: [InstalledModelInfo], backend: Backend) throws -> Void {
@@ -192,10 +257,14 @@ struct ModelCommand: AsyncParsableCommand {
             let marker = self.defaultMarker(
                 id: m.id, userDefault: userDefault, builtinDefault: builtinDefault
             )
-            let size = m.sizeBytes.map(formatBytes) ?? "—"
-            let paddedId = m.id.padding(toLength: idWidth, withPad: " ", startingAt: 0)
-            print("  \(paddedId)  \(size.leftPad(toLength: 10))  \(m.path.path)\(marker)")
+            self.renderModelRow(id: m.id, idWidth: idWidth, sizeBytes: m.sizeBytes, location: m.path.path, marker: marker)
         }
+    }
+
+    private func renderModelRow(id: String, idWidth: Int, sizeBytes: Int64? = nil, location: String, marker: String = "") -> Void {
+        let size = sizeBytes.map(formatBytes) ?? "—"
+        let paddedId = id.padding(toLength: idWidth, withPad: " ", startingAt: 0)
+        print("  \(paddedId)  \(size.leftPad(toLength: 10))  \(location)\(marker)")
     }
 
     private func renderRemoteList(

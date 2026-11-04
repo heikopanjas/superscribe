@@ -122,6 +122,24 @@ enum TestHelpers {
         }
     }
 
+    /// Fetches the repository listing and downloads every file at its repository path (no model-specific selection).
+    static func downloadRepository(
+        model: RemoteModelInfo, backend: Backend?, into staging: URL, session: URLSession, onProgress: @Sendable @escaping (SuperscribeKit.DownloadProgress) -> Void
+    ) async throws -> Void {
+        let siblings = try await HuggingFaceHub.repoInfo(repoId: model.repoId, session: session).siblings
+        let files = siblings.map { ModelDownloadFile(rfilename: $0.rfilename, relativePath: $0.rfilename, expectedSize: $0.size) }
+        try await ModelDownloader.download(files: files, model: model, backend: backend, into: staging, session: session, onProgress: onProgress)
+    }
+
+    /// Complete diarizer layout (bundle, silence embedding, weights marker) without a loadable model.
+    static func makeDiarizerInstallation(at root: URL) throws -> Void {
+        let bundle = root.appendingPathComponent(DiarizerModel.config.modelFileName)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        try Data("bin".utf8).write(to: bundle.appendingPathComponent("coremldata.bin"))
+        try Data("emb".utf8).write(to: root.appendingPathComponent("learnable_sil_emb.bin"))
+        try DiarizerModel.writeMarker(in: root)
+    }
+
     /// Builds storage-only ASR stubs from our tiny scalar regression fixture.
     static func makeStubAsrModels(version: AsrModelVersion = .v3) throws -> AsrModels {
         let source = try #require(Bundle.module.url(forResource: "Scalar", withExtension: "mlmodel", subdirectory: "Fixtures"))
@@ -140,26 +158,22 @@ enum TestHelpers {
         )
     }
 
-    /// Runs `body` with isolated Parakeet and Whisper cache directory overrides.
+    /// Runs `body` with an isolated models root, passing its existing Parakeet and Whisper directories.
     static func withIsolatedModelCaches<T>(
         _ body: (URL, URL) async throws -> T
     ) async throws -> T {
-        let parakeetRoot = try Self.makeTempDir(prefix: "pk-cache")
-        let whisperRoot = try Self.makeTempDir(prefix: "wh-cache")
-        let priorParakeet = SuperscribePaths.overrideFluidAudioModelsDirectory
-        let priorWhisper = SuperscribePaths.overrideWhisperModelCacheDirectory
-        SuperscribePaths.overrideFluidAudioModelsDirectory = nil
-        SuperscribePaths.overrideWhisperModelCacheDirectory = nil
+        let modelsRoot = try Self.makeTempDir(prefix: "models")
+        let prior = SuperscribePaths.overrideModelsDirectory
+        SuperscribePaths.overrideModelsDirectory = nil
         defer {
-            SuperscribePaths.overrideFluidAudioModelsDirectory = priorParakeet
-            SuperscribePaths.overrideWhisperModelCacheDirectory = priorWhisper
-            try? FileManager.default.removeItem(at: parakeetRoot)
-            try? FileManager.default.removeItem(at: whisperRoot)
+            SuperscribePaths.overrideModelsDirectory = prior
+            try? FileManager.default.removeItem(at: modelsRoot)
         }
-        return try await SuperscribePaths.$taskWhisperModelCacheDirectory.withValue(whisperRoot) {
-            try await SuperscribePaths.$taskFluidAudioModelsDirectory.withValue(parakeetRoot) {
-                try await body(parakeetRoot, whisperRoot)
-            }
+        return try await SuperscribePaths.$taskModelsDirectory.withValue(modelsRoot) {
+            let parakeetRoot = SuperscribePaths.parakeetModelsDirectory()
+            let whisperRoot = SuperscribePaths.whisperModelsDirectory()
+            for root in [parakeetRoot, whisperRoot] { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) }
+            return try await body(parakeetRoot, whisperRoot)
         }
     }
 

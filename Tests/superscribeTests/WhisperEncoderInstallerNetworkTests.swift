@@ -26,7 +26,6 @@ struct WhisperEncoderInstallerNetworkTests {
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
-                    subpath: nil,
                     totalSizeBytes: nil,
                     fileCount: nil,
                     lastModified: nil,
@@ -59,7 +58,6 @@ struct WhisperEncoderInstallerNetworkTests {
                 let model = RemoteModelInfo(
                     id: "missing-bin-case",
                     repoId: repoId,
-                    subpath: nil,
                     totalSizeBytes: 999,
                     fileCount: nil,
                     lastModified: nil,
@@ -93,7 +91,6 @@ struct WhisperEncoderInstallerNetworkTests {
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
-                    subpath: nil,
                     totalSizeBytes: 10,
                     fileCount: 1,
                     lastModified: nil,
@@ -147,7 +144,6 @@ struct WhisperEncoderInstallerNetworkTests {
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
-                        subpath: nil,
                         totalSizeBytes: Int64(zipData.count),
                         fileCount: 1,
                         lastModified: nil,
@@ -199,7 +195,6 @@ struct WhisperEncoderInstallerNetworkTests {
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
-                        subpath: nil,
                         totalSizeBytes: Int64(zipData.count),
                         fileCount: 1,
                         lastModified: nil,
@@ -253,7 +248,6 @@ struct WhisperEncoderInstallerNetworkTests {
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
-                        subpath: nil,
                         totalSizeBytes: Int64(zipData.count),
                         fileCount: 1,
                         lastModified: nil,
@@ -309,7 +303,6 @@ struct WhisperEncoderInstallerNetworkTests {
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
-                        subpath: nil,
                         totalSizeBytes: nil,
                         fileCount: 1,
                         lastModified: nil,
@@ -357,7 +350,6 @@ struct WhisperEncoderInstallerNetworkTests {
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
-                    subpath: nil,
                     totalSizeBytes: 12,
                     fileCount: 1,
                     lastModified: nil,
@@ -420,7 +412,6 @@ struct WhisperEncoderInstallerNetworkTests {
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
-                    subpath: nil,
                     totalSizeBytes: 12,
                     fileCount: 1,
                     lastModified: nil,
@@ -474,7 +465,6 @@ struct WhisperEncoderInstallerNetworkTests {
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
-                        subpath: nil,
                         totalSizeBytes: Int64(zipData.count),
                         fileCount: 1,
                         lastModified: nil,

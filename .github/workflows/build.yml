@@ -20,7 +20,7 @@ jobs:
     outputs:
       version: ${{ steps.binary.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-build
@@ -30,12 +30,15 @@ jobs:
         run: _scripts/coverage.sh --run-tests
       - uses: ./.github/actions/build-release
         id: binary
+      - name: Package pre-release payload
+        if: github.event_name == 'push'
+        run: bash _scripts/package-release.sh "${{ steps.binary.outputs.version }}" "${{ steps.binary.outputs.path }}" "$RUNNER_TEMP/pre-release-dist"
       - name: Upload pre-release binary
         if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: superscribe-macos-arm64-unsigned
-          path: ${{ steps.binary.outputs.path }}
+          path: ${{ runner.temp }}/pre-release-dist/
           if-no-files-found: error
           retention-days: 14
 
@@ -47,10 +50,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: superscribe-macos-arm64-unsigned
           path: dist

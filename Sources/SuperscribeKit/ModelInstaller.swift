@@ -28,7 +28,7 @@ public enum ModelInstaller {
 
         if backend == .parakeet {
             let repository = try ParakeetBackend.huggingFaceRepoId(for: model.id)
-            guard model.repoId == repository, model.subpath == nil else {
+            guard model.repoId == repository else {
                 throw UnsupportedModelError(backend: backend, model: model.repoId)
             }
         }
@@ -68,66 +68,64 @@ public enum ModelInstaller {
                 installPath: finalDir
             )
 
-            // 3. Stage.
+            // 3. Stage, validate, and publish.
             // Whisper models are single .bin files; everything else is a folder.
-            let isSingleFile = backend == .whisperCpp
-            let parent = finalDir.deletingLastPathComponent()
-            let stagingPath = SuperscribeFS.stagingURL(beside: finalDir)
-
-            do {
-                try FileManager.default.createDirectory(
-                    at: parent, withIntermediateDirectories: true
-                )
-                if isSingleFile == true {
-                    // Download the single file directly into the staging path.
-                    try await ModelDownloader.downloadFile(
-                        model: model,
-                        into: stagingPath,
-                        session: session,
-                        onProgress: onProgress
-                    )
-                }
-                else {
-                    try await ModelDownloader.download(
-                        model: model,
-                        backend: backend,
-                        into: stagingPath,
-                        session: session,
-                        onProgress: onProgress
-                    )
-                }
-
-                // Validate staging before replacing any incomplete destination.
-                guard await Self.isInstalled(at: stagingPath, backend: backend, modelId: model.id, expectedSize: model.totalSizeBytes) == true else {
-                    throw ModelInstallationError.installFailed(path: stagingPath, underlying: CocoaError(.fileReadCorruptFile))
-                }
-                do {
-                    if SuperscribeKitTestHooks.forceModelInstallerAtomicReplaceFailure == true {
-                        throw CocoaError(.fileWriteUnknown)
+            let installed = try await Self.stageAndPublish(
+                finalDir: finalDir,
+                download: { stagingPath in
+                    if backend == .whisperCpp {
+                        try await ModelDownloader.downloadFile(model: model, into: stagingPath, session: session, onProgress: onProgress)
                     }
-                    try SuperscribeFS.atomicReplace(
-                        staging: stagingPath,
-                        final: finalDir,
-                        policy: .replaceExisting
-                    )
+                    else {
+                        // Re-fetch the sibling list so files added since the catalog was cached are not missed,
+                        // then download only what FluidAudio loads.
+                        let files = try ParakeetBackend.descriptor(for: model.id).files(in: try await HuggingFaceHub.repoInfo(repoId: model.repoId, session: session).siblings)
+                        try await ModelDownloader.download(files: files, model: model, backend: backend, into: stagingPath, session: session, onProgress: onProgress)
+                    }
+                },
+                validate: { stagingPath in
+                    return await Self.isInstalled(at: stagingPath, backend: backend, modelId: model.id, expectedSize: model.totalSizeBytes)
                 }
-                catch {
-                    throw ModelInstallationError.installFailed(path: finalDir, underlying: error)
+            )
+            if backend == .whisperCpp {
+                try await WhisperEncoderInstaller.installIfNeeded(
+                    model: model,
+                    session: session,
+                    onProgress: onProgress
+                )
+            }
+            return installed
+        }
+    }
+
+    /// Downloads into a sibling staging path, validates it, and atomically replaces `finalDir`.
+    /// Staging is removed on any failure, so an existing destination is preserved.
+    internal static func stageAndPublish(
+        finalDir: URL,
+        download: (URL) async throws -> Void,
+        validate: (URL) async -> Bool
+    ) async throws -> URL {
+        let stagingPath = SuperscribeFS.stagingURL(beside: finalDir)
+        do {
+            try FileManager.default.createDirectory(at: finalDir.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try await download(stagingPath)
+            guard await validate(stagingPath) == true else {
+                throw ModelInstallationError.installFailed(path: stagingPath, underlying: CocoaError(.fileReadCorruptFile))
+            }
+            do {
+                if SuperscribeKitTestHooks.forceModelInstallerAtomicReplaceFailure == true {
+                    throw CocoaError(.fileWriteUnknown)
                 }
-                if backend == .whisperCpp {
-                    try await WhisperEncoderInstaller.installIfNeeded(
-                        model: model,
-                        session: session,
-                        onProgress: onProgress
-                    )
-                }
-                return finalDir
+                try SuperscribeFS.atomicReplace(staging: stagingPath, final: finalDir, policy: .replaceExisting)
             }
             catch {
-                // 5. Cleanup staging on any failure.
-                try? FileManager.default.removeItem(at: stagingPath)
-                throw error
+                throw ModelInstallationError.installFailed(path: finalDir, underlying: error)
             }
+            return finalDir
+        }
+        catch {
+            try? FileManager.default.removeItem(at: stagingPath)
+            throw error
         }
     }
 
@@ -136,7 +134,7 @@ public enum ModelInstaller {
         try ModelPathValidation.identifier(modelId)
         let path = try backend.installPath(for: modelId)
         if path.isFileURL == true {
-            let root = backend == .whisperCpp ? SuperscribePaths.whisperModelCacheDirectory() : SuperscribePaths.fluidAudioModelsDirectory()
+            let root = backend == .whisperCpp ? SuperscribePaths.whisperModelsDirectory() : SuperscribePaths.parakeetModelsDirectory()
             return try ModelPathValidation.resolve(path.lastPathComponent, under: root)
         }
         return path

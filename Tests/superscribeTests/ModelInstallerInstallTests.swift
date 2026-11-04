@@ -20,13 +20,17 @@ struct ModelInstallerInstallTests {
             try? FileManager.default.removeItem(at: finalDir)
         }
 
-        let siblings = TestHelpers.parakeetFiles.map { ["rfilename": $0, "size": 3] as [String: Any] }
+        let extras = ["Encoder_v2.mlmodelc/model.mil", "mlpackages/Encoder.mlpackage/Manifest.json", "config.json"]
+        let siblings = (TestHelpers.parakeetFiles + extras).map { ["rfilename": $0, "size": 3] as [String: Any] }
         let repoPayload = try JSONSerialization.data(withJSONObject: ["id": repoId, "siblings": siblings])
 
         try await MockURLSessionHelpers.withMockHandler(
             { req in
                 guard let url = req.url else { throw URLError(.badURL) }
                 let s = url.absoluteString
+                if extras.contains(where: { s.hasSuffix($0) }) == true {
+                    Issue.record("Unneeded repository file requested: \(s)")
+                }
                 if s.contains("/api/models/\(repoId)") == true {
                     let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
                     return (resp, repoPayload)
@@ -41,7 +45,6 @@ struct ModelInstallerInstallTests {
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
-                    subpath: nil,
                     totalSizeBytes: 15,
                     fileCount: 5,
                     lastModified: nil,
@@ -56,6 +59,7 @@ struct ModelInstallerInstallTests {
                 )
                 #expect(url.path == finalDir.path)
                 #expect(await ModelInstaller.isInstalled(at: finalDir, backend: .parakeet) == true)
+                #expect(extras.allSatisfy { FileManager.default.fileExists(atPath: finalDir.appendingPathComponent($0).path) == false } == true)
             }
         )
     }
@@ -94,7 +98,6 @@ struct ModelInstallerInstallTests {
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
-                    subpath: nil,
                     totalSizeBytes: 8,
                     fileCount: 1,
                     lastModified: nil,
@@ -160,7 +163,6 @@ struct ModelInstallerInstallTests {
                     let model = RemoteModelInfo(
                         id: tag,
                         repoId: repoId,
-                        subpath: nil,
                         totalSizeBytes: 8,
                         fileCount: 2,
                         lastModified: nil,
@@ -211,7 +213,6 @@ struct ModelInstallerInstallTests {
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
-                    subpath: nil,
                     totalSizeBytes: 4,
                     fileCount: 1,
                     lastModified: nil,
@@ -278,7 +279,6 @@ struct ModelInstallerInstallTests {
                 let model = RemoteModelInfo(
                     id: tag,
                     repoId: repoId,
-                    subpath: nil,
                     totalSizeBytes: 8,
                     fileCount: 2,
                     lastModified: nil,

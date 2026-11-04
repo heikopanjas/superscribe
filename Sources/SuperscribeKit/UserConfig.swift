@@ -14,10 +14,16 @@ public struct UserConfig: Codable, Sendable {
     public var defaultModels: [String: String]
     /// User's preferred default backend (nil = built-in default `.parakeet`).
     public var defaultBackend: String?
+    /// User's preferred vocal-isolation backend (nil = built-in HTDemucs).
+    public var defaultIsolatorBackend: String?
+    /// User's preferred speaker-diarization backend (nil = built-in Nemotron).
+    public var defaultDiarizerBackend: String?
 
-    public init(defaultModels: [String: String] = [:], defaultBackend: String? = nil) {
+    public init(defaultModels: [String: String] = [:], defaultBackend: String? = nil, defaultIsolatorBackend: String? = nil, defaultDiarizerBackend: String? = nil) {
         self.defaultModels = defaultModels
         self.defaultBackend = defaultBackend
+        self.defaultIsolatorBackend = defaultIsolatorBackend
+        self.defaultDiarizerBackend = defaultDiarizerBackend
     }
 
     // MARK: - Persistence
@@ -87,15 +93,33 @@ public struct UserConfig: Codable, Sendable {
 
     /// Returns the user's preferred backend, or the built-in default.
     public func resolvedDefaultBackend() -> Backend {
-        if let raw = self.defaultBackend, let backend = Backend(rawValue: raw) {
-            return backend
-        }
-        return .parakeet
+        return Self.resolveBackend(self.defaultBackend, default: Backend.parakeet)
+    }
+
+    public func resolvedDefaultIsolatorBackend() -> IsolatorBackend {
+        return Self.resolveBackend(self.defaultIsolatorBackend, default: IsolatorBackend.htdemucs)
+    }
+
+    public func resolvedDefaultDiarizerBackend() -> DiarizerBackend {
+        return Self.resolveBackend(self.defaultDiarizerBackend, default: DiarizerBackend.nemotron)
     }
 
     /// Sets the user's preferred default backend.
     public mutating func setDefaultBackend(_ backend: Backend) -> Void {
         self.defaultBackend = backend.rawValue
         return
+    }
+
+    public mutating func setDefaultIsolatorBackend(_ backend: IsolatorBackend) -> Void {
+        self.defaultIsolatorBackend = backend.rawValue
+    }
+
+    public mutating func setDefaultDiarizerBackend(_ backend: DiarizerBackend) -> Void {
+        self.defaultDiarizerBackend = backend.rawValue
+    }
+
+    private static func resolveBackend<B: RawRepresentable>(_ rawValue: String?, default fallback: B) -> B where B.RawValue == String {
+        if let rawValue, let backend = B(rawValue: rawValue) { return backend }
+        return fallback
     }
 }

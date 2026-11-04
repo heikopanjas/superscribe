@@ -4,6 +4,183 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-11-04 (v2.3.0, 13:24 documentation and pipeline diagrams)
+
+- audit the readme against all six commands, adding missing option details, backend/model distinctions, independent configuration defaults, and processed-audio cache behavior
+- update the overview diagram to show optional isolation before detection or diarization, virtual speakers, transcription, and rendering; document serialized preparation during isolation
+- replace obsolete mvp instructions and unsupported api sketches with current architecture, processing sequence diagrams, implementation status, and explicit future-work boundaries
+- rationale: documentation still described the original isolated-track mvp and omitted parts of the implemented processing pipeline and management surface
+- validation: all 68 command-option and alias pairs match generated help; 47 cli examples, four json examples, 14 shell blocks, 80 local links and anchors, and three mermaid diagrams pass documentation checks
+- both readme library examples type-check against the built module; source, test, and package inputs and earlier update history are preserved; no unit tests were rerun for this documentation-only pass
+- version: unchanged at 2.3.0 (documentation only)
+
+### 2026-11-04 (v2.3.0, 13:06 processing backend selection)
+
+- add shared transcriber, isolator, and diarizer selectors to backend management, with listing, capabilities, and default selection for all three types
+- introduce typed htdemucs and nemotron backends with capabilities and processor factories; pipeline construction uses the independently saved defaults
+- preserve existing transcription preferences and legacy configuration decoding; missing or unknown auxiliary defaults fall back to the built-in implementations
+- share selector definitions and validation with the model command and keep backend identities separate from model variants
+- rationale: support alternate isolation and diarization implementations in the future while exposing consistent management commands today
+- validation: release build, cli smoke checks, and 514 serial strict-concurrency tests pass; new backend types and configuration code have 100 percent line and region coverage
+- the full coverage gate remains platform-limited on macos 15 at 96.40 percent lines and 95.22 percent regions, with the same existing apple speech gaps and unchanged thresholds
+- version bump: 2.2.2 to 2.3.0 (MINOR - additive cli selectors, backend types, and configuration preferences)
+
+### 2026-11-04 (v2.2.2, 12:43 transcriber model cache)
+
+- group parakeet and whisper weights and encoders under `models/transcriber/{parakeet,whisper}` through one shared path helper; diarizer and isolator roots remain siblings
+- update backend path tests and storage documentation; existing transcription folders can be moved into the new parent to retain downloaded assets
+- relocated the local parakeet and whisper folders without overwriting or re-downloading; model listing finds both existing installations at the new paths
+- validation: release build and model discovery pass, 509 serial strict-concurrency tests pass, and `SuperscribePaths.swift` has 100 percent line and region coverage; the full gate remains at 96.37 percent lines and 95.18 percent regions on macos 15, with thresholds unchanged
+- rationale: align the model cache hierarchy with the three model-type selectors without adding migration side effects to path resolution
+- version bump: 2.2.1 to 2.2.2 (PATCH - model cache organization, no public signature changes)
+
+### 2026-11-04 (v2.2.1, 12:36 metal compiler setup)
+
+- installed and registered xcode's metal toolchain component 17C7003j, then cleared stale xcrun lookup results that still selected the missing-component launcher
+- documented the separate compiler requirement and execution check for local source builds
+- rationale: swift 6.4.2 was selected correctly, but mlx shader compilation failed before the downloaded compiler was available through normal tool lookup
+- validation: `xcrun metal --version` succeeds; the standard `swift build -c release` completes with compiled metal resources, and release cli version and isolator-list smoke checks pass
+- version: unchanged at 2.2.1 (local build environment and documentation only)
+
+### 2026-11-04 (v2.2.1, 12:32 automatic swift toolchain selection)
+
+- initialize swiftly from the user's symlinked zsh login and interactive startup files in the config repository; fresh shells now resolve swift through swiftly
+- retain the installed 6.4.2 global default and the project's existing `.swift-version` pin; document persistent shell initialization in the readme
+- rationale: missing swiftly initialization caused ordinary command-line builds to select xcode's swift 6.2.4 despite the installed project toolchain
+- validation: fresh login and interactive shells select 6.4.2; a separate project pin still selects 6.3.3; a fresh login shell builds superscribe with native swiftpm without a manual path override
+- version: unchanged at 2.2.1 (local shell configuration and documentation only)
+
+### 2026-11-04 (v2.2.1, 12:26 consistent model listings)
+
+- use one row formatter for local transcription, diarizer, and isolator listings, with aligned model ids, sizes, and installation paths or missing status
+- installed isolator models now show their paths instead of the bare installed label; unknown sizes use the existing dash placeholder
+- validation: native swiftpm build, 509 serial strict-concurrency tests, and installed-model listing smoke checks pass; coverage remains at 96.37 percent lines and 95.18 percent regions on macos 15, with thresholds unchanged
+- rationale: keep the three model-type selectors visually consistent without changing model discovery or installation behavior
+- version bump: 2.2.0 to 2.2.1 (PATCH - cli display correction)
+
+### 2026-11-04 (v2.2.0, model-type selectors)
+
+- add explicit `model --transcriber` alongside `--diarizer` and `--isolator`; omitting a selector still manages transcription models
+- reject combinations of model-type selectors and document the default in cli help and the readme
+- validation: native swiftpm build, 509 serial strict-concurrency tests, and cli selector smoke checks pass; the standard build requires the missing xcode metal compiler component
+- full coverage remains at the previously recorded macos 15 levels of 96.37 percent lines and 95.18 percent regions; macos 26 validation is still required and thresholds are unchanged
+- rationale: provide symmetric selector names without changing model operations or backend resolution
+- version bump: 2.1.1 to 2.2.0 (MINOR - additive cli option)
+
+### 2026-11-02 (v2.1.1, 21:44 runtime regression validation)
+
+- 509 serial strict-concurrency unit tests pass; shader discovery has 100 percent line and region coverage
+- real htdemucs isolation succeeds using existing weights and synthetic audio with network access denied, both from a relocated release payload and the installed cli
+- incomplete installations produce a normal actionable cli error; unrelated framework shader libraries are rejected; interleaved-file warnings are absent
+- updated the local tool to 2.1.1 with its shader bundle and preserved the previous executable in a private temporary backup
+- full coverage remains platform-limited on macos 15.8.2 at 96.37 percent lines and 95.18 percent regions; macos 26 validation is still required and thresholds are unchanged
+- rationale: verify the reported crash through the production loading path rather than a manually configured gpu test
+- version: unchanged at 2.1.1
+
+
+### 2026-11-02 (v2.1.1, 21:27 Metal runtime resources)
+
+- resolve and configure shipped metal shaders before demucs starts background gpu preparation; missing resources produce an actionable error
+- fix interleaved wav file settings and terminate the vocal-isolator status line correctly
+- regression tests cover bundle layouts, executable symlinks, missing or invalid resources, and on-disk pcm settings; model integration exercises production resource lookup
+- rationale: copying only the cli into the user's tools directory omitted the shader bundle and caused an mlx runtime abort
+- version bump: 2.1.0 to 2.1.1 (PATCH - runtime resource loading and diagnostic fixes)
+
+
+### 2026-11-02 (v2.1.0, 20:53 isolation validation)
+
+- 503 serial strict-concurrency unit tests pass; isolation orchestration, caching, model policy, and pipeline integration have 100 percent line and region coverage
+- debug and release swift 6.4.2 probes compile and execute metal shaders; the opt-in metal test and relocated resource probe pass
+- optimized cli, relocated archive smoke checks, and release tooling checks under bash 3.2 and the developer's bash pass
+- full coverage gate remains unmet on this macos 15.8.2 host: 96.35 percent lines and 95.15 percent regions, with remaining gaps in existing apple speech paths requiring macos 26; thresholds remain unchanged
+- real demucs inference requires the opt-in test with installed weights and a supplied recording; no models were downloaded during unit tests
+- rationale: distinguish verified local behavior from platform-dependent coverage and model inference still awaiting validation
+- version: unchanged at 2.1.0
+
+
+### 2026-11-02 (v2.1.0, vocal isolation and swift 6.4)
+
+- add optional local vocal isolation with htdemucs and htdemucs_ft, bounded sections, explicit model recovery, and separate processed-audio cache identities
+- pin swift 6.4.2 through swiftly for local development and ci; clean debug and release dependency probes compiled metal shaders and executed on the gpu
+- preserve first-use-only model downloads through persistent installation receipts; inference disables all upstream downloads
+- rationale: remove accompaniment before transcription while retaining bounded podcast memory use and local operation
+- version bump: 2.0.0 to 2.1.0 (MINOR - additive cli options and library capability)
+
+### 2026-10-08 (v2.0.0, 18:39 readme audit)
+
+- corrected mixed-track flow, bounded padding, absolute backend timestamps, speaker numbering, and silence-threshold tuning against the implementation
+- clarified runtime versus build requirements, input-option restrictions, remote catalog behavior, and local package bootstrap requirements for library users
+- removed the stale product version, duplicate option/component references, repeated bootstrap instructions, and unsupported comparison with other transcription tools
+- linked development details to `AGENTS.md` so coverage exclusions and integration requirements have one authoritative reference
+- rationale: keep user-facing documentation accurate for 2.0.0 and reduce duplicated details that can drift
+- version: unchanged at 2.0.0 (documentation only, no code change)
+
+### 2026-10-08 (v2.0.0, 13:40 selective parakeet downloads)
+
+- parakeet installs download only the descriptor's core ml bundles plus vocabulary, exactly what fluidaudio 0.17.7 `AsrModels.load` reads at `.int8`; repos also carry encoder variants, `.mlpackage` sources, and `mlpackages/`
+- measured download size: v3 3420 to 461 MiB (87% less), v2 2456 to 443 MiB, tdt-ctc-110m 434 to 217 MiB, tdt-ja 1192 to 590 MiB; existing full installs stay valid (superset)
+- `ModelDownloadFile.select` is the single selection helper for parakeet and the diarizer; `ModelDownloadFile.totalSize` replaces three copies of the all-sizes-known sum
+- `fetchRepoSizes` fetches only supported repos and reports the selected size and file count, so catalog sizes, disk preflight, and progress totals match the actual download
+- fixed: `HuggingFaceHub.repoInfo` now requests `blobs=true`; without it hugging face omits sibling sizes, so catalog sizes showed "—", disk preflight and per-file size validation never ran, and progress had no percentage
+- breaking: removed the unused whole-repository `ModelDownloader.download(model:backend:…)`, `RemoteModelInfo.subpath`, and `ParakeetBackend.knownRepoAliases`; older catalog files with a `subpath` key still decode
+- rationale: user asked to evaluate the reduction; the loader code and hugging face file trees show no required file is skipped
+- version bump: included in 2.0.0
+
+### 2026-10-08 (v2.0.0, 13:05 models under ~/.cache/superscribe/models)
+
+- every downloaded model now lives under `~/.cache/superscribe/models/{parakeet,whisper,diarizer}` instead of fluidaudio's application support folder and `~/Library/Caches/superscribe/whisper`
+- `SuperscribePaths.modelsDirectory()` is the single overridable root; `parakeetModelsDirectory()`, `whisperModelsDirectory()`, and `diarizerModelsDirectory()` replace `fluidAudioModelsDirectory()` and `whisperModelCacheDirectory()`; removed the `ParakeetBackend.fluidAudioCacheDirectory()` forwarder; tests use one models-root override
+- parakeet folder names already equal fluidaudio's `Repo.folderName`, and offline mode keeps fluidaudio from fetching, so loading works from any root
+- no migration: earlier installs are re-downloaded on first use; the readme lists the old folders that can be deleted
+- rationale: user decision to keep all superscribe state in its own cache folder, out of fluidaudio's shared directory where fluidaudio may purge or replace files
+- version bump: included in 2.0.0 (public path api renames)
+
+### 2026-10-08 (v2.0.0, mixed-track diarization with nemotron 3)
+
+- added mixed-track input: `--mixed <path>` and template objects `{file, diarize: true, speakers: [...]}` split one recording into per-speaker tracks with nvidia nemotron 3 diarization (fluidaudio core ml, `fast128` preset, up to 8 speakers)
+- diarized speakers become virtual tracks in the intermediate transcript (mapped names, else `Speaker N` numbered across mixed tracks), so the intermediate format stays version 1 and merge/renderers are unchanged; duplicate names are allowed and merge speakers
+- frames go to the most likely speaker at or above 0.5 so overlapping speech is transcribed once; `SpeechTimeline.finalize` now holds the gap-merge/padding/min-duration rules shared by `Analyzer` and diarization
+- padding is now capped at half of the adjacent silence; default analyzer output is unchanged, only configurations where 2 × padding exceeds the gap stop producing overlapping segments
+- diarizer model installs to `nemotron-3-diarization-fast128` (flattened, weights-version marker); auto-installed on first mixed run and managed with `model --diarizer --list/--download/--rm`
+- `ModelInstaller.stageAndPublish` and `ModelDownloader.download(files:…)` are now shared by asr and diarizer installs
+- breaking: `DownloadProgress.backend` is now `Backend?` (`nil` for diarizer downloads); user chose the honest model over a misleading `.parakeet` label
+- excluded `NemotronDiarizerLiveAPI.swift` from coverage (core ml calls need the real model); orchestration stays covered via `NemotronDiarizer.openSession`
+- added opt-in `NemotronDiarizerIntegrationTests` (`SUPERSCRIBE_INTEGRATION_MIXED_AUDIO`); on a synthetic two-voice recording turns matched ground truth within ~30 ms at ~115× real time
+- resolves the 2026-09-25 reminder to look into nemotron 3 speech models; nemotron 3.5 asr was evaluated and not adopted (streaming focus, parakeet already covers offline multilingual)
+- rationale: users with shared-microphone recordings could not use superscribe; the diarizer reuses fluidaudio and keeps all downstream stages unchanged
+- version bump: 1.0.8 to 2.0.0 (MAJOR - public `DownloadProgress.backend` type change, plus new public api)
+
+### 2026-10-08 (v2.0.0, fluidaudio 0.17.7 upgrade)
+
+- upgraded fluidaudio from 0.14.3 to 0.17.7 (nemotron 3 diarization needs at least 0.17.4 for neural-engine bundles); declared with `traits: []` to skip the unused NemoTextProcessing binary
+- `ModelNames.ASR.requiredModelsV3` became a function; removed `AsrModelVersion.ctcZhCn` replaced in fast-fail tests by a missing-directory `.v3` load
+- set `ModelHub.offlineMode = true` before fluidaudio loads: 0.17.x `AsrModels.load` downloads missing files into the parent folder (a unit test fetched 469 MB into /tmp) and purges caches on load failure; superscribe owns downloads
+- `Language(rawValue:)` now also recognizes nl, da, sv, fi, hu, et, lv, lt, mt, and el, enabling fluidaudio's script filter for those `--language` values; long-form parakeet decoding defaults changed upstream
+- fixed a downloader hang: a stream whose download task was cancelled was never drained (the cancelled iterator throws before reading), so the url session never invalidated; draining now runs in a detached task
+- rationale: required for diarization; also removes hidden network access from fluidaudio
+- version bump: included in 2.0.0
+
+### 2026-09-25 (v1.0.8, open reminder: nemotron 3 speech analyzer)
+
+- **open reminder for the user:** at the start of the next session, remind the user to check out the Nemotron 3 speech analyzer
+- no decision made yet; this is a note to look into it, possibly as a future ASR backend
+- rationale: cloud sessions don't keep memory, and every session reads this file at startup
+- version: unchanged at 1.0.8 (documentation only, no code change)
+
+### 2026-09-13 (v1.0.8, 17:38 github actions node 24 upgrades)
+
+- upgraded checkout, cache, artifact upload, and artifact download to their current Node 24 action generations
+- kept the existing workflow inputs and artifact flow; GitHub-hosted runners exceed the actions' minimum runner versions
+- rationale: remove Node 20 runtime and `punycode` deprecation warnings from build and release jobs
+- version bump: 1.0.7 to 1.0.8 (PATCH - ci dependency maintenance with no public api changes)
+
+### 2026-09-13 (v1.0.7, decision log consolidation)
+
+- moved the complete decision history to `UPDATES.md` and removed the duplicate log from `AGENTS.md`
+- set `UPDATES.md` as the sole append-only history; `AGENTS.md` now holds current conventions
+- removed the `GitHub Actions` and `Migration to 1.0` sections from `README.md`
+- rationale: keep one authoritative history and remove outdated readme material
+
 ### 2026-09-12 (v1.0.7, 22:09 github release publication)
 
 - adopted aranet-kit's exact pre-release and stable naming/tagging conventions, with unsigned pre-releases on develop and feature pushes and signed/notarized stable releases on main
@@ -155,6 +332,158 @@ This file is the append-only log of project decisions and notable changes, maint
 - rationale: establish reproducible unit tests before relying on coverage for the behavioral fixes
 - version bump: 0.8.0 to 0.8.1 (PATCH - test infrastructure fixes; breaking API work has not started)
 
+
+### 2026-06-11 (v0.8.0 — appleSpeech backend)
+
+- **Apple Speech backend implemented.** `AppleSpeechBackend` actor conforms to `Transcriber`; models are BCP-47 locales (e.g. `en-US`); default from `Locale.current` with `en-US` fallback. No Hugging Face downloads — `AppleSpeechAssetInstaller` uses `AssetInventory.reserve` + `assetInstallationRequest`.
+- **Runtime availability.** Package minimum stays macOS 14; `AppleSpeechSupport.isRuntimeAvailable()` gates the backend at runtime (macOS 26+). CLI `backend --list` annotates `(requires macOS 26+)` when unavailable.
+- **LiveAPI shim pattern.** Speech framework isolation in `AppleSpeechBackend+LiveAPI.swift` (coverage-excluded); `AppleSpeechTranscriberBridge.make(model:)` holds `#available` transcriber construction so `BackendDispatch.swift` stays fully coverable.
+- **Tests.** Six new suites (`AppleSpeechSupportTests`, `AppleSpeechBackendTests`, etc.); stub hooks for locale lists, transcription spans, and API availability without real Speech assets.
+
+### 2026-05-19 (v0.7.10 — 100% region coverage gate)
+
+- **Region coverage gate.** `_scripts/coverage.sh` now fails when SuperscribeKit **region** coverage drops below 100% (in addition to line coverage). Fifteen branch/region gaps closed with targeted tests and small dead-code removals (`AudioPreparer` progress fraction ternary).
+- **`ModelInstaller.exerciseInstallLockEarlyReturnForTesting()`.** Covers the install-lock fast path when `LockSignal.wait()` runs after `fire()`.
+
+### 2026-05-19 (v0.7.9 — DRY + 100% SuperscribeKit coverage policy)
+
+- **DRY principle documented.** Primary instructions, a dedicated **DRY (Don't Repeat Yourself)** section under Best Practices, and Swift Coding Standards now require single authoritative implementations — search before writing, extract on the second duplication, and apply DRY to tests as well.
+- **Mandatory 100% line coverage.** Primary instructions, Best Practices, and **Test Coverage (mandatory)** require `_scripts/coverage.sh --run-tests` to pass at 100% after every `SuperscribeKit` change. The gate must not be lowered; fix gaps with tests or documented exclusions only.
+
+### 2026-05-19 (v0.7.9 — whisper tests without disk models)
+
+- **No on-disk whisper.cpp models in tests.** Removed `transcribeMediumIntegrationWhenInstalled` and `transcribeSpeechExtractsWordsWhenMediumInstalled` (required `medium.bin` in the real cache). `WhisperBackend` gains `testUseStubLoad`, `testWhisperAPISegments`, and injected context/state pointers (`stub-*` model ids only) so failure paths and word extraction run without GGML downloads or inference.
+- **`WhisperContext.testStub()`.** Placeholder context that skips `whisper_free` in deinit; enabled via `testUseStubLoad` and a `stub-*` model id so disk-load tests cannot accidentally pick up leaked hook state.
+- **`WhisperBackend+LiveAPI.swift`.** whisper.cpp C API calls and stub/live branching live here; excluded from `_scripts/coverage.sh` via `-ignore-filename-regex` because live paths require a real GGML model. Unit tests exercise stub hooks in `WhisperBackend.swift` only.
+
+### 2026-05-19 (v0.7.8 — Parakeet disk-load test stubs)
+
+- **No HF downloads in Parakeet disk-load tests.** Removed tests that called real `AsrModels.load(from:)` on stub install dirs. Disk-load coverage uses `parakeetMaterializeFromDiskStub`, `parakeetAsrModelsLoad`, and `parakeetAsrManagerLoadModels` instead.
+- **`TestHelpers.makeStubAsrModels()`.** Builds `AsrModels` from a macOS system Core ML bundle (`MapsSuggestionsTransportModePrediction.mlmodelc`); `AsrManager.loadModels` only stores references, so no inference or Hugging Face fetch is needed.
+- **`parakeetAsrManagerLoadModels` moved.** Hook now applies inside `loadParakeetModelsIntoManager` (not early-return in `materializeFromDiskUsingFluidAudio`), so the load-assemble path stays covered without skipping `loadAsrModels`.
+
+### 2026-05-19 (v0.7.7 — parallel-safe test harness)
+
+- **Swift Testing parallelizes by default.** Shared hooks, path overrides, and mock URL handlers race when suites run concurrently. Use **`_scripts/test.sh`** or **`swift test --no-parallel -Xswiftc -strict-concurrency=complete`**. Plain `swift test` may flake.
+- **`ResetSharedStateTrait`.** Every `@Suite` resets shared overrides before/after each test; all suites also use `.serialized`.
+- **`MockURLSessionHelpers`.** Per-session handler map; `withMockHandler` passes `URLSession` into the body closure. Fast-path install tests use `URLSession.shared` when no mock is needed.
+- **TaskLocal path/config overrides.** `SuperscribePaths.task*Directory` and `UserConfig.taskOverrideConfigFileURL` for per-task isolation in tests.
+
+### 2026-05-19 (v0.7.6 — 100% SuperscribeKit line coverage gate)
+
+- **Coverage gate passes.** `_scripts/coverage.sh --run-tests` reports **100.00%** SuperscribeKit line coverage; **307 tests** in 57 suites under `-strict-concurrency=complete` and `--no-parallel`.
+- **Tier 4 gap tests.** `FinalLineCoverageGapTests` + `WhisperEncoderInstallerNetworkTests` cover nil-coalescing branches (manifest load failures, HF download totals, encoder zip size nil, Parakeet registry edge cases, `SuperscribeFS` listing failures).
+- **Test hooks.** `SuperscribeKitTestHooks` adds `forceContentsOfDirectoryFailure`, `forceUnzipInvalidStderr`, `forceEncoderBundleEnumeratorNil`. `WhisperEncoderInstaller.decodeUnzipStderr(raw:)` extracted for branch coverage; `WhisperBackend` uses named `suppressLibraryLog` C callback + `invokeLogSuppressorsForTesting()`.
+- **ModelDownloader.** `knownTotal` reduce uses force-unwrap after `allSatisfy` (drops unreachable `?? 0` in closure).
+
+### 2026-05-19 (v0.7.5 — SuperscribeKit coverage tests)
+
+- **`ModelInstaller.install(session:)`.** Optional `URLSession` argument (default `.shared`) threaded through downloads and `WhisperEncoderInstaller` so tests use `URLSession.mocked()` without global protocol registration.
+- **`TestHelpers.withTempDirectory` async overload.** Supports `async throws` bodies used by downloader/installer network tests.
+- **`ParakeetBackend.ensureLoaded`.** Fixed missing `return` before `loader.get { … }` (compile regression).
+- **New test files (Swift Testing, `@testable`, explicit bool checks):** `MockURLSession.swift`, `UserConfigTests`, `DownloadProgressTrackerTests`, `ParakeetBackendTests`, `WhisperBackendTests`, `HuggingFaceHubNetworkTests`, `ModelDownloaderNetworkTests`, `ModelInstallerInstallTests`, `WhisperEncoderInstallerNetworkTests`, `IntermediateTranscriptTests`. Whisper integration test guards on `medium.bin`; Parakeet missing-model test guards when `tdt-ja` is installed.
+
+### 2026-05-19 (v0.7.4 — Tier 3 DRY refactor + tests)
+
+- **TestHelpers.swift.** Shared `makeTempDir`, `withTempDirectory`, `makeTempSineWAV`, `runMockPipeline`, and `MockTranscriber`; migrated Pipeline, ConvertedAudioCache, ModelInstaller, and CatalogStore tests.
+- **TrackInputScanning.** Extracted `audioExtensions` + directory scan/sort/map from `TranscribeCommand.runCreateInput`; `TrackInputTests` cover filter, sort, speaker keys.
+- **Backend resolution unified.** `BackendManager.resolveBackend(cliBackend:config:)` replaces `ModelCommand.resolvedBackend`; optional `config` param on `resolveBackendAndModel` for tests. `BackendManagerTests` cover CLI > config > built-in priority.
+- **formatAge moved.** From private `CacheCommand` helper to `Utilities.swift` alongside `formatDate`; `FormatAgeTests` added.
+- **Test cleanup.** Removed duplicate `WhisperRegistryTests.installPathUsesCacheDirectory`; fixed all `try! #require` to `throws` + `try #require`. 133 tests pass.
+
+### 2026-05-19 (v0.7.3 — Tier 2 DRY refactor + tests)
+
+- **`SuperscribeFS`.** `URL+SuperscribeFS.swift`: staging URLs, directory/file checks, `atomicReplace`, Core ML bundle detection.
+- **`SuperscribePaths`.** Named accessors for all five intentional cache/config roots (not unified).
+- **`ConcurrencyHelpers.withBoundedThrowingTaskGroup`.** Shared bounded concurrency for `ModelDownloader`, `Pipeline`, and Parakeet repo fetches.
+- **`DownloadProgressTracker` + `DownloadProgressReporting`.** Extracted from `ModelDownloader`; encoder install uses shared progress tick helper.
+- **`ProgressReporting.throttleInterval`.** Single ~10 Hz constant for download + conversion reporters.
+- **`PipelineConfig.backend`.** Metadata now records the actual backend (was hardcoded `.parakeet`).
+- **Empty-samples guard** moved from backends into `Pipeline.transcribeSegments`.
+- **Default `Transcriber.isAvailable`** on Apple Silicon via protocol extension; backends drop duplicate `#if arch(arm64)`.
+- **CLI utilities.** `assertMutuallyExclusive`, `confirm`, `printErr` in `Utilities.swift`; used by `ModelCommand` and `CacheCommand`.
+- **Tests.** 30 new tests across `FilesystemHelpersTests`, `SuperscribePathsTests`, `CLIUtilitiesTests`, `HTTPValidationTests`, `ConcurrencyHelpersTests`, `SortingTests`, `WhisperEncoderInstallerTests`, `TranscriberAvailabilityTests`; extended `PipelineTests` and `ParakeetRegistryTests` (117 total).
+
+### 2026-05-19 (v0.7.2 — Tier 1 DRY refactor + tests)
+
+- **`PipelineRunner`.** Shared transcribe bootstrap for `transcribe` and `run` with injectable `Dependencies` for tests.
+- **`TokenAccumulator`.** Unified sub-word → word merging for Parakeet and Whisper backends (`Backends/TokenMerging.swift`).
+- **`Backend` dispatch.** `BackendDispatch.swift` centralizes `installPath`, `remoteModels`, `installedModels`, `makeTranscriber`, and `registryDefaultModelId`; `BackendManager`/`ModelManager`/`ModelInstaller.installPath` delegate to it.
+- **`LoadOnce` actor.** Replaces per-backend `loadingTask` coalescing; clears in-flight task on failure for retry. `ModelInstallSupport.requireInstalled` shared preflight.
+- **`ModelDownloader.streamBytes`.** Single async byte-stream writer for `downloadOne` and `downloadRepoFile`.
+- **Shared Kit helpers.** `ByteFormatting`, `JSONCoding` (catalog/config/transcript encoders), `HTTPValidation.isSuccess`.
+- **CLI helpers.** `saveIntermediateTranscript`, `printTranscribeSummary`, `defaultIntermediateOutputPath`, `clearProgressLine` in `Utilities.swift`.
+- **Tests.** 33 new tests across `TokenMergingTests`, `PipelineRunnerTests`, `BackendDispatchTests`, `ModelDownloaderTests`, `JSONCodingTests`, `LoadOnceTests`, `CLIHelpersTests`, `ByteFormattingTests` (87 total).
+
+### 2026-05-19 (v0.7.1 — coverage infrastructure, Tier 0 DRY refactor)
+
+- **`_scripts/coverage.sh`.** Reports SuperscribeKit line coverage via `llvm-cov`; exits non-zero when below `COVERAGE_MIN` (default 100). Run `swift test --enable-code-coverage` first, or pass `--run-tests`. Baseline recorded in `_scripts/coverage-baseline.txt` (43.32% line coverage as of 2026-05-19).
+- **Test target links CLI.** `superscribeTests` now depends on `superscribe` executable so future CLI helper tests can `@testable import superscribe`.
+
+### 2026-05-19 (v0.7.0 — whisper Core ML encoder / ANE)
+
+- **Unified whisper xcframework (Metal + Core ML).** `_scripts/bootstrap.sh` enables `WHISPER_COREML=1` and `WHISPER_COREML_ALLOW_FALLBACK=1` in the same CMake configure as `GGML_METAL`; merges `libwhisper.coreml.a` into the single static archive. `Package.swift` links `CoreML` and `Foundation`. Must rebuild `whisper-build/` after pull — never link a second Core-ML-only library.
+- **Encoder bundle install.** `WhisperEncoderInstaller` auto-downloads `ggml-<base>-encoder.mlmodelc.zip` from Hugging Face alongside the `.bin`; installed as `{cache}/<base>-encoder.mlmodelc/`. Quantized model ids strip `-q5_0` etc. for encoder base name (matches whisper.cpp path logic).
+- **Metal preserved.** Decoder and encoder fallback remain on Metal/GGML when the Core ML bundle is absent.
+
+### 2026-05-19 (v0.6.2 — whisper perf + download progress)
+
+- **Whisper decode speed.** `WhisperBackend` sets `ctxParams.flash_attn = true` (Metal fused attention) and `params.temperature_inc = 0.0` (skip temperature fallback re-runs on low-confidence segments).
+- **Model download progress.** `ModelDownloader` reports the HF `rfilename` in progress ticks; throughput uses a 1 s sliding window with overall-average fallback so the rate column populates from the first byte. `ModelManager.makeDownloadProgressHandler` renders fixed-width columns with `ESC[2K` line clear; `String.rightPad` added in `Utilities.swift`.
+- **Agent skills.** Duplicate `swift-testing-pro` under `.github/skills/` removed; `init-session` prompt moved to `.cursor/commands/init-session.md`. Skill frontmatter added for `git-workflow` and `semantic-versioning`.
+
+### 2026-05-18 (v0.6.1 — CLI refactor + style sweep)
+
+- **Flat CLI source layout.** Split `Sources/superscribe/Commands/Subcommands.swift` (1037 lines) into one file per command directly under `Sources/superscribe/`: `Superscribe.swift`, `Options.swift`, `TranscribeCommand.swift`, `MergeCommand.swift`, `RunCommand.swift`, `ModelCommand.swift`, `BackendCommand.swift`, `CacheCommand.swift`. The `Commands/` subdirectory is removed.
+- **Backend/Model managers.** Extracted backend resolution and transcriber construction into `BackendManager` (with `resolveBackendAndModel`, `builtInDefaultModel`, `makeTranscriber`); extracted catalog fetch, install-state queries, and `ensureModelInstalled` into `ModelManager`. Both are `final class` with `private init()` and `static` methods. Shared CLI helpers (progress reporter, byte/date formatting, `String.leftPad`) live in `Utilities.swift`.
+- **Explicit Bool comparisons.** Per project preference, all `if`/`guard`/`while`/`else if` boolean conditions across `Sources/` now compare explicitly: `!x` → `x == false`, bare `x` → `x == true`. Pattern bindings (`if let`, `if case`), `==`/`!=` comparisons, and ternaries are unchanged.
+- **swift-format pass** over `Sources/` and `Package.swift` with the repo `.swift-format` config (Xcode 6.2.3 toolchain).
+
+### 2026-05-18 (v0.6.0 polish + README/LICENSE)
+
+- **README.md added.** Full user-facing docs: requirements, quick start, backends, model management, every subcommand with option tables, `--create-input`/`--input` workflow, intermediate JSON format, xcframework build instructions, project structure. No emojis per user preference.
+- **LICENSE added.** MIT, copyright 2026 Heiko Panjas.
+- **Special-token leak fix (WhisperBackend).** `extractTimedWords` previously only filtered tokens with negative ids, which let whisper's `[_BEG_]` (50363) and `[_TT_N]` (50364–50563) bracket tokens leak into transcribed word text. Now also skips any token whose text starts with `"[_"`.
+- **Default transcript filename includes backend.** `--output` default changed from `transcript.superscribe.json` to `transcript.superscribe.<backend>.json` so parakeet and whisper.cpp results don't overwrite each other. User-supplied `--output` still wins.
+- **`transcribe --create-input <dir>`.** Stand-alone option that scans a directory for audio files (`mp3 wav m4a aac flac ogg mp4 mov caf opus`), sorts with `localizedStandardCompare`, and writes `tracks.superscribe.json` to the *current working directory* with `speaker-<n>` → cwd-relative path mappings. Mutually exclusive with `--track` and `--input`.
+- **`transcribe --input <file>`.** Loads a `[String: String]` track-mapping JSON (as produced by `--create-input`) and resolves filenames relative to cwd. Mutually exclusive with `--track`.
+- **Pipeline trims empties.** `IntermediateTranscript` now drops segments where `words.isEmpty` (silence-analyzer false positives — breath, FX, music above dB threshold) and drops tracks where `segments.isEmpty` (FX/noise tracks).
+- **Committed as `f6b76fd`.** 24 files, 943 insertions, 388 deletions.
+
+### 2026-05-18 (cache subcommand)
+
+- **`cache` subcommand added (v0.6.0).** New `superscribe cache` CLI subcommand with four operations: default (print location + entry count + total size), `--list` (one line per entry: digest, size, age), `--clear [--yes]` (delete entire cache directory with `[y/N]` confirmation), `--rm <path>` (delete the entry for a specific source file using current metadata). Both backends use `.asr16kMono` (`f32-16000-1`), so there is exactly one cache entry per source file and no `--backend` disambiguation is needed. No library changes — all required API (`defaultRoot`, `key(for:targetFormat:)`, `lookup`, `cacheURL`) was already public on `ConvertedAudioCache`. `formatAge` private helper added for human-readable relative timestamps. `CacheCommand` follows the same `validate()` mutual-exclusivity and `[y/N]` confirmation patterns as `ModelCommand`.
+
+### 2026-05-18 (whisper.cpp migration)
+
+- **Whisper backend: migrated to whisper.cpp static xcframework (v0.5.0).** Replaced the `argmax-oss-swift` Swift package dependency with a static arm64 xcframework built from whisper.cpp v1.7.5 source. The xcframework is built once by `_scripts/bootstrap.sh` (requires cmake + ninja), output to `whisper-build/whisper.xcframework` (gitignored), and consumed via SPM `.binaryTarget(path:)`. `SuperscribeKit` gains `linkerSettings` for `Metal`, `MetalKit`, `Accelerate`, and `c++`. This pins the whisper.cpp C API version the user runs against regardless of their system state — API breakage is only ever visible when we deliberately upgrade the xcframework. Drops 6 transitive Swift deps (swift-transformers, swift-jinja, yyjson, swift-crypto, swift-asn1, swift-collections).
+- **Model catalog changed.** Whisper models are now single GGML `.bin` files from `ggerganov/whisper.cpp` on HuggingFace. `defaultModelId = "large-v3-turbo"` (hyphen, not underscore). Install path changed from `~/Documents/huggingface/.../openai_whisper-<id>/` (old convention) to `~/Library/Caches/superscribe/whisper/<id>.bin`. Old model folders are orphaned; user can delete manually.
+- **ModelInstaller single-file support.** `isInstalled(at:backend:)` for `.whisper` now checks for a regular file (not a directory + `.mlmodelc`). Staging uses a sibling `.bin.staging-<uuid>` file path (not a staging directory). `ModelDownloader.downloadFile(model:into:onProgress:)` added for single-file downloads.
+- **WhisperBridge.swift deleted.** Bridging helpers (`extractWords`, `WKWord`) are no longer needed; whisper.cpp token data is read directly via C API in `WhisperBackend.extractTimedWords`.
+- **Build integration.** `_scripts/bootstrap.sh` handles: prerequisite check (cmake/ninja), download of v1.7.5 tarball, cmake configure (arm64, Metal embedded, no examples/tests), ninja build, libtool combine of all `libggml*.a` + `libwhisper.a`, xcodebuild xcframework creation, module.modulemap injection.
+
+### 2026-05-02 (audio cache)
+
+- **Audio converter: live progress + persistent cache (v0.4.0).** `AudioPreparer` now reports streaming `ConversionProgress` (source frames consumed, fraction 0–1) via an optional `(@Sendable) -> Void` callback; the converter loop reads the source in ~1 s chunks and feeds them to `AVAudioConverter` instead of the previous one-shot whole-file convert. New `ConvertedAudioCache` (`Sources/SuperscribeKit/ConvertedAudioCache.swift`) persists already-converted PCM as WAV under `~/.cache/superscribe/audio/<sha256>.wav`. Cache key = `sha256(absPath │ size │ mtime_ns │ formatKey)` where `formatKey` = `"f32-<rate>-<channels>"` derived from `BackendCapabilities.requiredAudioFormat` — future backends with different requirements get separate entries automatically. Writes are atomic (sibling `.staging-<uuid>` then `moveItem`). On a cache hit, the WAV reads back through the existing fast path with zero re-conversion. CLI: `transcribe`/`run` enable the cache by default and now print a throttled (~10 Hz) `Converting <name> [N%]` line per track on stderr; new `--no-cache` flag opts out. Verified end-to-end on a 30-min mp4: cold run writes a 321 MB WAV; warm run skips conversion entirely.
+
+### 2026-05-02 (even later)
+
+- **Model installer + lifecycle (v0.3.0).** Superscribe now owns all model downloads end-to-end. New `ModelDownloader` (URLSession byte-stream, ≤4 parallel files, 64 KiB write batches, ~10 Hz throttled progress) and `ModelInstaller` (atomic stage-then-rename via `<finalDir>.staging-<uuid>`, quota-aware preflight via `URLResourceKey.volumeAvailableCapacityForImportantUsageKey`, single global serial install lock). Backends now load-from-disk only — `WhisperBackend` loads a GGML `.bin` via `whisper_init_from_file_with_params`, `ParakeetBackend` uses `AsrModels.load(from:)`; both throw `ModelInstallationError.modelNotInstalled` if the local folder is missing. `transcribe` and `run` auto-install the resolved model with a live stderr progress line before transcribing. `models` gains `--download <id>` (idempotent, prints `Already installed at …` or installs with progress) and `--rm <id>` (interactive `[y/N]` confirmation, `--yes` to bypass).
+- **Parakeet on-disk path corrected.** `ParakeetBackend.fluidAudioCacheDirectory()` was scanning `~/.cache/fluidaudio/Models` (FluidAudio's TTS path) — the actual ASR cache is `~/Library/Application Support/FluidAudio/Models/<folderName>`. Also: FluidAudio's `Repo.folderName` strips the `-coreml` suffix (e.g. HF repo `parakeet-tdt-0.6b-v3-coreml` → folder `parakeet-tdt-0.6b-v3`) and `parakeet-ja` differs from its HF repo name `parakeet-0.6b-ja-coreml`. Introduced a single `ParakeetBackend.ModelDescriptor` table linking short id ↔ HF repo bare name ↔ on-disk folder name; `installPath` and `installFolderName` now match FluidAudio's convention exactly so previously-downloaded models are detected without migration. `installedModels` requires a `.mlmodelc` bundle to count as installed.
+
+### 2026-05-02 (later)
+
+- **Models command rework (v0.2.0).** Hugging Face Hub is now the authoritative model catalog. New `ModelRegistry` protocol replaces per-backend `availableModels` enums; each backend exposes `defaultModelId`, `remoteModels()`, and `installedModels()`. Added `HuggingFaceHub` URLSession client (tolerates fractional-second ISO 8601 dates) and `CatalogStore` persisting to `~/.cache/superscribe/catalog.json` with schema `{ version, entries: { backend → { fetchedAt, models } } }`. `models` rewritten as `AsyncParsableCommand` with flags `--list` (implicit), `--remote`, `--refresh`, `--set-default <id>`, `--backend`, `--json`. `backends --capabilities` trimmed to a one-screen summary that points at `models --list --remote`. Decisions locked in for future work: no partial downloads (atomic stage-then-rename), and download commands must show live progress.
+
+### 2026-05-02
+
+- **Library extraction.** Split single `superscribe` executable into `SuperscribeKit` library target + thin `superscribe` CLI executable. Core logic (types, analyzer, merger, formatters, pipeline, backends) lives in `SuperscribeKit`; CLI imports it plus `ArgumentParser`. Tests depend on `SuperscribeKit`. Reasoning: enables framework-based consumption beyond CLI (Swift apps, third-party integrations).
+- **Backend enum cleanup.** Renamed `Backend.mlx` → `.parakeet`, dropped `.auto` and `.openai`. Remaining cases: `.parakeet` (default, FluidAudio), `.whisper` (whisper.cpp), `.appleSpeech` (reserved, macOS 26).
+
+### 2026-05-01
+
+- **Backend research recorded.** MLX Whisper does not exist for Swift; Phase 3 spike concluded. Recommended MVP backend is FluidAudio (Parakeet TDT v3, CoreML/ANE, Apache-2.0). whisper.cpp (GGML) is the planned secondary backend; Apple `SpeechAnalyzer` is reserved for when a macOS 26 deployment floor is acceptable. Findings captured in [_docs/podscribe-design.md](_docs/podscribe-design.md) Appendix A and [_docs/superscribe-mvp-implementation-plan.md](_docs/superscribe-mvp-implementation-plan.md). Project paused pending user decision on backend; state frozen in `/memories/repo/superscribe-state.md`.
+- Reference the `swift-testing-pro` skill in the Swift Coding Standards section so it is loaded for any test-related work. Reasoning: the skill was added to the project and should be discoverable from AGENTS.md.
 
 ### 2025-10-05 (v0.1.0, initial setup)
 

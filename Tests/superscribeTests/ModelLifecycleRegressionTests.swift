@@ -23,7 +23,7 @@ struct ModelLifecycleRegressionTests {
         let binDirectory = WhisperBackend.installPath(for: "tiny")
         try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
         #expect(try WhisperBackend.installedModels().isEmpty == true)
-        let staging = SuperscribePaths.fluidAudioModelsDirectory().appendingPathComponent("parakeet-tdt-0.6b-v3.staging-test/model.mlmodelc")
+        let staging = SuperscribePaths.parakeetModelsDirectory().appendingPathComponent("parakeet-tdt-0.6b-v3.staging-test/model.mlmodelc")
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         #expect(try ParakeetBackend.installedModels().isEmpty == true)
     }

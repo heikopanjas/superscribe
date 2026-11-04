@@ -26,7 +26,12 @@ public final class PreparedAudio: Sendable {
 
     /// Opens an independent reader so active segment jobs never share a file cursor.
     public func samples(in segment: SpeechSegment) throws -> [Float] {
-        let range = try AudioValidation.sliceRange(segment: segment, sampleRate: self.format.sampleRate, count: Int(self.frameCount))
+        return try self.samples(in: try AudioValidation.sliceRange(segment: segment, sampleRate: self.format.sampleRate, count: Int(self.frameCount)))
+    }
+
+    /// Reads a frame range clamped to the file, so consecutive windows tile the audio exactly.
+    public func samples(in frames: Range<Int>) throws -> [Float] {
+        let range = frames.clamped(to: 0 ..< Int(self.frameCount))
         if range.isEmpty == true { return [] }
         let file = try AVAudioFile(forReading: self.url)
         file.framePosition = Int64(range.lowerBound)

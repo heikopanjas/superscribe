@@ -18,12 +18,37 @@ internal enum AudioBuffers {
 
     internal static func format(_ format: AudioFormat) throws -> AVAudioFormat {
         try AudioValidation.validate(format)
+        return try Self.pcmFormat(format)
+    }
+
+    internal static func pcmFormat(_ format: AudioFormat) throws -> AVAudioFormat {
         guard let result = Self.dependencies.format(format) else { throw AudioPreparerError.conversionFailed("Cannot construct audio format") }
         return result
+    }
+
+    /// WAV storage is interleaved; processing buffers can remain planar Float32.
+    internal static func fileSettings(for format: AVAudioFormat) -> [String: Any] {
+        var settings = format.settings
+        settings[AVLinearPCMIsNonInterleaved] = false
+        return settings
     }
 
     internal static func channels(_ buffer: AVAudioPCMBuffer) throws -> UnsafePointer<UnsafeMutablePointer<Float>> {
         guard let channels = buffer.floatChannelData else { throw AudioPreparerError.conversionFailed("Expected Float32 audio samples") }
         return channels
+    }
+
+    /// Carry task-scoped audio and filesystem dependencies onto a blocking-I/O worker.
+    internal static func perform<Value: Sendable>(_ operation: @Sendable @escaping (CancellationFlag) throws -> Value) async throws -> Value {
+        let buffers = Self.dependencies
+        let hooks = SuperscribeKitTestHooks.testState
+        let locks = FileTransaction.lockOperation
+        return try await BlockingWorker(label: "superscribe.audio.io").run { cancellation in
+            return try Self.$dependencies.withValue(buffers) {
+                return try SuperscribeKitTestHooks.$testState.withValue(hooks) {
+                    return try FileTransaction.$lockOperation.withValue(locks) { try operation(cancellation) }
+                }
+            }
+        }
     }
 }

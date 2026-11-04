@@ -55,9 +55,8 @@ public struct Analyzer: Sendable {
             index += length
         }
         if let start { raw.append(SpeechSegment(start: Double(start) / sampleRate, end: totalDuration)) }
-        return Self.mergeShortGaps(raw, minGap: self.config.minSilenceDuration).map {
-            SpeechSegment(start: max(0, $0.start - self.config.padding), end: min(totalDuration, $0.end + self.config.padding))
-        }.filter { $0.duration >= self.config.minSegmentDuration }
+        let turns = raw.map { SpeakerTurn(speakerIndex: 0, segment: $0) }
+        return SpeechTimeline.finalize(turns, duration: totalDuration, config: self.config).map(\.segment)
     }
 
     // MARK: - Helpers
@@ -70,24 +69,6 @@ public struct Analyzer: Sendable {
             sumSquares += sample * sample
         }
         return (sumSquares / Float(end - start)).squareRoot()
-    }
-
-    private static func mergeShortGaps(
-        _ segments: [SpeechSegment],
-        minGap: TimeInterval
-    ) -> [SpeechSegment] {
-        guard let first = segments.first else { return [] }
-        var result: [SpeechSegment] = [first]
-        for segment in segments.dropFirst() {
-            let last = result[result.count - 1]
-            if segment.start - last.end < minGap {
-                result[result.count - 1] = SpeechSegment(start: last.start, end: segment.end)
-            }
-            else {
-                result.append(segment)
-            }
-        }
-        return result
     }
 
     internal static func readMonoFloat32(from url: URL) throws -> (samples: [Float], sampleRate: Double) {

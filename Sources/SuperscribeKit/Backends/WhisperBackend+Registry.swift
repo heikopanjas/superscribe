@@ -29,11 +29,11 @@ extension WhisperBackend: ModelRegistry {
     /// On-disk location for an installed Whisper GGML model.
     /// Single `.bin` file under our own cache root.
     public static func installPath(for modelId: String) -> URL {
-        return Self.whisperCacheDirectory().appendingPathComponent("\(modelId).bin")
+        return SuperscribePaths.whisperModelsDirectory().appendingPathComponent("\(modelId).bin")
     }
 
     public static func installedModels() throws -> [InstalledModelInfo] {
-        let dir = Self.whisperCacheDirectory()
+        let dir = SuperscribePaths.whisperModelsDirectory()
         guard FileManager.default.fileExists(atPath: dir.path) == true else { return [] }
         let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         return
@@ -50,7 +50,7 @@ extension WhisperBackend: ModelRegistry {
 
     /// Directory whisper.cpp loads for ANE encoder inference (`{base}-encoder.mlmodelc`).
     public static func encoderInstallPath(for modelId: String) -> URL {
-        return Self.whisperCacheDirectory().appendingPathComponent(
+        return SuperscribePaths.whisperModelsDirectory().appendingPathComponent(
             "\(Self.encoderBaseId(for: modelId))-encoder.mlmodelc",
             isDirectory: true
         )
@@ -113,7 +113,6 @@ extension WhisperBackend: ModelRegistry {
             return RemoteModelInfo(
                 id: id,
                 repoId: Self.huggingFaceRepoId,
-                subpath: nil,
                 totalSizeBytes: sibling.size,
                 fileCount: 1,
                 lastModified: lastModified,
@@ -121,11 +120,5 @@ extension WhisperBackend: ModelRegistry {
             )
         }
         .sortedById()
-    }
-
-    // MARK: - Private
-
-    static func whisperCacheDirectory() -> URL {
-        return SuperscribePaths.whisperModelCacheDirectory()
     }
 }

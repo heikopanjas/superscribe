@@ -2,15 +2,14 @@ import Foundation
 
 // MARK: - Backend capabilities
 
-/// Describes what a transcription backend supports and requires.
+/// Describes a processing backend's audio requirements and built-in model.
 public struct BackendCapabilities: Sendable {
     /// The PCM audio format the backend requires.
     public let requiredAudioFormat: AudioFormat
     /// Human-readable name for logging / UI.
     public let displayName: String
     /// Built-in fall-back model id for this backend (used when neither the
-    /// user nor the CLI supplied one). The authoritative model catalog lives
-    /// remotely and is exposed via `ModelRegistry`.
+    /// user nor the CLI supplied one).
     public let defaultModelId: String
 
     public init(

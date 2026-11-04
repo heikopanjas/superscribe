@@ -43,9 +43,9 @@ struct ParakeetRegistryTests {
     }
 
     @Test func fetchRepoSizesCapsConcurrency() async throws -> Void {
-        let repos = (0 ..< 8).map { index in
+        let repos = ParakeetBackend.knownDescriptors.map { descriptor in
             HuggingFaceHub.HFRepo(
-                id: "FluidInference/parakeet-repo-\(index)",
+                id: "FluidInference/\(descriptor.hfRepoBareName)",
                 lastModified: nil
             )
         }

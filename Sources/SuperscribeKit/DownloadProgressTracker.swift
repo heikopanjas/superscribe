@@ -3,7 +3,7 @@ import Foundation
 /// Throttled download progress reporter shared by `ModelDownloader` and encoder installs.
 actor DownloadProgressTracker {
     private let modelId: String
-    private let backend: Backend
+    private let backend: Backend?
     private let filesTotal: Int
     private let bytesTotal: Int64?
     private let onProgress: @Sendable (DownloadProgress) -> Void
@@ -20,7 +20,7 @@ actor DownloadProgressTracker {
 
     init(
         modelId: String,
-        backend: Backend,
+        backend: Backend?,
         filesTotal: Int,
         bytesTotal: Int64?,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void,

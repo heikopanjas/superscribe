@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.4
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import Foundation
@@ -14,7 +14,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.2.0"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.14.3")
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.17.7", traits: []),
+        .package(url: "https://github.com/ssmall256/demucs-mlx-swift", exact: "0.1.0")
     ],
     targets: [
         .binaryTarget(
@@ -25,6 +26,8 @@ let package = Package(
             name: "SuperscribeKit",
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "DemucsMLX", package: "demucs-mlx-swift"),
+                .product(name: "DemucsAudio", package: "demucs-mlx-swift"),
                 "whisper"
             ],
             linkerSettings: [

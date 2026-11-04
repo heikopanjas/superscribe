@@ -25,7 +25,6 @@ struct WhisperRegistryTests {
         let base = try #require(byId["base"])
         #expect(base.totalSizeBytes == 100_000_000)
         #expect(base.fileCount == 1)
-        #expect(base.subpath == nil)
         #expect(base.repoId == WhisperBackend.huggingFaceRepoId)
 
         let turbo = try #require(byId["large-v3-turbo"])

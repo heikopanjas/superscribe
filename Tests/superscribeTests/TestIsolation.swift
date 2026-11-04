@@ -6,8 +6,7 @@ import Testing
 enum TestIsolation {
     static func runInTemporaryStorage(_ function: @Sendable () async throws -> Void) async throws -> Void {
         try await TestHelpers.withTempDirectory(prefix: "test-scope") { root in
-            SuperscribePaths.overrideFluidAudioModelsDirectory = root.appendingPathComponent("parakeet")
-            SuperscribePaths.overrideWhisperModelCacheDirectory = root.appendingPathComponent("whisper")
+            SuperscribePaths.overrideModelsDirectory = root.appendingPathComponent("models")
             CatalogStore.overrideURL = root.appendingPathComponent("catalog.json")
             UserConfig.overrideConfigFileURL = root.appendingPathComponent("config.json")
             try await function()
@@ -16,8 +15,7 @@ enum TestIsolation {
 
     static func resetSharedState() -> Void {
         SuperscribeKitTestHooks.resetAll()
-        SuperscribePaths.overrideFluidAudioModelsDirectory = nil
-        SuperscribePaths.overrideWhisperModelCacheDirectory = nil
+        SuperscribePaths.overrideModelsDirectory = nil
         CatalogStore.overrideURL = nil
         UserConfig.overrideConfigFileURL = nil
         WhisperBackend.overrideRemoteModelsSession = nil
@@ -26,6 +24,7 @@ enum TestIsolation {
         ParakeetBackend.defaultRemoteModelsSession = .shared
         ParakeetBackend.testLoadHook = nil
         ParakeetBackend.testForceUnavailable = false
+        NemotronDiarizer.openSession = nil
         WhisperBackend.testForceUnavailable = false
         WhisperBackend.testForceStateInitFailed = false
         WhisperBackend.testForceTranscriptionFailed = false

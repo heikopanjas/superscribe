@@ -69,8 +69,14 @@ Dir.mktmpdir('superscribe-release-tests.') do |temp|
   binary = File.join(assets, 'superscribe')
   FileUtils.cp('/usr/bin/true', binary)
   FileUtils.chmod(0755, binary)
+  bundle = File.join(assets, 'mlx-swift_Cmlx.bundle', 'Contents', 'Resources')
+  FileUtils.mkdir_p(bundle)
+  File.write(File.join(bundle, 'default.metallib'), 'test-only Metal library')
+  pre_dist = File.join(temp, 'pre-release-dist')
+  run_script('package-release.sh', ['1.0.7', binary, pre_dist])
+  pre_archive = File.join(pre_dist, 'superscribe-1.0.7-macos-arm64.tar.gz')
 
-  publish = lambda do |ref, success = true, overrides = {}, directory = assets, version = '1.0.7'|
+  publish = lambda do |ref, success = true, overrides = {}, directory = pre_dist, version = '1.0.7'|
     File.write(calls, '')
     run_script('publish-release.sh', [version, directory], env.merge('GITHUB_REF' => ref).merge(overrides), success: success)
     File.readlines(calls).map { |line| JSON.parse(line) }
@@ -83,7 +89,7 @@ Dir.mktmpdir('superscribe-release-tests.') do |temp|
     check(create[create.index('--title') + 1] == 'superscribe-build-42-20260912-201500', 'incorrect pre-release title')
     check(create[create.index('--target') + 1] == 'a' * 40, 'must target tested SHA')
     check(create.include?('--prerelease') && create.include?('--latest=false'), 'incorrect pre-release flags')
-    check(create.include?(binary), 'pre-release must include raw binary')
+    check(create.include?(pre_archive) && create.include?(File.join(pre_dist, 'SHA256SUMS.txt')), 'pre-release must include the complete checksummed payload')
   end
 
   %w[refs/heads/main refs/heads/develop refs/heads/feature/audio].each do |ref|
@@ -105,6 +111,7 @@ Dir.mktmpdir('superscribe-release-tests.') do |temp|
   archive = File.join(dist, 'superscribe-1.0.7-macos-arm64.tar.gz')
   listing, status = Open3.capture2e('tar', '-tzf', archive)
   expected = ['superscribe-1.0.7-macos-arm64/', 'superscribe-1.0.7-macos-arm64/superscribe', 'superscribe-1.0.7-macos-arm64/README.md', 'superscribe-1.0.7-macos-arm64/LICENSE']
+  expected += ['mlx-swift_Cmlx.bundle/', 'mlx-swift_Cmlx.bundle/Contents/', 'mlx-swift_Cmlx.bundle/Contents/Resources/', 'mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib'].map { |path| "superscribe-1.0.7-macos-arm64/#{path}" }
   check(status.success? && listing.lines.map(&:strip).sort == expected.sort, 'incorrect archive layout')
   extracted = File.join(temp, 'extracted')
   FileUtils.mkdir(extracted)
@@ -124,8 +131,10 @@ Dir.mktmpdir('superscribe-release-tests.') do |temp|
   check(publish.call('refs/heads/main', false, { 'RELEASE_TEST_EXISTING' => '1' }, dist).length == 1, 'stable tags must not be replaced')
   File.open(archive, 'a') { |file| file.write('tampered') }
   check(publish.call('refs/heads/main', false, {}, dist).empty?, 'checksum mismatch must prevent publication')
-  FileUtils.rm(binary)
-  check(publish.call('refs/heads/develop', false).empty?, 'missing binary must prevent publication')
+  FileUtils.rm(pre_archive)
+  check(publish.call('refs/heads/develop', false).empty?, 'missing archive must prevent publication')
+  FileUtils.rm(File.join(bundle, 'default.metallib'))
+  run_script('package-release.sh', ['1.0.7', binary, File.join(temp, 'missing-metal')], {}, success: false)
 end
 
 puts "Release workflow, packaging, and publication checks passed (#{BASH})."

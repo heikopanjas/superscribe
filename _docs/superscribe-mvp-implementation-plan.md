@@ -1,187 +1,68 @@
-# Superscribe MVP — Implementation Plan
+# Superscribe implementation status and maintenance
 
-**Last updated:** 2026-05-01
-**Status:** Draft
-**Owner:** TBD
-**Related:** [podscribe-design.md](podscribe-design.md)
+**Last updated:** 2026-11-04
 
-## Goal
+This document maps implemented capabilities to source files and defines maintenance checkpoints. Its filename is retained from the original MVP plan for existing links. Validation results depend on the target OS and available hardware.
 
-Smallest vertical slice that turns N isolated speaker tracks into one chronological, speaker-attributed **VTT** transcript using a single on-device ASR backend. CLI name `superscribe` everywhere.
+[README.md](../README.md) owns CLI usage and options; [the architecture document](podscribe-design.md) explains the processing flow; [AGENTS.md](../AGENTS.md) owns coding and validation policy; [UPDATES.md](../UPDATES.md) records decisions and completed verification.
 
-## Non-Goals (deferred)
+## Implemented capabilities
 
-- Whisper.cpp / Speech.framework / OpenAI backends
-- SRT / JSON / TXT output formats
-- YAML session manifest
-- Overlap policies `trim` / `interleave`
-- All design-doc "Open Issues" (track alignment, incremental re-transcription, progress reporting, error recovery, rolling prompt, final naming)
+| Area | Current behavior | Primary implementation |
+|---|---|---|
+| Input | Named-speaker tracks, mixed recordings, and JSON track mappings; directory scanning writes templates | [TranscribeCommand](../Sources/superscribe/TranscribeCommand.swift), [TrackMappingLoader](../Sources/superscribe/TrackMappingLoader.swift) |
+| Processing order | Optional isolation, PCM preparation, RMS detection or diarization, globally bounded transcription, intermediate transcript | [TranscribePipeline](../Sources/SuperscribeKit/TranscribePipeline.swift) |
+| Vocal isolation | HTDemucs and fine-tuned model; bounded sections, overlap blending, and isolated-audio cache identities | [DemucsVocalIsolator](../Sources/SuperscribeKit/DemucsVocalIsolator.swift) |
+| Speaker diarization | Nemotron 3; frame assignment, shared turn cleanup, and virtual speaker tracks | [NemotronDiarizer](../Sources/SuperscribeKit/Diarization/NemotronDiarizer.swift), [SpeakerTurnBuilder](../Sources/SuperscribeKit/Diarization/SpeakerTurnBuilder.swift) |
+| Transcription | Parakeet, whisper.cpp, and runtime-gated Apple Speech; backend-owned model identity and absolute timed words | [Transcriber](../Sources/SuperscribeKit/Transcriber.swift), [BackendDispatch](../Sources/SuperscribeKit/BackendDispatch.swift) |
+| Backend management | All three types support listing, capabilities, and independent saved defaults | [BackendCommand](../Sources/superscribe/BackendCommand.swift), [UserConfig](../Sources/SuperscribeKit/UserConfig.swift) |
+| Model management | Transcription catalogs/defaults; local list/download/remove for isolation and diarization; staged installation and explicit isolation repair | [ModelCommand](../Sources/superscribe/ModelCommand.swift), [ModelInstaller](../Sources/SuperscribeKit/ModelInstaller.swift) |
+| Shared CLI selectors | Transcriber by default, or isolator/diarizer; conflicting selectors rejected | [BackendTypeOptions](../Sources/superscribe/BackendTypeOptions.swift) |
+| Model storage | Transcription backends under `models/transcriber`; isolator and diarizer as sibling kinds | [SuperscribePaths](../Sources/SuperscribeKit/SuperscribePaths.swift) |
+| Audio lifetime/cache | File-backed PCM, temporary ownership, ordinary and processed cache variants | [PreparedAudio](../Sources/SuperscribeKit/PreparedAudio.swift), [ConvertedAudioCache](../Sources/SuperscribeKit/ConvertedAudioCache.swift) |
+| Rendering | VTT/SRT/JSON/TXT; preserve/trim/interleave policies, word output, cue splitting, and wrapping | [TranscriptRenderer](../Sources/SuperscribeKit/Format/TranscriptRenderer.swift), [Merger](../Sources/SuperscribeKit/Merger.swift) |
+| Build resources | Swiftly pin, local whisper xcframework, separately installed Metal compiler, and shipped Metal resource bundle | [Package.swift](../Package.swift), [bootstrap.sh](../_scripts/bootstrap.sh), [MetalLibraryLocation](../Sources/SuperscribeKit/MetalLibraryLocation.swift) |
 
-## Architectural Decisions
+The package still targets macOS 14 on Apple Silicon. Apple Speech requires macOS 26 at runtime. Earlier proposals for an MLX Whisper backend, automatic backend fallback, cloud ASR, and a macOS 26 package floor are not the implemented design.
 
-- **Backend:** see *Backend Decision* below — MLX dropped after spike. Other backends stubbed behind a `Transcriber` protocol so adding them is purely additive.
-- **Overlap policy:** `preserve` only — VTT supports concurrent cues.
-- **Format:** VTT only — formatter interface ready for SRT/JSON/TXT later.
-- **Naming:** `superscribe` everywhere; renaming the design doc is a follow-up cleanup.
-- **Concurrency:** Tracks analysed in parallel; per-backend fan-out for transcription, bounded by a configurable in-flight limit.
-- **Module layout:** Two targets — `SuperscribeKit` (library) and `superscribe` (thin CLI executable). The library contains all core logic (types, analyzer, merger, formatters, backends, pipeline) and is independently consumable. The CLI imports `SuperscribeKit` + `ArgumentParser` for command-line parsing only. Tests depend on `SuperscribeKit`.
+## Command reference
 
-## Backend Decision (2026-05-01)
+The six subcommands are documented once in the README:
 
-**Spike outcome:** there is no Swift port of MLX Whisper. `mlx-swift` is a low-level array/NN library; `mlx-swift-examples` and `mlx-swift-lm` cover MNIST / LLM / VLM / StableDiffusion but not Whisper. MLX Whisper exists only in the Python `mlx-examples` repo. Porting it is out of scope for the MVP.
+- [transcribe](../README.md#transcribe): isolated or mixed inputs, templates, isolation, speech analysis, and ASR.
+- [merge](../README.md#merge): render a saved intermediate transcript without inference.
+- [run](../README.md#run): transcribe and render, with optional checkpoint retention.
+- [model](../README.md#model): choose a model type and manage its supported operations.
+- [backend](../README.md#backend): choose a processing type and manage implementations/defaults.
+- [cache](../README.md#cache): inspect or remove prepared audio, including isolated variants.
 
-Viable on-device candidates surveyed (April 2026):
+Management selectors do not enable optional pipeline stages. Transcription options choose its backend/model, isolation is opt-in, and mixed-track metadata triggers diarization. Model identifiers such as `htdemucs_ft` and `nemotron-3-diarization` are not additional backend identifiers.
 
-| Backend | Model | License | Min macOS | Notes |
-| --- | --- | --- | --- | --- |
-| **FluidAudio** (FluidInference) | Parakeet TDT v3 (0.6B, 25 EU langs) / v2 (English) on CoreML/ANE | Apache-2.0 | 14 | ~190× RT on M4 Pro; word timestamps; `AsrManager.transcribe([Float])` / `transcribe(AVAudioPCMBuffer)`; ANE-only → cheap parallelism across speaker tracks; bundled `AudioConverter` for resample to 16 kHz mono; very active (v0.14.3, late Apr 2026). |
-| **whisper.cpp** (`ggerganov/whisper.cpp`, xcframework) | OpenAI Whisper GGML models | MIT | 14 | Mature C library; prompt tokens; word timestamps; Metal GPU via embedded shaders; slower than Parakeet on ANE but often more robust on noisy / accented audio. |
-| **Apple `SpeechAnalyzer` / `SpeechTranscriber`** | Apple-managed assets via `AssetInventory` | system | **26** | Native, zero-dep, `Sendable` actor, `analyzeSequence(from: AVAudioFile)`, word-level timing via `Result.attributeOptions`. Requires bumping deployment target to macOS 26 — not acceptable for MVP. |
+## Extending isolation or diarization
 
-**MVP choice:** **FluidAudio with Parakeet TDT v3** as the default backend.
+1. Add the implementation behind `VocalIsolator` or `Diarizer`, keeping framework/model calls in the appropriate boundary and lifecycle orchestration testable.
+2. Extend `IsolatorBackend` or `DiarizerBackend` with its id, capabilities, and factory. Preserve existing ids and configuration decoding. Check availability and report unsupported environments explicitly.
+3. Add the required model descriptors, install validation, and management dispatch. The current model command restricts its backend option to transcription; an alternate auxiliary backend may require extending that routing.
+4. Keep processor selection in `PipelineRunner` and injected library configuration. Preserve opt-in activation, source paths, timing, cache separation, and bounded work.
+5. Extend tests with stubs and temporary storage. Verify saved defaults remain independent and old configuration files load. Follow the coverage and hardware-test rules in AGENTS.md.
+6. Update README examples, architecture diagrams, current guidance, and the append-only decision log together. Bump the product version for the code change using the repository's versioning rules.
 
-- ANE inference frees the GPU and lets us transcribe N speaker tracks largely in parallel without contention.
-- Word timestamps are first-class (needed by the merger).
-- Diarization is irrelevant for us (one track = one speaker), so we use only FluidAudio's ASR slice.
-- macOS 14 deployment target stays.
+These are extension checkpoints; HTDemucs and Nemotron are currently the only isolation and diarization implementations.
 
-**Backend enum:** rename `.mlx` → `.parakeet` (default). Keep `.whisper` (whisper.cpp) as a secondary, `.appleSpeech` reserved for when we accept a macOS 26 floor. `.openai` deferred.
+## Validation
 
-## Open Questions
+Use the pinned Swiftly toolchain and the build prerequisites in [Requirements](../README.md#requirements), including the Metal compiler component. A successful Swift compiler version check alone does not establish that Metal shaders can compile.
 
-1. ~~MLX Whisper API surface~~ — **Resolved 2026-05-01:** no Swift MLX Whisper exists; switching to FluidAudio/Parakeet (see *Backend Decision*).
-2. **Per-track ASR concurrency** — confirm empirically how many concurrent `AsrManager.transcribe` calls maximise ANE throughput on M-series. Default to 2 until measured.
-3. **Long-segment chunking** — Parakeet TDT v3 has a practical chunk size; FluidAudio exposes `transcribeLong` for batch. Decide whether the Analyzer's per-segment slices are short enough to feed `transcribe` directly or whether to delegate long-form handling to the backend.
+- [_scripts/test.sh](../_scripts/test.sh) owns the serial strict-concurrency unit invocation.
+- [_scripts/coverage.sh](../_scripts/coverage.sh) owns the SuperscribeKit line/region coverage gate and source/binary/profile receipts.
+- [Test fixtures](../Tests/superscribeTests/Fixtures/README.md) are repository-owned; ordinary unit tests must not fetch models or depend on the user's cache.
+- [AGENTS.md](../AGENTS.md#test-coverage-mandatory) defines opt-in Parakeet, Nemotron, isolation, and Metal integration checks, including their required local assets and inputs.
+- [Release packaging](../_scripts/package-release.sh) retains the CLI and resource bundles together; build/signing/publication policy is documented in [AGENTS.md](../AGENTS.md#github-ci).
 
----
+Report successful local checks separately from checks that need another OS or hardware. macOS 15 cannot exercise all macOS 26 Apple Speech paths; local partial coverage does not satisfy the unchanged full coverage gate. Consult the update log for dated results instead of treating this document as a live test report.
 
-## Phase 0 — Package Restructuring
+For documentation-only maintenance, validate command options against generated help, examples against source, Mermaid syntax, Markdown fences, local links/anchors, update-log preservation, and whitespace. Do not report unit tests as run when only documentation checks were performed.
 
-**Depends on:** nothing.
+## Features still outside the implementation
 
-- [ ] Edit [Package.swift](../Package.swift): set `platforms: [.macOS(.v14)]` (FluidAudio requirement).
-- [ ] Add `https://github.com/FluidInference/FluidAudio` (`from: 0.14.3`) as a package dependency; wire `FluidAudio` product into the `superscribe` executable target.
-- [ ] Add `superscribeTests` test target using Swift Testing.
-- [ ] Create directory skeleton inside `Sources/superscribe/`: `Commands/`, `Backends/`, `Format/`. Create `Tests/superscribeTests/`.
-
-**Verification:** `swift build` succeeds; `swift test` runs the empty test target.
-
----
-
-## Phase 1 — Core Types + CLI Skeleton
-
-**Depends on:** Phase 0.
-
-- [ ] `Sources/SuperscribeKit/Types.swift` — `TimedWord`, `SpeechSegment`, `TranscriptionResult`, `TranscriptionConfig`, `AttributedSegment`, `MergedSegment`, enums `Backend`, `OverlapPolicy`, `OutputFormat`. All `Sendable`; persisted ones `Codable`.
-- [ ] `Sources/SuperscribeKit/IntermediateTranscript.swift` — Codable model for `.superscribe.json` (`version`, `session`, `created`, `tracks`, `metadata`).
-- [ ] `Sources/superscribe/SuperscribeCommand.swift` — `@main AsyncParsableCommand` with `transcribe` / `merge` / `run` subcommands stubbed (print "not implemented").
-- [ ] `Sources/superscribe/Commands/Options.swift` — shared option groups `TranscribeOptions` and `MergeOptions` per design doc.
-
-**Verification:** `swift run superscribe --help` lists all three subcommands; `swift run superscribe transcribe --help` shows all flags.
-
----
-
-## Phase 2 — Analyzer (Silence Detection)
-
-**Depends on:** Phase 1. *Can run in parallel with Phase 3.*
-
-- [ ] `Sources/SuperscribeKit/Analyzer.swift`:
-  - [ ] `AnalyzerConfig` struct with defaults (−40 dB, 0.5 s min silence, 0.15 s padding, 1024-sample window).
-  - [ ] `Analyzer.detectSpeech(in: URL) throws -> [SpeechSegment]`.
-  - [ ] PCM read via `AVAudioFile`; convert to mono Float32 if needed.
-  - [ ] Sliding-window RMS → dB; state machine (silence/speech) at threshold.
-  - [ ] Merge gaps shorter than `minSilenceDuration`; apply padding; clamp to file duration; drop segments < 100 ms.
-- [ ] `Tests/superscribeTests/AnalyzerTests.swift` — synthesised in-test wav fixtures:
-  - [ ] Pure silence → empty result.
-  - [ ] Constant tone → one segment spanning file.
-  - [ ] Tone-silence-tone → two segments with correct boundaries.
-  - [ ] Sub-100 ms blip → dropped.
-  - [ ] Padding extends boundaries correctly.
-
-**Verification:** `swift test --filter AnalyzerTests` passes.
-
----
-
-## Phase 3 — Parakeet (FluidAudio) Backend
-
-**Depends on:** Phase 1. *Can run in parallel with Phase 2.*
-
-- [ ] `Sources/SuperscribeKit/Transcriber.swift` — `Transcriber` protocol + `selectBackend(preferred:)` returning the Parakeet backend; other cases `fatalError` with TODO.
-- [ ] `Sources/SuperscribeKit/Backends/ParakeetBackend.swift`:
-  - [ ] Conform to `Transcriber`; `static var isAvailable` checks Apple Silicon at runtime.
-  - [ ] Lazy load `AsrModels.downloadAndLoad(version: .v3)` once per process; cache `AsrManager` behind an actor.
-  - [ ] Models cached to FluidAudio's default location (`~/.cache/fluidaudio/Models/...`); progress surfaced on stderr.
-  - [ ] `transcribe(file:segment:config:)` slices PCM for the segment, calls `AsrManager.transcribe(samples)`, maps result + token timings to `TranscriptionResult` with `TimedWord` array.
-  - [ ] Honor `config.language` (map to Parakeet locale tag) and `config.prompt` if FluidAudio exposes a context/prompt hook (otherwise log a one-time warning).
-- [ ] `Tests/superscribeTests/ParakeetBackendTests.swift`:
-  - [ ] Skip (`withKnownIssue` / trait) when `ParakeetBackend.isAvailable == false` or model assets are absent.
-  - [ ] Smoke test on a tiny committed clip (≤ 100 KB): assert non-empty result; word timestamps within segment bounds. Don't assert exact text.
-
-**Verification:** `swift test --filter ParakeetBackendTests` passes locally on Apple Silicon.
-
----
-
-## Phase 4 — Transcribe Pipeline + `transcribe` Subcommand
-
-**Depends on:** Phase 2 + Phase 3.
-
-- [ ] `Sources/SuperscribeKit/Pipeline.swift` — `TranscribePipeline.run(session:) async throws -> IntermediateTranscript`:
-  - [ ] Phase 1: `withThrowingTaskGroup` over tracks → `[(speaker, [SpeechSegment])]`.
-  - [ ] Phase 2: bounded fan-out over segments calling the backend; collect into `IntermediateTranscript`.
-  - [ ] Concurrency limit configurable (default 2 for ANE).
-- [ ] `Sources/superscribe/Commands/TranscribeCommand.swift`:
-  - [ ] Parse `--track name=path` flags into a session.
-  - [ ] Run pipeline, write `.superscribe.json` to `--output`.
-- [ ] `Tests/superscribeTests/PipelineTests.swift`:
-  - [ ] `MockBackend` returning deterministic results per segment (no model needed, CI-friendly).
-  - [ ] Two tiny synthesised tracks → run pipeline → assert `IntermediateTranscript` round-trips through JSON and preserves track/speaker structure.
-
-**Verification:** `swift run superscribe transcribe --track Alice=a.wav --track Bob=b.wav --output out.superscribe.json` produces a valid JSON file.
-
----
-
-## Phase 5 — Merger (Preserve Only) + VTT Formatter
-
-**Depends on:** Phase 1. *Can run in parallel with Phases 2–4.*
-
-- [ ] `Sources/SuperscribeKit/Merger.swift`:
-  - [ ] `flatten` → `resolveOverlaps(policy: .preserve)` (no-op for MVP) → `insertBreaks` → `coalesce` → `[MergedSegment]`.
-  - [ ] `trim` and `interleave` policies stubbed with `fatalError("not implemented")` and TODO note.
-- [ ] `Sources/SuperscribeKit/Format/VTTFormatter.swift`:
-  - [ ] Emit `WEBVTT` header + cues with `<v Speaker>` voice tags.
-  - [ ] Timestamps `MM:SS.mmm` (or `HH:MM:SS.mmm` if ≥ 1 h).
-  - [ ] Optional inline word-level timestamps via `--include-words`.
-- [ ] `Tests/superscribeTests/MergerTests.swift`:
-  - [ ] Two non-overlapping speakers → correct chronological order.
-  - [ ] Same speaker, two adjacent segments under `maxGap` → coalesced.
-  - [ ] Gap ≥ `gapThreshold` → paragraph break preserved (no coalesce).
-- [ ] `Tests/superscribeTests/VTTFormatterTests.swift` — golden-file comparison on a small fixture.
-
-**Verification:** `swift test --filter "MergerTests|VTTFormatterTests"` passes.
-
----
-
-## Phase 6 — `merge` and `run` Subcommands
-
-**Depends on:** Phase 4 + Phase 5.
-
-- [ ] `Sources/superscribe/Commands/MergeCommand.swift` — read intermediate JSON, run merger, write VTT to `--output` or stdout.
-- [ ] `Sources/superscribe/Commands/RunCommand.swift` — compose transcribe + merge in one call; `--keep-intermediate` writes the JSON, default discards.
-- [ ] `Tests/superscribeTests/EndToEndTests.swift` — two tiny tracks → `run` with `MockBackend` → assert VTT contains both speakers in chronological order with `<v Speaker>` tags.
-
-**Verification:** `swift run superscribe run --track Alice=a.wav --track Bob=b.wav --output ep.vtt` produces a valid VTT file.
-
----
-
-## Cross-Cutting Tasks
-
-- [ ] Bump package version in [Package.swift](../Package.swift) per `semantic-versioning` skill on each phase commit.
-- [ ] Update [AGENTS.md](../AGENTS.md) "Recent Updates & Decisions" log when architecture decisions change.
-- [ ] Manual smoke test on a real two-track recording before declaring MVP complete; eyeball VTT in a player.
-
-## Relevant Files
-
-- [Package.swift](../Package.swift) — add MLX deps, set macOS 14 platform, add test target.
-- [Sources/superscribe/superscribe.swift](../Sources/superscribe/superscribe.swift) — current SPM stub; replaced by `SuperscribeCommand.swift` in Phase 1.
-- [_docs/podscribe-design.md](podscribe-design.md) — source of truth for types, algorithms, CLI flags. Rename `podscribe` → `superscribe` once MVP lands.
-- New: `Sources/superscribe/{Types,IntermediateTranscript,Analyzer,Transcriber,ModelManager,Pipeline,Merger,SuperscribeCommand}.swift`, `Sources/superscribe/Commands/**`, `Sources/SuperscribeKit/Backends/**`, `Sources/superscribe/Format/**`, `Tests/superscribeTests/**`.
+Automatic track alignment/offsets, YAML sessions, incremental re-transcription, resumable partial output, alternate progress styles, rolling prompts, cloud transcription, and additional auxiliary backends remain future work. See [Future work](podscribe-design.md#future-work); do not document proposed command flags as current options.

@@ -22,7 +22,7 @@ struct ModelDownloaderNetworkTests {
         MockURLSessionHelpers.reset()
     }
 
-    @Test func downloadMultiFileRespectsSubpath() async throws -> Void {
+    @Test func downloadWritesSelectedFilesAtRelativePaths() async throws -> Void {
         let repoId = "FluidInference/subpath-demo"
         let repoURL = (try #require(URL(string: "https://huggingface.co/\(repoId)")))
         let repoPayload = """
@@ -56,18 +56,22 @@ struct ModelDownloaderNetworkTests {
                 throw URLError(.unsupportedURL)
             },
             { session in
-                try await TestHelpers.withTempDirectory(prefix: "mdl-subpath") { staging in
+                try await TestHelpers.withTempDirectory(prefix: "mdl-selected") { staging in
                     let model = RemoteModelInfo(
                         id: "demo",
                         repoId: repoId,
-                        subpath: "weights/",
                         totalSizeBytes: 7,
                         fileCount: 2,
                         lastModified: nil,
                         repoURL: repoURL
                     )
+                    let siblings = try await HuggingFaceHub.repoInfo(repoId: repoId, session: session).siblings
+                    let files = siblings.filter { $0.rfilename.hasPrefix("weights/") }.map {
+                        ModelDownloadFile(rfilename: $0.rfilename, relativePath: String($0.rfilename.dropFirst("weights/".count)), expectedSize: $0.size)
+                    }
                     let sink = ProgressList()
                     try await ModelDownloader.download(
+                        files: files,
                         model: model,
                         backend: .parakeet,
                         into: staging,
@@ -115,7 +119,6 @@ struct ModelDownloaderNetworkTests {
                     let model = RemoteModelInfo(
                         id: "tiny",
                         repoId: repoId,
-                        subpath: nil,
                         totalSizeBytes: 5,
                         fileCount: 1,
                         lastModified: nil,
@@ -199,11 +202,10 @@ struct ModelDownloaderNetworkTests {
                     let model = RemoteModelInfo(
                         id: "m",
                         repoId: repoId,
-                        subpath: nil,
                         repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
                     await #expect(throws: ModelInstallationError.self) {
-                        try await ModelDownloader.download(
+                        try await TestHelpers.downloadRepository(
                             model: model,
                             backend: .parakeet,
                             into: staging,
@@ -216,7 +218,7 @@ struct ModelDownloaderNetworkTests {
         )
     }
 
-    @Test func downloadEmptyFilteredFileListThrows() async throws -> Void {
+    @Test func downloadEmptySelectionThrows() async throws -> Void {
         let repoId = "org/empty-filter"
         let repoPayload = """
             {"id":"\(repoId)","lastModified":null,"siblings":[
@@ -234,11 +236,11 @@ struct ModelDownloaderNetworkTests {
                     let model = RemoteModelInfo(
                         id: "m",
                         repoId: repoId,
-                        subpath: "missing-prefix/",
                         repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
                     await #expect(throws: ModelInstallationError.self) {
                         try await ModelDownloader.download(
+                            files: [],
                             model: model,
                             backend: .parakeet,
                             into: staging,

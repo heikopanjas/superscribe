@@ -96,21 +96,27 @@ struct CacheCommand: ParsableCommand {
         print("Cleared \(entries.count) entry(s) (\(formatBytes(totalBytes))).")
     }
 
-    private func runRemove(path: String, cache: ConvertedAudioCache) throws -> Void {
+    func runRemove(path: String, cache: ConvertedAudioCache) throws -> Void {
         let url = URL(fileURLWithPath: path).standardizedFileURL
-        guard let key = cache.key(for: url, targetFormat: .asr16kMono) else {
-            print("Cannot read file metadata for '\(url.lastPathComponent)' — no entry deleted.")
-            return
-        }
-        guard let entryURL = cache.lookup(key) else {
+        let manifest = try cache.loadManifest()
+        var digests = Set(manifest.values.filter { URL(fileURLWithPath: $0.sourcePath).standardizedFileURL.path == url.path }.map(\.digest))
+        if let key = cache.key(for: url, targetFormat: .asr16kMono), cache.lookup(key) != nil { digests.insert(key.digest) }
+        guard digests.isEmpty == false else {
             print("No cache entry for '\(url.lastPathComponent)'.")
             return
         }
-        let res = try entryURL.resourceValues(forKeys: [.fileSizeKey])
-        let size = Int64(res.fileSize ?? 0)
-        try FileManager.default.removeItem(at: entryURL)
-        try? cache.updateManifest(removingDigest: key.digest)
-        print("Removed cache entry for '\(url.lastPathComponent)' (\(formatBytes(size))).")
+        var total: Int64 = 0
+        var removed = 0
+        for digest in digests where digest.range(of: "\\A[0-9a-f]{64}\\z", options: .regularExpression) != nil {
+            let entryURL = cache.root.appendingPathComponent("\(digest).wav")
+            if FileManager.default.fileExists(atPath: entryURL.path) == true {
+                total += Int64(try entryURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+                try FileManager.default.removeItem(at: entryURL)
+                removed += 1
+            }
+            try cache.updateManifest(removingDigest: digest)
+        }
+        print("Removed \(removed) cache entry(s) for '\(url.lastPathComponent)' (\(formatBytes(total))).")
     }
 
     // MARK: - Helpers

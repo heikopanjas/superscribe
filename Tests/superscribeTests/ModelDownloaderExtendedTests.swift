@@ -177,7 +177,7 @@ struct ModelDownloaderExtendedTests {
                         repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
                     )
                     await #expect(throws: ModelInstallationError.self) {
-                        try await ModelDownloader.download(
+                        try await TestHelpers.downloadRepository(
                             model: model,
                             backend: .parakeet,
                             into: staging,
