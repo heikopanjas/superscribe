@@ -10,14 +10,14 @@ struct InstallPathTests {
         SuperscribePaths.overrideModelsDirectory = nil
         let path = WhisperBackend.installPath(for: "large-v3-turbo")
         #expect(path.lastPathComponent == "large-v3-turbo.bin")
-        #expect(path.path.contains(".cache/superscribe/models/whisper/large-v3-turbo.bin"))
+        #expect(path.path.contains(".cache/superscribe/models/transcriber/whisper/large-v3-turbo.bin"))
     }
 
     @Test func parakeetInstallPathUsesFluidAudioFolderName() throws -> Void {
         SuperscribePaths.overrideModelsDirectory = nil
         let path = try ParakeetBackend.installPath(for: "v3")
         #expect(path.lastPathComponent == "parakeet-tdt-0.6b-v3")
-        #expect(path.path.contains(".cache/superscribe/models/parakeet/parakeet-tdt-0.6b-v3"))
+        #expect(path.path.contains(".cache/superscribe/models/transcriber/parakeet/parakeet-tdt-0.6b-v3"))
     }
 
     @Test func parakeetInstallPathRejectsUnknownIds() throws -> Void {

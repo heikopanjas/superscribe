@@ -5,7 +5,7 @@ import SuperscribeKit
 struct ModelCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "model",
-        abstract: "List, refresh, or set defaults for transcription models."
+        abstract: "List, download, or manage transcription, diarization, and isolation models."
     )
 
     @Option(name: .long, help: "Backend (parakeet, whisper.cpp, appleSpeech). Defaults to your configured backend.")
@@ -35,14 +35,10 @@ struct ModelCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Emit machine-readable JSON (only with --list).")
     var json: Bool = false
 
-    @Flag(name: .long, help: "Manage the speaker diarizer used for --mixed tracks (with --list, --download, or --rm).")
-    var diarizer: Bool = false
-
-    @Flag(name: .long, help: "Manage vocal-isolation models (with --list, --download, or --rm).")
-    var isolator: Bool = false
+    @OptionGroup var backendType: BackendTypeOptions
 
     mutating func validate() throws -> Void {
-        if self.isolator == true && (self.diarizer == true || self.backend != nil || self.setDefault != nil || self.remote == true || self.refresh == true || self.json == true) {
+        if self.backendType.isolator == true && (self.backend != nil || self.setDefault != nil || self.remote == true || self.refresh == true || self.json == true) {
             throw ValidationError("--isolator applies only to --list, --download, and --rm.")
         }
         try assertMutuallyExclusive([
@@ -63,17 +59,17 @@ struct ModelCommand: AsyncParsableCommand {
         if self.json == true && (self.setDefault != nil || self.download != nil || self.rm != nil) {
             throw ValidationError("--json applies only to --list.")
         }
-        if self.diarizer == true && (self.backend != nil || self.setDefault != nil || self.remote == true || self.refresh == true || self.json == true) {
+        if self.backendType.diarizer == true && (self.backend != nil || self.setDefault != nil || self.remote == true || self.refresh == true || self.json == true) {
             throw ValidationError("--diarizer applies only to --list, --download, and --rm.")
         }
     }
 
     mutating func run() async throws -> Void {
-        if self.isolator == true {
+        if self.backendType.isolator == true {
             try await self.runIsolator()
             return
         }
-        if self.diarizer == true {
+        if self.backendType.diarizer == true {
             try await self.runDiarizer()
             return
         }
@@ -112,9 +108,14 @@ struct ModelCommand: AsyncParsableCommand {
             }
             return
         }
-        for model in IsolatorModel.allCases {
+        let models = IsolatorModel.allCases
+        let idWidth = max(8, models.map(\.rawValue.count).max() ?? 0)
+        for model in models {
             let installed = await ModelInstaller.isIsolatorInstalled(model)
-            print("\(model.rawValue)\t\(installed ? "installed" : "not installed")")
+            let location =
+                if installed == true { try model.installPath().path }
+                else { "not installed" }
+            self.renderModelRow(id: model.rawValue, idWidth: idWidth, location: location)
         }
     }
 
@@ -238,7 +239,7 @@ struct ModelCommand: AsyncParsableCommand {
         let status =
             if DiarizerModel.isInstalled(at: path) == true { path.path }
             else { "not installed (downloads on the first --mixed run)" }
-        print("  \(DiarizerModel.id)  \(status)")
+        self.renderModelRow(id: DiarizerModel.id, idWidth: max(8, DiarizerModel.id.count), location: status)
     }
 
     // MARK: - Rendering
@@ -256,10 +257,14 @@ struct ModelCommand: AsyncParsableCommand {
             let marker = self.defaultMarker(
                 id: m.id, userDefault: userDefault, builtinDefault: builtinDefault
             )
-            let size = m.sizeBytes.map(formatBytes) ?? "—"
-            let paddedId = m.id.padding(toLength: idWidth, withPad: " ", startingAt: 0)
-            print("  \(paddedId)  \(size.leftPad(toLength: 10))  \(m.path.path)\(marker)")
+            self.renderModelRow(id: m.id, idWidth: idWidth, sizeBytes: m.sizeBytes, location: m.path.path, marker: marker)
         }
+    }
+
+    private func renderModelRow(id: String, idWidth: Int, sizeBytes: Int64? = nil, location: String, marker: String = "") -> Void {
+        let size = sizeBytes.map(formatBytes) ?? "—"
+        let paddedId = id.padding(toLength: idWidth, withPad: " ", startingAt: 0)
+        print("  \(paddedId)  \(size.leftPad(toLength: 10))  \(location)\(marker)")
     }
 
     private func renderRemoteList(

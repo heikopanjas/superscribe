@@ -5,7 +5,7 @@ import Foundation
 /// FluidAudio Parakeet TDT v3 backend for on-device speech-to-text.
 ///
 /// Uses the Apple Neural Engine for inference, keeping the GPU free.
-/// superscribe installs models under `~/.cache/superscribe/models/parakeet/`.
+/// superscribe installs models under `~/.cache/superscribe/models/transcriber/parakeet/`.
 public actor ParakeetBackend: Transcriber {
     @TaskLocal internal static var testState = TestDependencyStorage(TestState())
 

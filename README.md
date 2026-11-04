@@ -1,6 +1,6 @@
 # superscribe
 
-Transcribe podcast recordings into time-aligned VTT, SRT, JSON, or TXT output. Use isolated tracks for named speakers, mixed recordings with on-device speaker diarization, or both. superscribe transcribes speech segments in parallel, aligns the results on a shared timeline, and merges them into output ready for editing or publishing.
+Transcribe podcast recordings into time-aligned VTT, SRT, JSON, or TXT output. Use isolated tracks for named speakers, mixed recordings with on-device speaker diarization, or both. Optional [vocal isolation](#vocal-isolation) removes accompaniment before speech detection and diarization. superscribe transcribes speech segments in parallel, aligns the results on a shared timeline, and merges them into output ready for editing or publishing.
 
 Core logic lives in **SuperscribeKit**, a Swift library you can import from your own macOS apps; the `superscribe` CLI is a thin wrapper around it.
 
@@ -14,6 +14,7 @@ Runtime:
 Building from source also requires:
 
 - Swift 6.4.2, managed with Swiftly (`.swift-version`), plus Xcode 26 or later for Apple SDKs and native tools
+- Xcode's Metal Toolchain component — install with `xcodebuild -downloadComponent MetalToolchain` and verify with `xcrun metal --version`. If lookup still reports the component missing after installation, run `xcrun --kill-cache` and retry
 - `cmake` and `ninja` — required once to build the whisper.cpp xcframework (`brew install cmake ninja`)
 
 ## Quick start
@@ -40,6 +41,10 @@ Parakeet and whisper.cpp models download automatically on first use (progress on
 
 The PATH change applies to the current shell. Check the installed version with `superscribe --version`.
 
+Use `superscribe --help` to list subcommands and `superscribe <subcommand> --help` for that command's complete usage.
+
+For automatic toolchain selection in future Zsh sessions, source `"$HOME/.swiftly/env.sh"` from your login (`.zprofile`) and interactive (`.zshrc`) startup files. Swiftly then reads `.swift-version` when you run `swift`; verify the selected toolchain with `swift --version`.
+
 ## Speech detection and time-sliced transcription
 
 For isolated tracks, speaker identity comes from the file mapping. For shared-microphone recordings, use `--mixed` to infer speakers; see [Mixed recordings](#mixed-recordings-speaker-diarization).
@@ -50,18 +55,21 @@ For isolated tracks, speaker identity comes from the file mapping. For shared-mi
 
 ```mermaid
 flowchart TB
-  subgraph per_track ["Per track (bounded conversion)"]
-    A[Source file] --> B[Convert to 16 kHz mono f32 PCM]
-    B --> K{Track type}
-    K -->|Isolated| C[Windowed silence detection]
-    K -->|Mixed| L[Nemotron speaker diarization]
-    C --> D["List of SpeechSegment start/end"]
-    L --> M[Virtual track per speaker]
+  subgraph per_track ["Per source track: bounded preparation"]
+    A["Source file"] --> O{"--isolate?"}
+    O -->|Yes| V["HTDemucs vocal isolation<br/>htdemucs or htdemucs_ft"]
+    O -->|No| B["Convert or reuse cached audio<br/>16 kHz mono Float32 PCM"]
+    V --> B
+    B --> K{"Track type"}
+    K -->|Named speaker| C["RMS silence detection"]
+    K -->|Mixed recording| L["Nemotron speaker diarization"]
+    C --> D["Speaker tracks and speech segments"]
+    L --> M["Build speaker turns<br/>one virtual track per speaker"]
     M --> D
   end
   subgraph transcribe ["Per speech segment (bounded parallel)"]
     D --> E[Slice PCM for segment]
-    E --> F[ASR backend]
+    E --> F["Transcription backend<br/>Parakeet / whisper.cpp / Apple Speech"]
     F --> G[Words with absolute timestamps]
   end
   subgraph merge_phase ["All tracks"]
@@ -71,12 +79,13 @@ flowchart TB
   end
 ```
 
-1. **Convert** — Each track is read through AVFoundation and normalized to the backend format (today: **16 kHz, mono, 32-bit float PCM**). Conversion can be cached under `~/.cache/superscribe/audio/` so repeat runs skip re-decoding.
-2. **Detect or diarize** — Find speech spans using `Analyzer` for isolated tracks or `NemotronDiarizer` for mixed tracks. Boundaries are in **seconds on the full track timeline**, not relative to each slice.
-3. **Slice and transcribe** — `PreparedAudio` reads the active segment samples, and the backend converts its slice-relative model timings to absolute track timestamps.
-4. **Merge** — The intermediate transcript is combined chronologically across speakers (overlap policies, paragraph breaks, cue formatting). Detection and diarization do not run again at merge time.
+1. **Optionally isolate vocals** — `--isolate` runs the configured isolation backend before segmentation. HTDemucs processes stereo audio at 44.1 kHz in bounded sections; `--fine-tune` selects its `htdemucs_ft` model. Without `--isolate`, this step is skipped.
+2. **Prepare PCM** — Audio is normalized to the transcription backend format (today: **16 kHz, mono, 32-bit float PCM**) and retained as file-backed `PreparedAudio`. The audio cache stores ordinary conversion and isolated vocals under separate identities; `--no-cache` bypasses both.
+3. **Detect or diarize** — `Analyzer` finds speech spans in named-speaker tracks. The configured diarizer identifies speakers in mixed tracks and produces a virtual track per voice. Both paths use the same gap merging, bounded padding, and minimum-duration rules. Boundaries stay on the original track timeline.
+4. **Slice and transcribe** — `PreparedAudio` reads active segment samples, and the transcription backend returns word timestamps anchored to the original track.
+5. **Merge** — The intermediate transcript is combined chronologically across speakers (overlap policies, paragraph breaks, cue formatting). `transcribe` saves it to JSON; `run` renders it directly and saves it only with `--keep-intermediate`. Isolation, detection, and diarization do not run again during `merge`.
 
-Preparation (conversion plus detection or diarization) handles at most **2** input tracks at once by default. Cached PCM persists; uncached temporary PCM is removed when its final owner releases it. Segments across all tracks share one global limit of **2** concurrent ASR calls. A Whisper context has exclusive access on its own serial worker; it is never shared by concurrent C inference calls.
+Preparation handles at most **2** source tracks at once by default, or **1** when isolation is enabled. Cached PCM persists; uncached temporary PCM is removed when its final owner releases it. Segments across all tracks share one global limit of **2** concurrent ASR calls. A Whisper context has exclusive access on its own serial worker; it is never shared by concurrent C inference calls.
 
 ### Mixed recordings (speaker diarization)
 
@@ -120,6 +129,8 @@ For each `SpeechSegment`:
 
 Segment boundaries in the JSON (`start` / `end`) come from detection or diarization. Word timestamps usually sit inside that range but can extend slightly when model alignment differs.
 
+Input files must already share a common time origin. superscribe preserves that clock through conversion and isolation; it does not align recordings that started late or apply per-track offsets.
+
 ### What gets omitted
 
 After transcription, the pipeline drops:
@@ -133,11 +144,15 @@ Those tracks do not appear in the intermediate transcript.
 
 On isolated tracks, lower `--silence-threshold` (e.g. `-50`) if quiet speech is missed; raise it (e.g. `-30`) if noise or microphone bleed causes false detections. Reduce `--min-silence` to split at shorter pauses, or increase `--padding` to include more audio at segment edges. Mixed tracks use the diarizer's activity threshold, so `--silence-threshold` does not affect them; `--min-silence` and `--padding` still apply. See the [option reference](#transcribe) for defaults.
 
-`transcribe` and `run` currently always emit progress on stderr: conversion lines such as `Converting alice.wav [42%]`, then segment lines such as `[Alice] segment 3/12  —  overall 7/18 (38%)`.
+`transcribe` and `run` always emit progress on stderr: preparation lines such as `Converting alice.wav [42%]` or `Isolating alice.wav [42%]`, then segment lines such as `[Alice] segment 3/12 — overall 7/18`.
 
 ## Backends
 
-| Name | Flag | Default model | Notes |
+Transcription, vocal isolation, and speaker diarization have independent backend defaults. Use [`backend`](#backend) to inspect or select an implementation and [`model`](#model) to manage its weights. Selecting a backend does not enable an optional stage: isolation still requires `--isolate`, and diarization requires a mixed input.
+
+### Transcription backends
+
+| Name | Backend id | Default model | Notes |
 |---|---|---|---|
 | Parakeet (FluidAudio) | `parakeet` | `v3` | CoreML / Neural Engine; fast, low power |
 | whisper.cpp | `whisper.cpp` | `large-v3-turbo` | GGML `.bin`; Core ML encoder on ANE when installed, Metal fallback; Metal decoder |
@@ -188,20 +203,34 @@ Use `model --rm <locale> --backend appleSpeech` to release a locale reservation 
 
 ## Configuration and storage
 
-User defaults persist in the configuration file below.
+User defaults persist in the configuration file below. `defaultBackend` selects the transcription backend; `defaultIsolatorBackend` and `defaultDiarizerBackend` select the optional processors. `defaultModels` holds per-transcription-backend model preferences. For example:
+
+```json
+{
+  "defaultBackend": "whisper.cpp",
+  "defaultIsolatorBackend": "htdemucs",
+  "defaultDiarizerBackend": "nemotron",
+  "defaultModels": { "whisper.cpp": "large-v3-turbo" }
+}
+```
+
+All backend preferences are optional. Missing or unknown backend ids fall back to the built-in default for that type; older configuration files continue to load. Prefer the `backend --set-default` and `model --set-default` commands over editing this file by hand.
 
 | What | Location |
 |---|---|
 | User config | `~/.config/superscribe/config.json` |
 | Model catalog cache | `~/.cache/superscribe/catalog.json` (Parakeet/whisper from Hugging Face; Apple Speech from system locale APIs) |
 | Converted audio cache | `~/.cache/superscribe/audio/` |
-| Parakeet models | `~/.cache/superscribe/models/parakeet/<folder>/` |
-| whisper.cpp GGML weights | `~/.cache/superscribe/models/whisper/<id>.bin` |
-| whisper.cpp Core ML encoder | `~/.cache/superscribe/models/whisper/<base>-encoder.mlmodelc/` (auto-downloaded with the `.bin`) |
+| Parakeet models | `~/.cache/superscribe/models/transcriber/parakeet/<folder>/` |
+| whisper.cpp GGML weights | `~/.cache/superscribe/models/transcriber/whisper/<id>.bin` |
+| whisper.cpp Core ML encoder | `~/.cache/superscribe/models/transcriber/whisper/<base>-encoder.mlmodelc/` (auto-downloaded with the `.bin`) |
 | Speaker diarizer | `~/.cache/superscribe/models/diarizer/nemotron-3-diarization-fast128/` |
+| Vocal isolator | `~/.cache/superscribe/models/isolator/<id>/` |
 | Apple Speech locales | System-managed via `AssetInventory` (install marker: `apple-speech://locale/<id>`) |
 
-superscribe owns Parakeet, whisper.cpp, and diarizer downloads; Apple Speech assets are system-managed. FluidAudio runs in offline mode and never fetches or replaces files.
+superscribe owns transcription, isolation, and diarizer model downloads; Apple Speech assets are system-managed. FluidAudio runs in offline mode, and Demucs inference disables upstream downloads.
+
+To reuse transcription models stored directly in `models/parakeet/` and `models/whisper/`, move those two directories into `models/transcriber/` before running the updated CLI. The CLI uses the new layout without automatically migrating existing folders.
 
 **Upgrading from 1.x:** models now live under `~/.cache/superscribe/models` and are downloaded again on first use. Earlier installs are no longer read and can be deleted: superscribe's folders in `~/Library/Application Support/FluidAudio/Models` (`parakeet-tdt-0.6b-v2`, `parakeet-tdt-0.6b-v3`, `parakeet-tdt-ctc-110m`, `parakeet-ja`) and `~/Library/Caches/superscribe/whisper`. Leave other folders in the FluidAudio directory alone if another app uses FluidAudio.
 
@@ -235,11 +264,11 @@ superscribe transcribe \
 | `--min-silence` | `0.5` s | Minimum gap to count as silence |
 | `--padding` | `0.15` s | Padding around speech segments, capped at half the adjacent silence |
 | `--verbose` | off | Currently accepted but unused; progress is always shown on stderr |
-| `--no-cache` | off | Disable the audio conversion cache |
-| `--isolate` | off | Isolate vocals with `htdemucs` before transcription; downloads once |
+| `--no-cache` | off | Bypass ordinary conversion and isolated-vocal caches |
+| `--isolate` | off | Run the configured isolator before detection, diarization, and transcription; applies to every input track |
 | `--fine-tune` | off | Select `htdemucs_ft`; requires `--isolate` |
 
-`--input` cannot be combined with `--track` or `--mixed`. `--create-input` cannot be combined with any of those input options. Relative paths in mapping files resolve against the current working directory; absolute paths stay absolute.
+`--input` cannot be combined with `--track` or `--mixed`. `--create-input` cannot be combined with those input options or `--isolate`; it only writes a template. Relative paths in mapping files resolve against the current working directory; absolute paths stay absolute.
 
 **Directory workflow**
 
@@ -319,7 +348,7 @@ superscribe run \
 
 | Option | Default | Description |
 |---|---|---|
-| (transcribe options) | — | `--track`, `--mixed`, `--backend`, `--model`, silence tuning, `--no-cache`, etc. |
+| (transcribe options) | — | `--track`, `--mixed`, `--backend`, `--model`, `--isolate`, `--fine-tune`, silence tuning, `--no-cache`, etc. |
 | (merge options) | — | `--format`, `--overlap-policy`, `--gap-threshold`, `--include-words`, `--merge-output`, etc. |
 | `--keep-intermediate` | off | Also write `transcript.superscribe.<backend>.json` (discarded by default) |
 
@@ -327,11 +356,14 @@ On `run`, `--output` only affects the intermediate JSON path when `--keep-interm
 
 ### `model`
 
-List, download, and manage models (or Apple Speech locales). `--list` is the default when no other verb is given.
+List, download, and manage models (or Apple Speech locales). `--list` is the default when no other verb is given. Model-type selectors are mutually exclusive: `--transcriber` (the default), `--diarizer`, or `--isolator`.
+
+Local listings use aligned model, size, and location columns. Installed models show their paths; unknown sizes appear as `—`. Diarizer and isolator listings also show supported models that are not installed.
 
 ```sh
 # Installed models for the configured backend
 superscribe model
+superscribe model --transcriber  # same as omitting the selector
 
 # Remote catalog — Parakeet/whisper: Hugging Face (standalone --remote refreshes catalog.json)
 superscribe model --remote --backend whisper.cpp
@@ -355,45 +387,65 @@ superscribe model --json --remote
 superscribe model --diarizer
 superscribe model --diarizer --download nemotron-3-diarization
 superscribe model --diarizer --rm nemotron-3-diarization --yes
+
+# Vocal-isolation models
+superscribe model --isolator --list
+superscribe model --isolator --download htdemucs
+superscribe model --isolator --download htdemucs_ft
+superscribe model --isolator --rm htdemucs --yes
 ```
 
 | Option | Description |
 |---|---|
-| `--backend` | Target backend (defaults to configured backend) |
+| `--transcriber` | Manage transcription models for the selected backend (implicit default) |
+| `--backend` | Target transcription backend (defaults to its configured default); invalid with `--isolator` or `--diarizer` |
 | `--list` | List models (implicit default) |
 | `--remote` | Show the remote catalog; with explicit `--list`, use the cache; alone, refresh first |
 | `--refresh` | Re-fetch the catalog only; combine with `--list --remote` to refresh and print remote entries |
 | `--download <id>` | Install a model (HF download or Apple Speech locale asset) |
 | `--rm <id>` | Remove an installed model or release a locale (`--yes` to skip confirmation) |
-| `--set-default <id>` | Set the default model for the backend |
+| `--set-default <id>` | Set the default transcription model for the backend |
 | `--diarizer` | Manage the speaker diarizer instead of a backend; combines only with `--list`, `--download`, `--rm`, `--yes` |
 | `--isolator` | Manage `htdemucs` or `htdemucs_ft`; combines only with `--list`, `--download`, `--rm`, `--yes` |
 | `--json` | JSON output for list operations (explicit `--list` or implicit default); invalid with `--download`, `--rm`, or `--set-default` |
+| `--yes` | Skip confirmation prompts for `--rm` |
 
-Parakeet installs fetch only the Core ML bundles and vocabulary FluidAudio loads (v3 ≈ 460 MiB instead of the 3.4 GiB repository). Parakeet and whisper.cpp downloads show live byte progress on stderr and use atomic stage-then-rename installs. Apple Speech locale installs show asset progress and are system-managed via `AssetInventory`.
+`--remote`, `--refresh`, `--set-default`, and `--json` apply only to transcription models. Isolation and diarization support local listing, download, and removal; neither accepts `model --backend`. Backend defaults for all three types are managed separately by [`backend`](#backend).
+
+Parakeet installs fetch only the Core ML bundles and vocabulary FluidAudio loads (v3 ≈ 460 MiB instead of the 3.4 GiB repository). Downloads show progress on stderr and publish validated staged assets atomically. Apple Speech locale installs show asset progress and are system-managed via `AssetInventory`.
 
 ### `backend`
 
-List backends, set the default, or show capabilities. Listing is the default when no other verb is given.
+List backends, set the default, or show capabilities for a processing type. Selectors are mutually exclusive: `--transcriber` (the default), `--isolator`, or `--diarizer`. Listing is the default when no other verb is given.
 
 ```sh
 superscribe backend
+superscribe backend --transcriber  # same as omitting the selector
+superscribe backend --isolator     # htdemucs
+superscribe backend --diarizer     # nemotron
 superscribe backend --set-default parakeet
 superscribe backend --set-default appleSpeech
+superscribe backend --isolator --set-default htdemucs
+superscribe backend --diarizer --set-default nemotron
 superscribe backend --capabilities   # alias: --caps
+superscribe backend --isolator --capabilities
+superscribe backend --diarizer --caps
 ```
 
 | Option | Description |
 |---|---|
+| `--transcriber` | Manage transcription backends: `parakeet`, `whisper.cpp`, `appleSpeech` (implicit default) |
+| `--isolator` | Manage vocal-isolation backends: `htdemucs` (models: `htdemucs`, `htdemucs_ft`) |
+| `--diarizer` | Manage speaker-diarization backends: `nemotron` (model: `nemotron-3-diarization`) |
 | `--list` | List backends (implicit default) |
-| `--set-default <backend>` | Persist default backend to config |
-| `--capabilities` / `--caps` | Print the resolved model's backend display name, audio format, and built-in default model |
+| `--set-default <backend>` | Persist the selected type's default backend; preserves the other types' defaults and model preferences |
+| `--capabilities` / `--caps` | Print the selected type's default backend display name, audio format, built-in default model, and model-list command |
 
-`appleSpeech` is annotated with `(requires macOS 26+)` when the host OS is below 26.
+The built-in defaults are `parakeet`, `htdemucs`, and `nemotron`. Older configuration files retain their transcription preferences and use the built-in isolation and diarization defaults. The pipeline uses those defaults when isolation or mixed-track diarization is requested. `appleSpeech` is annotated with `(requires macOS 26+)` when the host OS is below 26.
 
 ### `cache`
 
-Manage the converted-audio PCM cache (`~/.cache/superscribe/audio/`). All backends share the same cache entry per source file (16 kHz mono f32).
+Manage prepared-audio PCM in `~/.cache/superscribe/audio/`. Ordinary conversion is shared when the required format matches. Isolated vocals use separate cache identities for each model and processing revision.
 
 ```sh
 superscribe cache              # location, entry count, total size
@@ -402,6 +454,15 @@ superscribe cache --rm /path/to/recording.flac
 superscribe cache --clear      # prompts [y/N]
 superscribe cache --clear --yes
 ```
+
+| Option | Description |
+|---|---|
+| `--list` | List cached audio with size, age, and source filename |
+| `--clear` | Delete all cached audio after confirmation |
+| `--rm <path>` | Remove all cached variants recorded for a source path, including isolated vocals |
+| `--yes` | Skip confirmation for `--clear`; invalid with other operations |
+
+Omitting an operation prints the cache location, entry count, and total size. List, clear, and remove are mutually exclusive. Cache operations affect prepared audio, not installed models.
 
 ## Vocal isolation
 
@@ -412,16 +473,11 @@ superscribe run --track "Alice=alice.wav" --isolate --merge-output transcript.vt
 superscribe run --mixed panel.m4a --isolate --fine-tune --merge-output panel.vtt
 ```
 
-`--isolate` selects `htdemucs`; add `--fine-tune` for `htdemucs_ft`. `--fine-tune` requires `--isolate`. The selected model downloads on its first use (about 160 MiB or 641 MiB respectively), with size and SHA-256 verification. Subsequent use is entirely local, without model update checks or automatic replacement downloads. Audio is never uploaded.
+`--isolate` uses the configured isolation backend (currently `htdemucs`) with its `htdemucs` model; add `--fine-tune` for `htdemucs_ft`. `--fine-tune` requires `--isolate`. The selected model downloads on its first use (about 160 MiB or 641 MiB respectively), with size and SHA-256 verification. Subsequent use is entirely local, without model update checks or automatic replacement downloads. Audio is never uploaded.
 
-Models live in `~/.cache/superscribe/models/isolator/<model-id>/`. Successful-installation receipts live alongside configuration under `~/.config/superscribe/`; removal preserves the receipt. If a previously installed model is missing or corrupt, restore it explicitly:
+Models live in `~/.cache/superscribe/models/isolator/<model-id>/`. Successful-installation receipts live alongside configuration under `~/.config/superscribe/`; removal preserves the receipt. A previously installed model that is missing or corrupt requires explicit repair.
 
-```sh
-superscribe model --isolator --list
-superscribe model --isolator --download htdemucs
-superscribe model --isolator --download htdemucs_ft
-superscribe model --isolator --rm htdemucs --yes
-```
+Use [`model --isolator --download <id>`](#model) to repair the selected installation. `backend --isolator --set-default htdemucs` selects the implementation; it does not select `htdemucs_ft` or enable isolation by itself.
 
 Explicit downloads reuse valid installations and repair missing or invalid ones. Failed initial downloads can be retried. Existing ASR and diarizer model installation policies still apply.
 
@@ -475,8 +531,7 @@ Given an input URL `audioURL`, run the following from an async context:
 ```swift
 import SuperscribeKit
 
-// Library callers are responsible for installing or preflighting models first.
-// The CLI installs missing assets automatically before transcription.
+// Install or preflight all requested model assets before running the pipeline.
 let transcriber = try Backend.parakeet.makeTranscriber(model: "v3")
 let config = PipelineConfig(
     tracks: [TrackInput(speaker: "Alice", file: audioURL)],
@@ -497,7 +552,22 @@ let vtt = try TranscriptRenderer.render(
 
 `audioCache` is opt-in for library callers; pass `ConvertedAudioCache()` to match the CLI default. See `Sources/SuperscribeKit/` for `TranscribePipeline`, `Analyzer`, `Merger`, and backends. The CLI under `Sources/superscribe/` demonstrates model install, `BackendManager`, and formatters.
 
-For mixed inputs, set `TrackInput.diarization` to `TrackDiarization(speakerNames: [...])` and supply `try NemotronDiarizer()` as `PipelineConfig.diarizer`. Install the diarizer model first; a mixed input without a configured diarizer throws.
+For mixed inputs, mark the track for diarization and provide a diarizer. To isolate vocals as well, supply an isolator:
+
+```swift
+let mixedConfig = PipelineConfig(
+    tracks: [TrackInput(
+        speaker: "Panel", file: audioURL,
+        diarization: TrackDiarization(speakerNames: ["Alice", "Bob"])
+    )],
+    backend: .parakeet,
+    transcriptionConfig: TranscriptionConfig(language: "en"),
+    diarizer: try DiarizerBackend.nemotron.makeDiarizer(),
+    isolator: try IsolatorBackend.htdemucs.makeIsolator(model: .htdemucs)
+)
+```
+
+Pass this configuration to `TranscribePipeline`. Install the requested models first; mixed input without a diarizer throws. `PipelineConfig` accepts any `Diarizer` and `VocalIsolator` implementation. The library does not implicitly load CLI defaults; callers can resolve them through `UserConfig` and the corresponding backend factories, as `PipelineRunner` does.
 
 ## Building the whisper.cpp xcframework
 
@@ -513,20 +583,25 @@ The first transcription with a newly installed Core ML encoder bundle may be slo
 Sources/
   SuperscribeKit/          Core library (importable by Swift apps)
     Backends/              ParakeetBackend, WhisperBackend, AppleSpeechBackend (+ registries, LiveAPI)
+    Backend.swift          Transcription backend ids
     AppleSpeechAssetInstaller.swift  Locale install via AssetInventory
     Format/                VTT/SRT/TXT/JSON formatters and shared cue utilities
-    Diarization/           Diarizer protocol, Nemotron 3 diarizer + model registry, speaker turn building
+    Diarization/           Diarizer protocol, DiarizerBackend, Nemotron 3 diarizer + model, speaker turns
+    IsolatorBackend.swift  Vocal-isolation capabilities and processor factory
+    DemucsVocalIsolator.swift  File-backed vocal isolation, overlap blending, and cache reuse
     Analyzer.swift         Silence detection
     AudioPreparer.swift    Audio conversion + slicing (16 kHz mono f32 PCM)
     ConvertedAudioCache.swift
+    UserConfig.swift       Independent backend defaults and transcription model preferences
     ModelDownloader.swift  Hugging Face downloads with progress
-    ModelInstaller.swift   Atomic install + whisper encoder bundles + Apple Speech locales
+    ModelInstaller.swift   Atomic ASR, diarizer, and isolator installs; Apple Speech locale lifecycle
     TranscribePipeline.swift  File-backed preparation and global scheduling
     ...
   superscribe/             CLI executable (one file per subcommand)
     TranscribeCommand.swift, MergeCommand.swift, RunCommand.swift
     ModelCommand.swift, BackendCommand.swift, CacheCommand.swift
-    BackendManager.swift, ModelManager.swift, Options.swift, ...
+    BackendTypeOptions.swift  Shared transcriber, isolator, and diarizer selectors
+    BackendManager.swift, ModelManager.swift, PipelineRunner.swift, ...
 Tests/superscribeTests/    Swift Testing suite
 _scripts/
   bootstrap.sh             xcframework build (one-time)
@@ -535,6 +610,8 @@ _scripts/
 ```
 
 ## Development
+
+The [architecture document](_docs/podscribe-design.md) explains processing stages and backend boundaries. The [implementation status](_docs/superscribe-mvp-implementation-plan.md) maps implemented features to source and validation; [AGENTS.md](AGENTS.md) owns development conventions and test policies.
 
 Run the isolated unit suite **serially**, as required by the project's test harness. Select the pinned toolchain through Swiftly first:
 
@@ -550,7 +627,7 @@ Coverage gate (SuperscribeKit line **and** region coverage must stay at 100%):
 _scripts/coverage.sh --run-tests
 ```
 
-Unit tests use stubs and repository-owned fixtures without downloading models or relying on local caches. Hardware integration tests are opt-in via `SUPERSCRIBE_INTEGRATION_TESTS=1` and require supplied audio and installed models. See [AGENTS.md](AGENTS.md#test-coverage-mandatory) for the integration commands, documented coverage exclusions, and coverage receipt rules.
+Unit tests use stubs and repository-owned fixtures without downloading models or relying on local caches. Integration tests are opt-in via `SUPERSCRIBE_INTEGRATION_TESTS=1`: inference checks require supplied audio and installed models; the Metal compilation probe needs no model assets and explicitly skips GPU execution when unavailable. See [AGENTS.md](AGENTS.md#test-coverage-mandatory) for the integration commands, documented coverage exclusions, and coverage receipt rules.
 
 ## License
 

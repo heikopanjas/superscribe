@@ -28,9 +28,10 @@ struct SuperscribePathsTests {
         SuperscribePaths.overrideModelsDirectory = nil
         let models = self.home().appendingPathComponent(".cache/superscribe/models")
         #expect(SuperscribePaths.modelsDirectory().path == models.path)
-        #expect(SuperscribePaths.parakeetModelsDirectory().path == models.appendingPathComponent("parakeet").path)
-        #expect(SuperscribePaths.whisperModelsDirectory().path == models.appendingPathComponent("whisper").path)
+        #expect(SuperscribePaths.parakeetModelsDirectory().path == models.appendingPathComponent("transcriber/parakeet").path)
+        #expect(SuperscribePaths.whisperModelsDirectory().path == models.appendingPathComponent("transcriber/whisper").path)
         #expect(SuperscribePaths.diarizerModelsDirectory().path == models.appendingPathComponent("diarizer").path)
+        #expect(SuperscribePaths.isolatorModelsDirectory().path == models.appendingPathComponent("isolator").path)
     }
 
     @Test func taskLocalModelsDirectoryTakesPrecedence() async -> Void {
@@ -39,7 +40,10 @@ struct SuperscribePathsTests {
         SuperscribePaths.overrideModelsDirectory = override
         #expect(SuperscribePaths.modelsDirectory() == override)
         SuperscribePaths.$taskModelsDirectory.withValue(task) {
-            #expect(SuperscribePaths.parakeetModelsDirectory().path == "/task/models/parakeet")
+            #expect(SuperscribePaths.parakeetModelsDirectory().path == "/task/models/transcriber/parakeet")
+            #expect(SuperscribePaths.whisperModelsDirectory().path == "/task/models/transcriber/whisper")
+            #expect(SuperscribePaths.diarizerModelsDirectory().path == "/task/models/diarizer")
+            #expect(SuperscribePaths.isolatorModelsDirectory().path == "/task/models/isolator")
         }
     }
 }

@@ -47,14 +47,18 @@ public enum SuperscribePaths {
         return Self.catalogCacheDirectory().appendingPathComponent("models", isDirectory: true)
     }
 
-    /// `~/.cache/superscribe/models/parakeet`; folder names match FluidAudio's `Repo.folderName`.
-    public static func parakeetModelsDirectory() -> URL {
-        return Self.modelsDirectory().appendingPathComponent("parakeet", isDirectory: true)
+    private static func transcriberModelsDirectory() -> URL {
+        return Self.modelsDirectory().appendingPathComponent("transcriber", isDirectory: true)
     }
 
-    /// `~/.cache/superscribe/models/whisper`
+    /// `~/.cache/superscribe/models/transcriber/parakeet`; folder names match FluidAudio's `Repo.folderName`.
+    public static func parakeetModelsDirectory() -> URL {
+        return Self.transcriberModelsDirectory().appendingPathComponent("parakeet", isDirectory: true)
+    }
+
+    /// `~/.cache/superscribe/models/transcriber/whisper`
     public static func whisperModelsDirectory() -> URL {
-        return Self.modelsDirectory().appendingPathComponent("whisper", isDirectory: true)
+        return Self.transcriberModelsDirectory().appendingPathComponent("whisper", isDirectory: true)
     }
 
     /// `~/.cache/superscribe/models/diarizer`

@@ -1,12 +1,14 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-11-02 (v2.1.1, Metal resource loading)
+**Last updated:** 2026-11-04 (v2.3.0, documentation and pipeline diagrams)
 
 <!-- {mission} -->
 
 ## Mission Statement
 
 **superscribe** is a macOS command-line tool and Swift library that transcribes multi-track podcast recordings into a single time-aligned subtitle file (VTT, SRT, JSON, or TXT). Each speaker is recorded on an isolated audio track; superscribe transcribes every track in parallel on-device, aligns the results on a shared timeline, resolves overlaps, and merges them into a publish-ready output. Mixed recordings (several speakers on one track, `--mixed`) are split on-device by NVIDIA Nemotron 3 Diarization (FluidAudio Core ML, up to 8 speakers) into one virtual track per speaker.
+
+Optional HTDemucs vocal isolation (`--isolate`, with `--fine-tune` for its fine-tuned model) precedes PCM preparation and detection or diarization. Inputs must already share a time origin; the pipeline preserves timestamps rather than automatically aligning late-starting recordings.
 
 Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Silicon; Apple Speech on macOS 26+):
 
@@ -19,10 +21,12 @@ Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Si
 - **Language:** Swift 6.4.2 via Swiftly and `.swift-version` (strict concurrency)
 - **Platform:** macOS 14+, Apple Silicon (arm64) only
 - **Package Manager:** Swift Package Manager
-- **Build dependencies (one-time):** `cmake`, `ninja` (for the whisper.cpp xcframework build script)
+- **Build dependencies (one-time):** Xcode Metal Toolchain component (MLX shaders), `cmake`, `ninja` (whisper.cpp xcframework build script)
 - **Runtime dependencies:** DemucsMLX and DemucsAudio 0.1.0 (MLX Swift, local vocal isolation), swift-argument-parser, FluidAudio ≥ 0.17.7 (declared with `traits: []`, which drops the unused NemoTextProcessing binary), whisper.cpp v1.7.5 (static xcframework, vendored via `_scripts/bootstrap.sh`), Speech framework (Apple Speech backend only; macOS 26+ runtime)
 - **Version Control:** Git
 - **License:** MIT
+
+Local Zsh login and interactive startup files load Swiftly's `env.sh`, placing its command proxies on `PATH`. `.swift-version` selects this project's toolchain; do not hard-code an installed toolchain path in project scripts.
 
 ## Repository Layout
 
@@ -30,7 +34,9 @@ Three on-device ASR backends are supported (Parakeet and whisper.cpp on Apple Si
 Sources/
   SuperscribeKit/          Core library (importable by Swift apps)
     Backends/              ParakeetBackend, WhisperBackend, AppleSpeechBackend (+Registry, separate framework LiveAPI shims)
-    Diarization/           Diarizer protocol, SpeakerActivity, SpeakerTurnBuilder, NemotronDiarizer (+LiveAPI shim), DiarizerModel
+    Diarization/           Diarizer protocol, DiarizerBackend, SpeakerActivity, SpeakerTurnBuilder, NemotronDiarizer (+LiveAPI shim), DiarizerModel
+    IsolatorBackend.swift  Isolation capabilities and processor factory
+    DemucsVocalIsolator.swift  Bounded vocal isolation, overlap blending, and processed-audio caching
     AppleSpeechAssetInstaller.swift  Locale asset install via AssetInventory
     Format/                Shared rendering, cue splitting, VTT/SRT/JSON/TXT formatters
     Analyzer.swift         Silence detection
@@ -38,7 +44,7 @@ Sources/
     ConvertedAudioCache.swift  On-disk PCM cache with manifest sidecar
     HuggingFaceHub.swift   Remote model catalog client
     CatalogStore.swift     ~/.cache/superscribe/catalog.json
-    SuperscribePaths.swift Storage roots; all models under ~/.cache/superscribe/models/{parakeet,whisper,diarizer,isolator}
+    SuperscribePaths.swift Storage roots; all models under ~/.cache/superscribe/models/{transcriber,diarizer,isolator}
     ModelDownloader.swift  Bounded-parallel byte-stream downloader
     ModelInstaller.swift   Atomic stage-then-rename installer
     ModelRegistry.swift    Per-backend model id registry protocol
@@ -55,16 +61,20 @@ _docs/                     Design documents
 whisper-build/             Generated xcframework (gitignored)
 ```
 
-## Subcommand Surface (v2.1.0)
+## Subcommand Surface (v2.3.0)
 
 | Subcommand | Purpose |
 |---|---|
 | `transcribe` | Detect speech + run ASR; writes `transcript.superscribe.<backend>.json`. Also: `--mixed <path>` (diarized mixed track), `--create-input <dir>` (scan dir → template), `--input <file>` (load template; values are paths or `{file, diarize, speakers}` objects), `--isolate`/`--fine-tune` (vocal isolation) |
 | `merge` | Read intermediate JSON → render VTT, SRT, JSON, or TXT |
 | `run` | `transcribe` + `merge` in one pass |
-| `model` | `--list`, `--remote`, `--download`, `--rm`, `--set-default`, `--refresh`; `--diarizer` and `--isolator` manage diarization and isolation models (`--list`/`--download`/`--rm`) |
-| `backend` | List backends and capabilities |
+| `model` | `--list`, `--remote`, `--download`, `--rm`, `--set-default`, `--refresh`; mutually exclusive model-type selectors: `--transcriber` (implicit default), `--diarizer`, `--isolator`; diarization and isolation models support `--list`/`--download`/`--rm` |
+| `backend` | `--list`, `--capabilities`/`--caps`, `--set-default`; shared mutually exclusive selectors: `--transcriber` (implicit default), `--isolator`, `--diarizer` |
 | `cache` | Audio-conversion cache: info, `--list`, `--clear`, `--rm` |
+
+Local model listings share one row formatter for aligned model ids, sizes (`—` when unknown), and installation paths or missing-installation status across all three model types.
+
+`BackendTypeOptions` owns selectors and their validation for both `backend` and `model`. `Backend` remains the transcription enum; `IsolatorBackend` (`htdemucs`) and `DiarizerBackend` (`nemotron`) own capabilities and processor factories. `UserConfig` preserves `defaultBackend` and stores independent optional `defaultIsolatorBackend`/`defaultDiarizerBackend` preferences, falling back to built-in defaults for missing or unknown ids. Pipeline construction resolves these preferences when the corresponding opt-in processing stage is requested. Backend ids select implementations; model ids select their weights (for example, `htdemucs_ft` is an HTDemucs model).
 
 ## Session Protocol
 
@@ -132,6 +142,8 @@ Use `AGENTS.md` for current coding standards, conventions, and project decisions
 
 `README.md` documents user-facing behavior and source-build requirements. Keep one command-option reference per subcommand and link to this file for detailed testing policies and coverage exclusions; use `superscribe --version` instead of duplicating the current product version in prose.
 
+The architecture and implementation documents under `_docs/` describe current interfaces and implemented behavior, linking to README command tables instead of copying them. Pipeline diagrams must show opt-in isolation before PCM segmentation, the detection/diarization branch, virtual speaker tracks, transcription, and rendering. Proposed capabilities must be explicitly marked as unimplemented; decision history stays in `UPDATES.md`.
+
 ### Test Coverage (mandatory)
 
 **Goal: 100% SuperscribeKit line and region coverage — never regress below either.**
@@ -180,9 +192,10 @@ Use `AGENTS.md` for current coding standards, conventions, and project decisions
 - Isolation models live under `models/isolator/<id>`. Only a model with no successful-installation receipt may auto-download; subsequent missing or invalid assets require explicit `model --isolator --download <id>`. Removal preserves the configuration receipt. Inference always disables upstream downloads.
 - Before opening a Demucs session, resolve the shipped Metal library relative to the executable or its owning bundle and configure MLX once. Only MLX-specific resources qualify; normalize base-relative bundle URLs to absolute paths. Missing shaders throw an actionable error before background GPU initialization. WAV file settings use interleaved storage while processing buffers remain planar.
 - Swift 6.4.2 `swift build` compiles MLX Metal shaders; Debug and Release GPU probes passed locally. CI must select the same toolchain and ship the Metal resource bundle with the CLI. Isolated audio cache identities include the model and processing revision; `--no-cache` bypasses processed-audio caching.
+- Xcode's separate Metal Toolchain component must be installed with `xcodebuild -downloadComponent MetalToolchain`. Verify execution with `xcrun metal --version`; locating the Xcode launcher alone does not prove the compiler is available. Clear stale lookup results with `xcrun --kill-cache` after installation when necessary.
 
 - `StreamingAudioConverter` is the single finite-input converter for files and Speech buffers. Input errors fail conversion; output is drained through end of stream.
-- `PreparedAudio` owns file-backed PCM. The pipeline retains file references, reads active segment slices, and bounds conversion concurrency to two by default. Temporary PCM is removed when its final owner leaves scope.
+- `PreparedAudio` owns file-backed PCM. The pipeline retains file references, reads active segment slices, and bounds preparation concurrency to two by default, or one when isolation is enabled. Temporary PCM is removed when its final owner leaves scope.
 - Segment work shares one global limit across tracks. Progress completion counts come from the parent collector, preserving input track and segment order separately.
 - CLI progress has one owned reporter; both success and failure await its final drain before summaries.
 - Child processes drain stdout and stderr concurrently and join termination and pipe readers on cancellation.
@@ -236,7 +249,7 @@ After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm
 
 ### FluidAudio integration
 
-- All models live under `SuperscribePaths.modelsDirectory()` (`~/.cache/superscribe/models`) in `parakeet/`, `whisper/`, `diarizer/`, and `isolator/`; tests redirect the single `overrideModelsDirectory`/`taskModelsDirectory` root. `AsrModels.load` resolves `parent/<Repo.folderName>`, so Parakeet install folder names must equal FluidAudio's folder names. Older installs (FluidAudio's Application Support folder, `~/Library/Caches/superscribe/whisper`) are not migrated.
+- All models live under `SuperscribePaths.modelsDirectory()` (`~/.cache/superscribe/models`) in `transcriber/parakeet/`, `transcriber/whisper/`, `diarizer/`, and `isolator/`; tests redirect the single `overrideModelsDirectory`/`taskModelsDirectory` root. The transcription backends share one private transcriber-root helper. `AsrModels.load` resolves `parent/<Repo.folderName>`, so Parakeet install folder names must equal FluidAudio's folder names. Existing top-level `models/parakeet` and `models/whisper` directories can be moved under `models/transcriber` to reuse their assets; runtime path helpers do not migrate files. Older installs (FluidAudio's Application Support folder, `~/Library/Caches/superscribe/whisper`) are not migrated.
 - superscribe owns every model download. `ParakeetBackend` sets `ModelHub.offlineMode = true` once before FluidAudio loads, so FluidAudio never downloads, purges, or replaces an installation (it would otherwise fetch missing files into the parent directory's repo folder).
 - Download streams that end in error are drained from a detached task: a cancelled caller's iterator throws before reading, and an unconsumed `URLSession.AsyncBytes` keeps its session from invalidating.
 

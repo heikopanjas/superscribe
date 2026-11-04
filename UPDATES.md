@@ -4,6 +4,69 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-11-04 (v2.3.0, 13:24 documentation and pipeline diagrams)
+
+- audit the readme against all six commands, adding missing option details, backend/model distinctions, independent configuration defaults, and processed-audio cache behavior
+- update the overview diagram to show optional isolation before detection or diarization, virtual speakers, transcription, and rendering; document serialized preparation during isolation
+- replace obsolete mvp instructions and unsupported api sketches with current architecture, processing sequence diagrams, implementation status, and explicit future-work boundaries
+- rationale: documentation still described the original isolated-track mvp and omitted parts of the implemented processing pipeline and management surface
+- validation: all 68 command-option and alias pairs match generated help; 47 cli examples, four json examples, 14 shell blocks, 80 local links and anchors, and three mermaid diagrams pass documentation checks
+- both readme library examples type-check against the built module; source, test, and package inputs and earlier update history are preserved; no unit tests were rerun for this documentation-only pass
+- version: unchanged at 2.3.0 (documentation only)
+
+### 2026-11-04 (v2.3.0, 13:06 processing backend selection)
+
+- add shared transcriber, isolator, and diarizer selectors to backend management, with listing, capabilities, and default selection for all three types
+- introduce typed htdemucs and nemotron backends with capabilities and processor factories; pipeline construction uses the independently saved defaults
+- preserve existing transcription preferences and legacy configuration decoding; missing or unknown auxiliary defaults fall back to the built-in implementations
+- share selector definitions and validation with the model command and keep backend identities separate from model variants
+- rationale: support alternate isolation and diarization implementations in the future while exposing consistent management commands today
+- validation: release build, cli smoke checks, and 514 serial strict-concurrency tests pass; new backend types and configuration code have 100 percent line and region coverage
+- the full coverage gate remains platform-limited on macos 15 at 96.40 percent lines and 95.22 percent regions, with the same existing apple speech gaps and unchanged thresholds
+- version bump: 2.2.2 to 2.3.0 (MINOR - additive cli selectors, backend types, and configuration preferences)
+
+### 2026-11-04 (v2.2.2, 12:43 transcriber model cache)
+
+- group parakeet and whisper weights and encoders under `models/transcriber/{parakeet,whisper}` through one shared path helper; diarizer and isolator roots remain siblings
+- update backend path tests and storage documentation; existing transcription folders can be moved into the new parent to retain downloaded assets
+- relocated the local parakeet and whisper folders without overwriting or re-downloading; model listing finds both existing installations at the new paths
+- validation: release build and model discovery pass, 509 serial strict-concurrency tests pass, and `SuperscribePaths.swift` has 100 percent line and region coverage; the full gate remains at 96.37 percent lines and 95.18 percent regions on macos 15, with thresholds unchanged
+- rationale: align the model cache hierarchy with the three model-type selectors without adding migration side effects to path resolution
+- version bump: 2.2.1 to 2.2.2 (PATCH - model cache organization, no public signature changes)
+
+### 2026-11-04 (v2.2.1, 12:36 metal compiler setup)
+
+- installed and registered xcode's metal toolchain component 17C7003j, then cleared stale xcrun lookup results that still selected the missing-component launcher
+- documented the separate compiler requirement and execution check for local source builds
+- rationale: swift 6.4.2 was selected correctly, but mlx shader compilation failed before the downloaded compiler was available through normal tool lookup
+- validation: `xcrun metal --version` succeeds; the standard `swift build -c release` completes with compiled metal resources, and release cli version and isolator-list smoke checks pass
+- version: unchanged at 2.2.1 (local build environment and documentation only)
+
+### 2026-11-04 (v2.2.1, 12:32 automatic swift toolchain selection)
+
+- initialize swiftly from the user's symlinked zsh login and interactive startup files in the config repository; fresh shells now resolve swift through swiftly
+- retain the installed 6.4.2 global default and the project's existing `.swift-version` pin; document persistent shell initialization in the readme
+- rationale: missing swiftly initialization caused ordinary command-line builds to select xcode's swift 6.2.4 despite the installed project toolchain
+- validation: fresh login and interactive shells select 6.4.2; a separate project pin still selects 6.3.3; a fresh login shell builds superscribe with native swiftpm without a manual path override
+- version: unchanged at 2.2.1 (local shell configuration and documentation only)
+
+### 2026-11-04 (v2.2.1, 12:26 consistent model listings)
+
+- use one row formatter for local transcription, diarizer, and isolator listings, with aligned model ids, sizes, and installation paths or missing status
+- installed isolator models now show their paths instead of the bare installed label; unknown sizes use the existing dash placeholder
+- validation: native swiftpm build, 509 serial strict-concurrency tests, and installed-model listing smoke checks pass; coverage remains at 96.37 percent lines and 95.18 percent regions on macos 15, with thresholds unchanged
+- rationale: keep the three model-type selectors visually consistent without changing model discovery or installation behavior
+- version bump: 2.2.0 to 2.2.1 (PATCH - cli display correction)
+
+### 2026-11-04 (v2.2.0, model-type selectors)
+
+- add explicit `model --transcriber` alongside `--diarizer` and `--isolator`; omitting a selector still manages transcription models
+- reject combinations of model-type selectors and document the default in cli help and the readme
+- validation: native swiftpm build, 509 serial strict-concurrency tests, and cli selector smoke checks pass; the standard build requires the missing xcode metal compiler component
+- full coverage remains at the previously recorded macos 15 levels of 96.37 percent lines and 95.18 percent regions; macos 26 validation is still required and thresholds are unchanged
+- rationale: provide symmetric selector names without changing model operations or backend resolution
+- version bump: 2.1.1 to 2.2.0 (MINOR - additive cli option)
+
 ### 2026-11-02 (v2.1.1, 21:44 runtime regression validation)
 
 - 509 serial strict-concurrency unit tests pass; shader discovery has 100 percent line and region coverage

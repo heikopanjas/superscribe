@@ -11,9 +11,10 @@ enum PipelineRunner {
         var logBackend: @Sendable (Backend, String) -> Void
         var clearProgressLine: @Sendable () -> Void
         var makeIsolator: @Sendable (IsolatorModel) async throws -> any VocalIsolator = { model in
+            let backend = try UserConfig.load().resolvedDefaultIsolatorBackend()
             _ = try await ModelManager.installIsolator(model)
             printErr("Using vocal isolator: \(model.rawValue)\n")
-            return try DemucsVocalIsolator(model: model)
+            return try backend.makeIsolator(model: model)
         }
 
         static let live = Dependencies(
@@ -26,9 +27,10 @@ enum PipelineRunner {
             ensureModelInstalled: ModelManager.ensureModelInstalled,
             makeTranscriber: BackendManager.makeTranscriber,
             makeDiarizer: {
+                let backend = try UserConfig.load().resolvedDefaultDiarizerBackend()
                 try await ModelManager.ensureDiarizerInstalled()
                 FileHandle.standardError.write(Data("Using speaker diarizer: \(DiarizerModel.id)\n".utf8))
-                return try NemotronDiarizer()
+                return try backend.makeDiarizer()
             },
             logBackend: { backend, model in
                 FileHandle.standardError.write(
