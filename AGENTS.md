@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-11-19 (v2.3.3, shared audio cache publication)
+**Last updated:** 2026-11-19 (v2.3.4, shared scheduling and model selection)
 
 <!-- {mission} -->
 
@@ -75,6 +75,8 @@ whisper-build/             Generated xcframework (gitignored)
 Local model listings share one row formatter for aligned model ids, sizes (`—` when unknown), and installation paths or missing-installation status across all three model types.
 
 `BackendTypeOptions` owns selectors and their validation for both `backend` and `model`. `Backend` remains the transcription enum; `IsolatorBackend` (`htdemucs`) and `DiarizerBackend` (`nemotron`) own capabilities and processor factories. `UserConfig` preserves `defaultBackend` and stores independent optional `defaultIsolatorBackend`/`defaultDiarizerBackend` preferences, falling back to built-in defaults for missing or unknown ids. Pipeline construction resolves these preferences when the corresponding opt-in processing stage is requested. Backend ids select implementations; model ids select their weights (for example, `htdemucs_ft` is an HTDemucs model).
+
+`BackendManager` owns CLI/config selection for both capability inspection and transcription. Capability inspection uses the selected or built-in model without resolving assets; transcription delegates canonicalization to `Backend.resolveModelId`. Keep an unspecified model nil until canonicalization so Apple Speech can fall back to a supported system locale.
 
 ## Session Protocol
 
@@ -198,7 +200,7 @@ The architecture and implementation documents under `_docs/` describe current in
 - Audio preparation uses `AudioBuffers.perform` to carry task-local dependencies onto its blocking worker. Conversion and speech detection share that worker's cancellation signal; detection checks it before each input window. Direct `Analyzer` callers retain Swift task cancellation checks through the same detection loop.
 - `PreparedAudio` owns file-backed PCM. The pipeline retains file references, reads active segment slices, and bounds preparation concurrency to two by default, or one when isolation is enabled. Temporary PCM is removed when its final owner leaves scope.
 - `ConvertedAudioCache.publish` owns atomic PCM promotion and best-effort manifest recording for streaming preparation and array storage. Manifest failure after successful publication never triggers conversion again. Each writer closes its WAV before publication and owns staging cleanup on every exit; WAV storage settings come from `AudioBuffers.fileSettings`.
-- Segment work shares one global limit across tracks. Progress completion counts come from the parent collector, preserving input track and segment order separately.
+- Segment work shares one global limit across tracks. Progress completion counts come from the parent collector, preserving input track and segment order separately. `TranscribePipeline.run` owns the only segment scheduling path; tests exercise it with prepared files and stubbed backends or diarizers.
 - CLI progress has one owned reporter; both success and failure await its final drain before summaries.
 - Child processes drain stdout and stderr concurrently and join termination and pipe readers on cancellation.
 

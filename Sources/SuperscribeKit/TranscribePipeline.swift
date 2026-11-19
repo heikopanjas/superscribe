@@ -135,27 +135,6 @@ public struct TranscribePipeline: Sendable {
         return result
     }
 
-    internal func transcribeSegments(
-        _ segments: [SpeechSegment],
-        allSamples: [Float],
-        preparer: AudioPreparer,
-        onSegmentDone: (@Sendable (Int) -> Void)? = nil
-    ) async throws -> [IntermediateTranscript.TranscribedSegment] {
-        let indexedSegments = Array(segments.enumerated())
-        let results = try await ConcurrencyHelpers.withBoundedThrowingTaskGroup(
-            limit: self.config.maxConcurrentTranscriptions,
-            items: indexedSegments
-        ) { indexed in
-            let (idx, segment) = indexed
-            let segmentSamples = try preparer.slice(allSamples, segment: segment)
-            let result = try await self.transcribe(samples: segmentSamples, segment: segment)
-            onSegmentDone?(idx)
-            return (idx, result)
-        }
-
-        return results.compactMap { Self.transcribedSegment($0.1) }
-    }
-
     private func transcribe(samples: [Float], segment: SpeechSegment) async throws -> SegmentTranscription {
         if samples.isEmpty == true { return SegmentTranscription(segment: segment, words: []) }
         return try await self.transcriber.transcribe(samples: samples, segment: segment, config: self.config.transcriptionConfig)

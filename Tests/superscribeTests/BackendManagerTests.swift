@@ -47,4 +47,46 @@ struct BackendManagerTests {
         )
         #expect(model == ParakeetBackend.defaultModelId)
     }
+
+    @Test(arguments: [false, true])
+    func transcriptionCanonicalizesSelectedModel(explicit: Bool) async throws -> Void {
+        let config = UserConfig(defaultModels: [Backend.parakeet.rawValue: "ja"], defaultBackend: Backend.parakeet.rawValue)
+        try config.save()
+        let cliModel: String? = explicit ? "110m" : nil
+        let selection = try BackendManager.resolveBackendAndModel(cliBackend: nil, cliModel: cliModel)
+        #expect(selection.backend == .parakeet)
+        #expect(selection.model == (explicit ? "110m" : "ja"))
+        let (backend, model) = try await PipelineRunner.Dependencies.live.resolveBackendAndModel(nil, cliModel)
+        #expect(backend == .parakeet)
+        #expect(model == (explicit ? "tdt-ctc-110m" : "tdt-ja"))
+    }
+
+    @Test func liveTranscriptionUsesSelectedBackendDefaults() async throws -> Void {
+        try UserConfig(defaultModels: [Backend.parakeet.rawValue: "v2"], defaultBackend: Backend.parakeet.rawValue).save()
+        let (backend, model) = try await PipelineRunner.Dependencies.live.resolveBackendAndModel(.whisperCpp, nil)
+        #expect(backend == .whisperCpp)
+        #expect(model == WhisperBackend.defaultModelId)
+    }
+
+    @Test func capabilitySelectionDoesNotResolveAppleSpeechAssets() throws -> Void {
+        AppleSpeechSupport.testForceRuntimeUnavailable = true
+        let config = UserConfig(defaultModels: [Backend.appleSpeech.rawValue: "de_DE"], defaultBackend: Backend.appleSpeech.rawValue)
+        let selection = try BackendManager.resolveBackendAndModel(cliBackend: nil, cliModel: nil, config: config)
+        #expect(selection.backend == .appleSpeech)
+        #expect(selection.model == "de_DE")
+    }
+
+    @Test func appleSpeechDefaultFallbackRemainsImplicit() async throws -> Void {
+        if #available(macOS 26, *) {
+            AppleSpeechSupport.testDefaultLocaleIdentifierOverride = "unsupported"
+            AppleSpeechLiveAPI.testSupportedLocaleIds = ["en-US"]
+            try UserConfig(defaultBackend: Backend.appleSpeech.rawValue).save()
+            let (backend, model) = try await PipelineRunner.Dependencies.live.resolveBackendAndModel(nil, nil)
+            #expect(backend == .appleSpeech)
+            #expect(model == "en-US")
+            await #expect(throws: UnsupportedModelError.self) {
+                _ = try await PipelineRunner.Dependencies.live.resolveBackendAndModel(nil, "unsupported")
+            }
+        }
+    }
 }

@@ -75,25 +75,26 @@ struct PipelineTests {
             await counter.increment()
             return [.init(text: "x", start: segment.start, end: segment.end)]
         }
-        let preparer = AudioPreparer(for: transcriber.capabilities)
-        let samples = Array(repeating: Float(0.1), count: 16_000)
-        let segments = [SpeechSegment(start: 0.5, end: 0.5)]
+        let source = try TestHelpers.makeTempPCM(samples: [0.1], name: "empty-segment")
+        defer { try? FileManager.default.removeItem(at: source) }
+        let ticks = TestDependencyStorage<[TranscriptionProgress]>([])
 
         let pipeline = TranscribePipeline(
             transcriber: transcriber,
             config: PipelineConfig(
-                tracks: [TrackInput(speaker: "Solo", file: URL(fileURLWithPath: "/tmp/x.wav"))],
+                tracks: [TrackInput(speaker: "Solo", file: source, diarization: TrackDiarization())],
                 backend: .parakeet,
-                transcriptionConfig: TranscriptionConfig(language: "en", prompt: nil)
-            )
+                transcriptionConfig: TranscriptionConfig(language: "en", prompt: nil),
+                analyzerConfig: AnalyzerConfig(padding: 0, minSegmentDuration: 0),
+                // A turn rounded beyond the final PCM frame produces an empty segment slice.
+                diarizer: try StubDiarizer(slots: [nil, 0])
+            ),
+            onProgress: { ticks[\.self].append($0) }
         )
 
-        let results = try await pipeline.transcribeSegments(
-            segments,
-            allSamples: samples,
-            preparer: preparer
-        )
-        #expect(results.isEmpty == true)
+        let result = try await pipeline.run()
+        #expect(result.tracks.isEmpty == true)
+        #expect(ticks[\.self].map(\.overallCompleted) == [1])
         #expect(await counter.value == 0)
     }
 
@@ -144,34 +145,29 @@ struct PipelineTests {
         }
     }
 
-    @Test("maxConcurrentTranscriptions bounds parallel segment work")
-    func maxConcurrent() async throws -> Void {
-        let gate = ConcurrentTestGate(batchSize: 1)
+    @Test("maxConcurrentTranscriptions bounds work across tracks", arguments: [1, 2])
+    func maxConcurrent(limit: Int) async throws -> Void {
+        let gate = ConcurrentTestGate(batchSize: limit)
         let transcriber = ControlledTranscriber { segment in
             await gate.enter()
             await gate.leave()
             return [.init(text: "bounded", start: segment.start, end: segment.end)]
         }
-        let preparer = AudioPreparer(for: transcriber.capabilities)
-        let samples = Array(repeating: Float(0.1), count: 64_000)
-        let segments = (0 ..< 4).map {
-            SpeechSegment(start: Double($0) * 0.5, end: Double($0) * 0.5 + 0.4)
-        }
+        let source = try TestHelpers.makeTempSineWAV(name: "bounded-segments")
+        defer { try? FileManager.default.removeItem(at: source) }
 
         let pipeline = TranscribePipeline(
             transcriber: transcriber,
             config: PipelineConfig(
-                tracks: [TrackInput(speaker: "Solo", file: URL(fileURLWithPath: "/tmp/x.wav"))],
+                tracks: (0 ..< 4).map { TrackInput(speaker: "Speaker \($0)", file: source) },
                 transcriptionConfig: TranscriptionConfig(language: "en", prompt: nil),
-                maxConcurrentTranscriptions: 1
+                maxConcurrentTranscriptions: limit
             )
         )
-        _ = try await pipeline.transcribeSegments(
-            segments,
-            allSamples: samples,
-            preparer: preparer
-        )
-        #expect(await gate.peak == 1)
+        let transcript = try await pipeline.run()
+        #expect(transcript.tracks.count == 4)
+        #expect(transcript.tracks.allSatisfy { $0.segments.count == 1 } == true)
+        #expect(await gate.peak == limit)
         #expect(await gate.current == 0)
     }
 }

@@ -27,21 +27,25 @@ final class BackendManager {
         cliModel: String?,
         config: UserConfig? = nil
     ) throws -> (backend: Backend, model: String) {
+        let (backend, requestedModel) = try Self.resolveSelection(cliBackend: cliBackend, cliModel: cliModel, config: config)
+        return (backend, requestedModel ?? backend.registryDefaultModelId)
+    }
+
+    /// Canonicalizes the selected model for transcription, retaining implicit system-locale fallback.
+    static func resolveTranscription(
+        cliBackend: Backend?, cliModel: String?, config: UserConfig? = nil
+    ) async throws -> (backend: Backend, model: String) {
+        let (backend, requestedModel) = try Self.resolveSelection(cliBackend: cliBackend, cliModel: cliModel, config: config)
+        return (backend, try await backend.resolveModelId(requestedModel))
+    }
+
+    /// Shared CLI/config selection. A missing model stays nil until the caller resolves its default.
+    private static func resolveSelection(
+        cliBackend: Backend?, cliModel: String?, config: UserConfig?
+    ) throws -> (backend: Backend, requestedModel: String?) {
         let config = try config ?? UserConfig.load()
         let backend = try Self.resolveBackend(cliBackend: cliBackend, config: config)
-
-        let model: String
-        if let explicit = cliModel {
-            model = explicit
-        }
-        else if let saved = config.defaultModel(for: backend) {
-            model = saved
-        }
-        else {
-            model = backend.registryDefaultModelId
-        }
-
-        return (backend, model)
+        return (backend, cliModel ?? config.defaultModel(for: backend))
     }
 
     /// Returns the built-in default model id for a backend.

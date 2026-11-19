@@ -4,6 +4,24 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-11-19 (v2.3.4, 21:37 production path consolidation validation)
+
+- migrated empty-slice and global concurrency checks pass through the production pipeline; no references to the removed scheduler remain
+- selection tests cover cli precedence, saved aliases, per-backend defaults, and lightweight capability selection; macos 26 also checks implicit apple speech fallback and explicit unsupported locales
+- validation: 23 focused tests pass before consolidation and all 524 serial strict-concurrency unit tests pass afterward with swift 6.4.2; changed swift files pass formatter lint
+- the production pipeline retains 100 percent line and region coverage
+- the full coverage gate remains unmet on macos 15.8.3 at 96.36 percent lines and 95.25 percent regions, with the same 200 missed lines and 107 missed regions in existing apple speech paths requiring macos 26; thresholds and exclusions remain unchanged
+- rationale: verify actual production scheduling and shared selection without treating platform-dependent coverage as complete
+- version: unchanged at 2.3.4
+
+### 2026-11-19 (v2.3.4, 21:35 shared scheduling and model selection)
+
+- remove the unused whole-array segment scheduler and migrate its empty-slice and concurrency tests onto the production file-backed pipeline
+- share cli/config backend and optional model selection in the backend manager; transcription still canonicalizes through the library while capability inspection stays lightweight
+- preserve implicit apple speech locale fallback, explicit model selection, saved aliases, and per-backend defaults
+- rationale: tests exercised a scheduler that production never called, while separate model selection implementations could drift in precedence or default behavior
+- version bump: 2.3.3 to 2.3.4 (PATCH - internal consolidation without public api changes)
+
 ### 2026-11-19 (v2.3.3, 21:31 cache publication validation)
 
 - reproduced two source conversions after a manifest failure before the fix; streaming preparation now converts once and reuses the published pcm on subsequent calls

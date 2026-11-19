@@ -19,10 +19,7 @@ enum PipelineRunner {
 
         static let live = Dependencies(
             resolveBackendAndModel: { cliBackend, cliModel in
-                let config = try UserConfig.load()
-                let backend = try BackendManager.resolveBackend(cliBackend: cliBackend, config: config)
-                let model = try await backend.resolveModelId(cliModel ?? config.defaultModel(for: backend))
-                return (backend, model)
+                return try await BackendManager.resolveTranscription(cliBackend: cliBackend, cliModel: cliModel)
             },
             ensureModelInstalled: ModelManager.ensureModelInstalled,
             makeTranscriber: BackendManager.makeTranscriber,
