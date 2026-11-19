@@ -62,9 +62,11 @@ public struct AudioPreparer: Sendable {
             return try self.convert(url: url, to: staging, onProgress: onProgress, checkCancellation: checkCancellation)
         }
         try checkCancellation()
-        try SuperscribeFS.atomicReplace(staging: staging, final: destination, policy: .replaceExisting)
         if let cache = self.cache, let key {
-            try cache.updateManifest(adding: .init(digest: key.digest, sourcePath: key.sourcePath, storedAt: Date()))
+            _ = try cache.publish(staging: staging, for: key)
+        }
+        else {
+            try SuperscribeFS.atomicReplace(staging: staging, final: destination, policy: .replaceExisting)
         }
         let prepared = try PreparedAudio(url: destination, format: self.targetFormat, temporary: key == nil)
         onProgress?(ConversionProgress(source: url, framesProcessed: frames, framesTotal: frames, fraction: 1))

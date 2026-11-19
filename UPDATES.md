@@ -4,6 +4,24 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-11-19 (v2.3.3, 21:31 cache publication validation)
+
+- reproduced two source conversions after a manifest failure before the fix; streaming preparation now converts once and reuses the published pcm on subsequent calls
+- array storage and streaming preparation preserve usable audio when manifest recording fails; write and promotion failures preserve existing audio and metadata and remove staging files
+- validation: 92 focused cache and conversion tests and all 520 serial strict-concurrency unit tests pass with swift 6.4.2; changed swift files pass formatter lint
+- audio preparation, converted audio cache, and shared audio helpers have 100 percent line and region coverage
+- the full coverage gate remains unmet on macos 15.8.3 at 96.38 percent lines and 95.26 percent regions, with the same 200 missed lines and 107 missed regions in existing apple speech paths requiring macos 26; thresholds and exclusions remain unchanged
+- rationale: verify shared publication and failure cleanup while retaining the pending macos 26 full coverage requirement
+- version: unchanged at 2.3.3
+
+### 2026-11-19 (v2.3.3, 21:29 shared audio cache publication)
+
+- share atomic pcm promotion and nonfatal manifest recording between streaming preparation and array storage
+- keep staging cleanup with each writer after its wav is closed; reuse shared wav storage settings instead of a second settings dictionary
+- add regression tests for manifest failure, single conversion, usable published audio, warm cache reuse, and preservation of existing audio and metadata on failed promotion
+- rationale: streaming preparation treated a failed metadata write as a failed conversion and converted the entire source again despite successfully publishing its pcm
+- version bump: 2.3.2 to 2.3.3 (PATCH - cache failure handling and internal consolidation without public api changes)
+
 ### 2026-11-19 (v2.3.2, 21:25 detection cancellation validation)
 
 - the deterministic regression reproduced 32 detection reads after cancellation before the fix and verifies a single read afterward, with temporary audio removed and the source preserved

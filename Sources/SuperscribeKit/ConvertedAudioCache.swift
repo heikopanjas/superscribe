@@ -164,6 +164,17 @@ public struct ConvertedAudioCache: Sendable {
         )
     }
 
+    /// Promotes closed PCM and records its origin when possible. The caller owns staging cleanup.
+    internal func publish(staging: URL, for key: CacheKey) throws -> URL {
+        let finalURL = self.cacheURL(for: key)
+        if SuperscribeKitTestHooks.forceCacheStoreAtomicReplaceFailure == true {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try SuperscribeFS.atomicReplace(staging: staging, final: finalURL, policy: .replaceExisting)
+        try? self.updateManifest(adding: ManifestEntry(digest: key.digest, sourcePath: key.sourcePath, storedAt: Date()))
+        return finalURL
+    }
+
     /// Atomically write `samples` (in `format`) under `key`. Stages to a
     /// sibling `.staging-<uuid>` file, then renames into place. Returns
     /// the final URL.
@@ -180,47 +191,17 @@ public struct ConvertedAudioCache: Sendable {
 
         let finalURL = self.cacheURL(for: key)
         let stagingURL = SuperscribeFS.stagingURL(beside: finalURL, label: key.digest).appendingPathExtension("wav")
+        defer { try? FileManager.default.removeItem(at: stagingURL) }
 
         try autoreleasepool {
             try self.writeSamples(samples, format: format, to: stagingURL)
         }
 
-        do {
-            if SuperscribeKitTestHooks.forceCacheStoreAtomicReplaceFailure == true {
-                throw CocoaError(.fileWriteUnknown)
-            }
-            try SuperscribeFS.atomicReplace(
-                staging: stagingURL,
-                final: finalURL,
-                policy: .replaceExisting
-            )
-        }
-        catch {
-            try? FileManager.default.removeItem(at: stagingURL)
-            throw error
-        }
-
-        // Update manifest so `superscribe cache --list` can show source filenames.
-        try? self.updateManifest(
-            adding: ManifestEntry(digest: key.digest, sourcePath: key.sourcePath, storedAt: Date())
-        )
-
-        return finalURL
+        return try self.publish(staging: stagingURL, for: key)
     }
     @inline(never)
     private func writeSamples(_ samples: [Float], format: AudioFormat, to stagingURL: URL) throws -> Void {
         let avFormat = try AudioBuffers.format(format)
-
-        // WAV settings matching the in-memory float32 samples bit-for-bit.
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: Double(format.sampleRate),
-            AVNumberOfChannelsKey: format.channels,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false
-        ]
 
         let outputFile: AVAudioFile
         do {
@@ -229,7 +210,7 @@ public struct ConvertedAudioCache: Sendable {
             }
             outputFile = try AVAudioFile(
                 forWriting: stagingURL,
-                settings: settings,
+                settings: AudioBuffers.fileSettings(for: avFormat),
                 commonFormat: .pcmFormatFloat32,
                 interleaved: false
             )
@@ -274,10 +255,8 @@ public struct ConvertedAudioCache: Sendable {
         }
         catch {
             if let forced = SuperscribeKitTestHooks.forceCacheStoreWriteError {
-                try? FileManager.default.removeItem(at: stagingURL)
                 throw forced
             }
-            try? FileManager.default.removeItem(at: stagingURL)
             throw error
         }
 
