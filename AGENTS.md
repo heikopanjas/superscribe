@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-11-19 (v2.3.4, shared scheduling and model selection)
+**Last updated:** 2026-11-19 (v2.3.5, shared whisper download fixtures)
 
 <!-- {mission} -->
 
@@ -166,6 +166,7 @@ The architecture and implementation documents under `_docs/` describe current in
 - Hardware integration tests live in `Tests/superscribeIntegrationTests/` and enter the package graph only with `SUPERSCRIBE_INTEGRATION_TESTS=1`. Supply `SUPERSCRIBE_INTEGRATION_AUDIO` and an already-installed `SUPERSCRIBE_INTEGRATION_MODEL`; invoke with `--filter ParakeetIntegrationTests`. For the diarizer, install it (`model --diarizer --download nemotron-3-diarization`), supply a recording with two or more voices as `SUPERSCRIBE_INTEGRATION_MIXED_AUDIO`, and use `--filter NemotronDiarizerIntegrationTests`.
 - Core ML unit fixtures are repository-owned (`Tests/superscribeTests/Fixtures/Scalar.mlmodel`); compile into temporary storage. Never load undocumented system model bundles.
 - Mock URL sessions intercept every request and fail for missing handlers; await invalidation before unregistering handlers. Cancelled or failed download streams are closed before session cleanup.
+- `WhisperDownloadFixture` owns repository metadata, model construction, exact GET routes, advertised sizes, and configurable HTTP responses for Whisper download tests. It delegates session lifetime to `MockURLSessionHelpers`; test bodies retain their operations and assertions. Corrupt-archive fixtures must pass byte-size validation so tests reach archive validation.
 - Mutable test overrides use per-test task-local storage protected by a lock. Capture storage before entering synchronous framework callbacks. Default test scopes redirect model, catalog, and configuration storage to temporary directories. Keep the serial test runner during migration.
 - Apple Speech lifecycle orchestration lives in covered `AppleSpeechAssetInstaller`, `AppleSpeechInstallation`, and `AppleSpeechAnalysis`. The framework shim supplies injectable operations; failed analysis cancels the framework and joins result collection, and failed installation rolls back only a new reservation.
 - Coverage uses the selected SwiftPM build output and rejects missing, stale, or changed binary/profile pairs using a SHA-256 receipt. Swift Build and native SwiftPM binary layouts are supported.

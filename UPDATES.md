@@ -4,6 +4,24 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-11-19 (v2.3.5, 21:47 download fixture validation)
+
+- validation: all 72 focused networking and fixture tests and all 524 serial strict-concurrency unit tests pass with swift 6.4.2; changed swift files pass formatter lint
+- strict fixture checks reject unconfigured requests and verify metadata and download http failures reach their respective clients
+- corrupt archive checks now require installation validation failures after a size-consistent download; the encoder installer retains 100 percent line and region coverage
+- the full coverage gate remains unchanged on macos 15.8.3 at 96.36 percent lines and 95.25 percent regions, with the same 200 missed lines and 107 missed regions in existing apple speech paths requiring macos 26; thresholds and exclusions remain unchanged
+- rationale: confirm the smaller shared fixtures retain production coverage and test isolation while strengthening archive failure assertions
+- version: unchanged at 2.3.5
+
+### 2026-11-19 (v2.3.5, 21:44 shared whisper download fixtures)
+
+- replace repeated repository json, request routing, http responses, and model construction with a shared whisper download fixture across encoder, installer, and coverage regression tests
+- preserve session invalidation and handler cleanup through the existing mock session helper; reject undeclared routes and configure metadata or download status independently
+- remove unused temporary workspaces, redundant mock resets, and duplicate test cases while retaining explicit assertions and parameterizing corrupt archive configurations
+- make corrupt archive payload sizes consistent so archive validation runs instead of failing earlier on a byte count mismatch
+- rationale: copied network setup obscured test intent, repeated repository knowledge, and allowed some archive tests to pass for the wrong failure
+- version bump: 2.3.4 to 2.3.5 (PATCH - test infrastructure consolidation without public api changes)
+
 ### 2026-11-19 (v2.3.4, 21:37 production path consolidation validation)
 
 - migrated empty-slice and global concurrency checks pass through the production pipeline; no references to the removed scheduler remain

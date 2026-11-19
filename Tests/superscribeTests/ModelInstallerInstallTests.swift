@@ -7,10 +7,6 @@ import Testing
 @Suite("ModelInstaller network installs", .serialized, ResetSharedStateTrait())
 struct ModelInstallerInstallTests {
 
-    private func tearDownMocks() -> Void {
-        MockURLSessionHelpers.reset()
-    }
-
     @Test func parakeetFolderInstallViaMockDownload() async throws -> Void {
         let tag = "v3"
         let repoId = try ParakeetBackend.huggingFaceRepoId(for: tag)
@@ -66,243 +62,57 @@ struct ModelInstallerInstallTests {
 
     @Test(arguments: [Data(), Data([0])])
     func whisperBinInstallRepairsTruncatedDownload(contents: Data) async throws -> Void {
-        let tag = "wt-\(UUID().uuidString.prefix(8))"
-        let repoId = WhisperBackend.huggingFaceRepoId
-        let binURL = WhisperBackend.installPath(for: tag)
-        try FileManager.default.createDirectory(at: binURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try contents.write(to: binURL)
-        defer {
-            try? FileManager.default.removeItem(at: binURL)
+        let fixture = try WhisperDownloadFixture(binary: .init(Data("ggmlstub".utf8)))
+        try FileManager.default.createDirectory(at: fixture.binaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try contents.write(to: fixture.binaryURL)
+        try await fixture.withSession { session in
+            _ = try await ModelInstaller.install(model: fixture.model, backend: .whisperCpp, session: session, onProgress: { _ in })
+            #expect(await ModelInstaller.isInstalled(at: fixture.binaryURL, backend: .whisperCpp) == true)
+            #expect(WhisperBackend.isEncoderInstalled(modelId: fixture.model.id) == false)
         }
-
-        let repoPayload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"ggml-\(tag).bin","size":8}
-            ]}
-            """
-
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let s = url.absoluteString
-                if s.contains("/api/models/\(repoId)") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data(repoPayload.utf8))
-                }
-                if s.contains("/resolve/main/ggml-\(tag).bin") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data("ggmlstub".utf8))
-                }
-                throw URLError(.unsupportedURL)
-            },
-            { session in
-                let model = RemoteModelInfo(
-                    id: tag,
-                    repoId: repoId,
-                    totalSizeBytes: 8,
-                    fileCount: 1,
-                    lastModified: nil,
-                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                )
-
-                _ = try await ModelInstaller.install(
-                    model: model,
-                    backend: .whisperCpp,
-                    session: session,
-                    onProgress: { _ in }
-                )
-                #expect(await ModelInstaller.isInstalled(at: binURL, backend: .whisperCpp) == true)
-                #expect(WhisperBackend.isEncoderInstalled(modelId: tag) == false)
-            }
-        )
     }
 
     @Test(arguments: [false, true])
     func whisperBinFastPathInstallsEncoderZip(incompleteEncoder: Bool) async throws -> Void {
-        defer { self.tearDownMocks() }
-        let tag = "wt-enc-\(UUID().uuidString.prefix(8))"
-        let repoId = WhisperBackend.huggingFaceRepoId
-        let binURL = WhisperBackend.installPath(for: tag)
-        let encoderURL = WhisperBackend.encoderInstallPath(for: tag)
-        let zipName = WhisperBackend.encoderZipRemoteName(for: tag)
-
-        try FileManager.default.createDirectory(
-            at: binURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        FileManager.default.createFile(atPath: binURL.path, contents: Data("existing".utf8))
+        // A binary download would fail: repair must reuse the existing GGML file.
+        let binary = Data("existing".utf8)
+        let fixture = try WhisperDownloadFixture(binary: .init(binary, status: 500), encoder: WhisperDownloadFixture.validEncoder)
+        try FileManager.default.createDirectory(at: fixture.binaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try binary.write(to: fixture.binaryURL)
         if incompleteEncoder == true {
-            try FileManager.default.createDirectory(at: encoderURL, withIntermediateDirectories: true)
-            try Data().write(to: encoderURL.appendingPathComponent("model.mil"))
+            try FileManager.default.createDirectory(at: fixture.encoderURL, withIntermediateDirectories: true)
+            try Data().write(to: fixture.encoderURL.appendingPathComponent("model.mil"))
         }
-        defer {
-            try? FileManager.default.removeItem(at: binURL)
-            try? FileManager.default.removeItem(at: encoderURL)
-        }
-
-        try await TestHelpers.withTempDirectory(prefix: "encoder-zip-build") { zipBuild in
-            let bundleName = "\(WhisperBackend.encoderBaseId(for: tag))-encoder.mlmodelc"
-            let zipData = ZIPFixture.encoderBundle(named: bundleName)
-            let repoPayload = """
-                {"id":"\(repoId)","lastModified":null,"siblings":[
-                  {"rfilename":"ggml-\(tag).bin","size":8},
-                  {"rfilename":"\(zipName)","size":\(zipData.count)}
-                ]}
-                """
-
-            try await MockURLSessionHelpers.withMockHandler(
-                { req in
-                    guard let url = req.url else { throw URLError(.badURL) }
-                    let s = url.absoluteString
-                    if s.contains("/api/models/\(repoId)") == true {
-                        let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                        return (resp, Data(repoPayload.utf8))
-                    }
-                    let resolveSuffix = "/resolve/main/\(zipName)"
-                    if s.contains(resolveSuffix) == true {
-                        let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                        return (resp, zipData)
-                    }
-                    throw URLError(.unsupportedURL)
-                },
-                { session in
-                    let model = RemoteModelInfo(
-                        id: tag,
-                        repoId: repoId,
-                        totalSizeBytes: 8,
-                        fileCount: 2,
-                        lastModified: nil,
-                        repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                    )
-
-                    _ = try await ModelInstaller.install(
-                        model: model,
-                        backend: .whisperCpp,
-                        session: session,
-                        onProgress: { _ in }
-                    )
-                    #expect(WhisperBackend.isEncoderInstalled(modelId: tag) == true)
-                    #expect(try Data(contentsOf: binURL) == Data("existing".utf8))
-                    #expect(try Data(contentsOf: encoderURL.appendingPathComponent("model.mil")) == Data("fixture".utf8))
-                }
-            )
+        try await fixture.withSession { session in
+            _ = try await ModelInstaller.install(model: fixture.model, backend: .whisperCpp, session: session, onProgress: { _ in })
+            #expect(WhisperBackend.isEncoderInstalled(modelId: fixture.model.id) == true)
+            #expect(try Data(contentsOf: fixture.binaryURL) == binary)
+            #expect(try Data(contentsOf: fixture.encoderURL.appendingPathComponent("model.mil")) == Data("fixture".utf8))
         }
     }
 
     @Test func concurrentInstallsSerializeForSameDestination() async throws -> Void {
-        let tag = "wt-ser-\(UUID().uuidString.prefix(8))"
-        let repoId = WhisperBackend.huggingFaceRepoId
-        let binURL = WhisperBackend.installPath(for: tag)
-        defer {
-            try? FileManager.default.removeItem(at: binURL)
+        let fixture = try WhisperDownloadFixture(binary: .init(Data("ZZZZ".utf8)))
+        try await fixture.withSession { session in
+            async let first = ModelInstaller.install(model: fixture.model, backend: .whisperCpp, session: session, onProgress: { _ in })
+            async let second = ModelInstaller.install(model: fixture.model, backend: .whisperCpp, session: session, onProgress: { _ in })
+            _ = try await (first, second)
+            #expect(await ModelInstaller.isInstalled(at: fixture.binaryURL, backend: .whisperCpp) == true)
         }
-
-        let repoPayload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"ggml-\(tag).bin","size":4}
-            ]}
-            """
-
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let s = url.absoluteString
-                if s.contains("/api/models/\(repoId)") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data(repoPayload.utf8))
-                }
-                if s.contains("/resolve/main/ggml-\(tag).bin") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data("ZZZZ".utf8))
-                }
-                throw URLError(.unsupportedURL)
-            },
-            { session in
-                let model = RemoteModelInfo(
-                    id: tag,
-                    repoId: repoId,
-                    totalSizeBytes: 4,
-                    fileCount: 1,
-                    lastModified: nil,
-                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                )
-
-                let session = session
-                async let first = try ModelInstaller.install(
-                    model: model,
-                    backend: .whisperCpp,
-                    session: session,
-                    onProgress: { _ in }
-                )
-                async let second = try ModelInstaller.install(
-                    model: model,
-                    backend: .whisperCpp,
-                    session: session,
-                    onProgress: { _ in }
-                )
-                _ = try await (first, second)
-                #expect(await ModelInstaller.isInstalled(at: binURL, backend: .whisperCpp) == true)
-            }
-        )
     }
 
     @Test func installFailedWhenEncoderZipUnzipFails() async throws -> Void {
-        let tag = "wt-badzip-\(UUID().uuidString.prefix(8))"
-        let repoId = WhisperBackend.huggingFaceRepoId
-        let binURL = WhisperBackend.installPath(for: tag)
-        let zipName = WhisperBackend.encoderZipRemoteName(for: tag)
-
-        try FileManager.default.createDirectory(
-            at: binURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        FileManager.default.createFile(atPath: binURL.path, contents: Data("existing".utf8))
-        defer {
-            try? FileManager.default.removeItem(at: binURL)
-            try? FileManager.default.removeItem(at: WhisperBackend.encoderInstallPath(for: tag))
-        }
-
-        let repoPayload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"ggml-\(tag).bin","size":8},
-              {"rfilename":"\(zipName)","size":12}
-            ]}
-            """
-
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let s = url.absoluteString
-                if s.contains("/api/models/\(repoId)") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data(repoPayload.utf8))
-                }
-                if s.contains("/resolve/main/\(zipName)") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data("not-a-real-zip".utf8))
-                }
-                throw URLError(.unsupportedURL)
-            },
-            { session in
-                let model = RemoteModelInfo(
-                    id: tag,
-                    repoId: repoId,
-                    totalSizeBytes: 8,
-                    fileCount: 2,
-                    lastModified: nil,
-                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                )
-
-                await #expect(throws: ModelInstallationError.self) {
-                    _ = try await ModelInstaller.install(
-                        model: model,
-                        backend: .whisperCpp,
-                        session: session,
-                        onProgress: { _ in }
-                    )
-                }
+        let binary = Data("existing".utf8)
+        let fixture = try WhisperDownloadFixture(binary: .init(binary), encoder: .init(Data("not-a-real-zip".utf8)))
+        try FileManager.default.createDirectory(at: fixture.binaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try binary.write(to: fixture.binaryURL)
+        try await fixture.withSession { session in
+            await #expect(throws: ModelInstallationError.self) {
+                _ = try await ModelInstaller.install(model: fixture.model, backend: .whisperCpp, session: session, onProgress: { _ in })
             }
-        )
+            let preserved = try Data(contentsOf: fixture.binaryURL)
+            #expect(preserved == binary)
+        }
     }
 
     @Test func removeInstalledParakeetDeletesDirectory() async throws -> Void {

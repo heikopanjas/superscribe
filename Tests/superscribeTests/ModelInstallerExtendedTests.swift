@@ -93,81 +93,19 @@ struct ModelInstallerExtendedTests {
     }
 
     @Test func installUsesDefaultProgressHandler() async throws -> Void {
-        try await TestHelpers.withIsolatedModelCaches { _, whisperRoot in
-            let tag = "wt-def-\(UUID().uuidString.prefix(8))"
-            let bin = WhisperBackend.installPath(for: tag)
-            try FileManager.default.createDirectory(at: whisperRoot, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-            let repoPayload = """
-                {"id":"\(WhisperBackend.huggingFaceRepoId)","lastModified":null,"siblings":[
-                  {"rfilename":"ggml-\(tag).bin","size":4}
-                ]}
-                """
-            try await MockURLSessionHelpers.withMockHandler(
-                { req in
-                    guard let url = req.url else { throw URLError(.badURL) }
-                    let s = url.absoluteString
-                    if s.contains("/api/models/") == true {
-                        let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                        return (resp, Data(repoPayload.utf8))
-                    }
-                    if s.contains("/resolve/main/ggml-\(tag).bin") == true {
-                        let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                        return (resp, Data("ZZZZ".utf8))
-                    }
-                    throw URLError(.unsupportedURL)
-                },
-                { session in
-                    let model = RemoteModelInfo(
-                        id: tag,
-                        repoId: WhisperBackend.huggingFaceRepoId,
-                        repoURL: (try #require(URL(string: "https://huggingface.co/\(WhisperBackend.huggingFaceRepoId)")))
-                    )
-                    _ = try await ModelInstaller.install(model: model, backend: .whisperCpp, session: session)
-                }
-            )
+        let fixture = try WhisperDownloadFixture(binary: .init(Data("ZZZZ".utf8)))
+        try FileManager.default.createDirectory(at: fixture.binaryURL, withIntermediateDirectories: true)
+        try await fixture.withSession { session in
+            _ = try await ModelInstaller.install(model: fixture.model, backend: .whisperCpp, session: session)
         }
     }
 
     @Test func whisperInstallRepairsDirectoryAtBinaryPath() async throws -> Void {
-        try await TestHelpers.withIsolatedModelCaches { _, whisperRoot in
-            let tag = "wt-disc-\(UUID().uuidString.prefix(8))"
-            let bin = WhisperBackend.installPath(for: tag)
-            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-            let repoPayload = """
-                {"id":"\(WhisperBackend.huggingFaceRepoId)","lastModified":null,"siblings":[
-                  {"rfilename":"ggml-\(tag).bin","size":4}
-                ]}
-                """
-            try await MockURLSessionHelpers.withMockHandler(
-                { req in
-                    guard let url = req.url else { throw URLError(.badURL) }
-                    let s = url.absoluteString
-                    if s.contains("/api/models/") == true {
-                        let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                        return (resp, Data(repoPayload.utf8))
-                    }
-                    if s.contains("/resolve/main/ggml-\(tag).bin") == true {
-                        let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                        return (resp, Data("DATA".utf8))
-                    }
-                    throw URLError(.unsupportedURL)
-                },
-                { session in
-                    let model = RemoteModelInfo(
-                        id: tag,
-                        repoId: WhisperBackend.huggingFaceRepoId,
-                        repoURL: (try #require(URL(string: "https://huggingface.co/\(WhisperBackend.huggingFaceRepoId)")))
-                    )
-                    _ = try await ModelInstaller.install(
-                        model: model,
-                        backend: .whisperCpp,
-                        session: session,
-                        onProgress: { _ in }
-                    )
-                    #expect(SuperscribeFS.isExistingFile(at: bin) == true)
-                }
-            )
+        let fixture = try WhisperDownloadFixture(binary: .init(Data("DATA".utf8)))
+        try FileManager.default.createDirectory(at: fixture.binaryURL, withIntermediateDirectories: true)
+        try await fixture.withSession { session in
+            _ = try await ModelInstaller.install(model: fixture.model, backend: .whisperCpp, session: session, onProgress: { _ in })
+            #expect(SuperscribeFS.isExistingFile(at: fixture.binaryURL) == true)
         }
     }
 

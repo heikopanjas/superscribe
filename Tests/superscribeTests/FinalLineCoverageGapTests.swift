@@ -56,109 +56,19 @@ struct FinalLineCoverageGapTests {
     }
 
     @Test func totalInstallBytesNilWhenBinSizeZero() async throws -> Void {
-        let repoId = WhisperBackend.huggingFaceRepoId
-        let tag = "zero-size-\(UUID().uuidString.prefix(6))"
-        let payload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"ggml-\(tag).bin","size":0}
-            ]}
-            """
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                return (resp, Data(payload.utf8))
-            },
-            { session in
-                let model = RemoteModelInfo(
-                    id: tag,
-                    repoId: repoId,
-                    totalSizeBytes: nil,
-                    fileCount: nil,
-                    lastModified: nil,
-                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                )
-                let total = try await WhisperEncoderInstaller.totalInstallBytes(
-                    model: model,
-                    session: session
-                )
-                #expect(total == nil)
-            }
-        )
+        let fixture = try WhisperDownloadFixture(binary: .init(Data()))
+        try await fixture.withSession { session in
+            let total = try await WhisperEncoderInstaller.totalInstallBytes(model: fixture.model, session: session)
+            #expect(total == nil)
+        }
     }
 
     @Test func totalInstallBytesNilWhenBinHasNoSize() async throws -> Void {
-        let repoId = WhisperBackend.huggingFaceRepoId
-        let payload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"ggml-zero.bin","size":null}
-            ]}
-            """
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                return (resp, Data(payload.utf8))
-            },
-            { session in
-                let model = RemoteModelInfo(
-                    id: "zero",
-                    repoId: repoId,
-                    totalSizeBytes: nil,
-                    fileCount: nil,
-                    lastModified: nil,
-                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                )
-                let total = try await WhisperEncoderInstaller.totalInstallBytes(
-                    model: model,
-                    session: session
-                )
-                #expect(total == nil)
-            }
-        )
-    }
-
-    @Test func installIfNeededThrowsWhenZipIsCorrupt() async throws -> Void {
-        let repoId = WhisperBackend.huggingFaceRepoId
-        let tag = "bad-zip-\(UUID().uuidString.prefix(6))"
-        let zipName = WhisperBackend.encoderZipRemoteName(for: tag)
-        let payload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"\(zipName)","size":12}
-            ]}
-            """
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let s = url.absoluteString
-                if s.contains("/api/models/\(repoId)") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data(payload.utf8))
-                }
-                if s.contains("/resolve/main/\(zipName)") == true {
-                    let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                    return (resp, Data("not-a-zip-file".utf8))
-                }
-                throw URLError(.unsupportedURL)
-            },
-            { session in
-                let model = RemoteModelInfo(
-                    id: tag,
-                    repoId: repoId,
-                    totalSizeBytes: 12,
-                    fileCount: 1,
-                    lastModified: nil,
-                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                )
-                await #expect(throws: ModelInstallationError.self) {
-                    try await WhisperEncoderInstaller.installIfNeeded(
-                        model: model,
-                        session: session,
-                        onProgress: { _ in }
-                    )
-                }
-            }
-        )
+        let fixture = try WhisperDownloadFixture(binary: .init(Data(), size: nil))
+        try await fixture.withSession { session in
+            let total = try await WhisperEncoderInstaller.totalInstallBytes(model: fixture.model, session: session)
+            #expect(total == nil)
+        }
     }
 
     @Test func cacheStoreAtomicReplaceFailureCleansStaging() throws -> Void {
@@ -412,72 +322,12 @@ struct FinalLineCoverageGapTests {
         )
     }
 
-    @Test func totalInstallBytesAddsEncoderZipSize() async throws -> Void {
-        let repoId = WhisperBackend.huggingFaceRepoId
-        let tag = "enc-add-\(UUID().uuidString.prefix(6))"
-        let zipName = WhisperBackend.encoderZipRemoteName(for: tag)
-        let payload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"ggml-\(tag).bin","size":100},
-              {"rfilename":"\(zipName)","size":40}
-            ]}
-            """
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                return (resp, Data(payload.utf8))
-            },
-            { session in
-                let model = RemoteModelInfo(
-                    id: tag,
-                    repoId: repoId,
-                    totalSizeBytes: nil,
-                    fileCount: nil,
-                    lastModified: nil,
-                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                )
-                let total = try await WhisperEncoderInstaller.totalInstallBytes(
-                    model: model,
-                    session: session
-                )
-                #expect(total == 140)
-            }
-        )
-    }
-
     @Test func totalInstallBytesIgnoresEncoderZipWithNilSize() async throws -> Void {
-        let repoId = WhisperBackend.huggingFaceRepoId
-        let tag = "enc-nil-\(UUID().uuidString.prefix(6))"
-        let zipName = WhisperBackend.encoderZipRemoteName(for: tag)
-        let payload = """
-            {"id":"\(repoId)","lastModified":null,"siblings":[
-              {"rfilename":"ggml-\(tag).bin","size":100},
-              {"rfilename":"\(zipName)","size":null}
-            ]}
-            """
-        try await MockURLSessionHelpers.withMockHandler(
-            { req in
-                guard let url = req.url else { throw URLError(.badURL) }
-                let resp = (try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
-                return (resp, Data(payload.utf8))
-            },
-            { session in
-                let model = RemoteModelInfo(
-                    id: tag,
-                    repoId: repoId,
-                    totalSizeBytes: nil,
-                    fileCount: nil,
-                    lastModified: nil,
-                    repoURL: (try #require(URL(string: "https://huggingface.co/\(repoId)")))
-                )
-                let total = try await WhisperEncoderInstaller.totalInstallBytes(
-                    model: model,
-                    session: session
-                )
-                #expect(total == 100)
-            }
-        )
+        let fixture = try WhisperDownloadFixture(binary: .init(Data(repeating: 0, count: 100)), encoder: .init(Data(), size: nil))
+        try await fixture.withSession { session in
+            let total = try await WhisperEncoderInstaller.totalInstallBytes(model: fixture.model, session: session)
+            #expect(total == 100)
+        }
     }
 
     @Test func whisperBackendForceUnavailable() throws -> Void {
