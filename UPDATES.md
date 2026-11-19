@@ -4,6 +4,23 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-11-19 (v2.3.1, 21:17 installation verification validation)
+
+- reproduced empty-binary discovery, incomplete-encoder fast paths, and invalid-archive regressions before applying the fix
+- validation: 53 focused installation and lifecycle tests and all 516 serial strict-concurrency unit tests pass with swift 6.4.2; changed swift files pass formatter lint
+- whisper registry, encoder installer, and shared artifact validators have 100 percent line and region coverage; the changed removal branch is exercised for valid and damaged shared encoders
+- the full coverage gate remains unmet on macos 15.8.3 at 96.42 percent lines and 95.26 percent regions, with missed coverage confined to existing apple speech paths requiring macos 26; thresholds and exclusions are unchanged
+- rationale: distinguish verified installation behavior from the platform-dependent full coverage requirement that still needs macos 26 validation
+- version: unchanged at 2.3.1
+
+### 2026-11-19 (v2.3.1, shared model artifact verification)
+
+- reuse shared artifact validators for whisper binary discovery, encoder readiness, and staged encoder validation before atomic publication
+- keep encoders optional for offline binary use; remove damaged encoder directories when no installed variant shares them
+- extend isolated regression tests for empty binaries, empty or zero-byte encoder bundles, explicit repair, failed-stage preservation, and shared-encoder removal
+- rationale: filesystem presence alone let incomplete installations bypass repair and disagree with loading requirements
+- version bump: 2.3.0 to 2.3.1 (PATCH - installation verification fixes without public signature changes)
+
 ### 2026-11-04 (v2.3.0, 13:24 documentation and pipeline diagrams)
 
 - audit the readme against all six commands, adding missing option details, backend/model distinctions, independent configuration defaults, and processed-audio cache behavior

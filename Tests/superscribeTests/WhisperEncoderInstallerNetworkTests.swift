@@ -213,16 +213,26 @@ struct WhisperEncoderInstallerNetworkTests {
         }
     }
 
-    @Test func installIfNeededThrowsWhenEncoderBundleIsFile() async throws -> Void {
+    @Test(arguments: [false, true])
+    func installIfNeededRejectsInvalidEncoderBundle(directory: Bool) async throws -> Void {
         let repoId = WhisperBackend.huggingFaceRepoId
         let tag = "zip-file-\(UUID().uuidString.prefix(6))"
         let zipName = WhisperBackend.encoderZipRemoteName(for: tag)
         let encoderName = "\(WhisperBackend.encoderBaseId(for: tag))-encoder.mlmodelc"
 
         try await TestHelpers.withTempDirectory(prefix: "wenc-file") { build in
-            let fakeFile = build.appendingPathComponent(encoderName)
-            try Data("not-a-directory".utf8).write(to: fakeFile)
-            let zipData = ZIPFixture.archive([.init(name: encoderName, data: Data("file".utf8))])
+            let entries: [ZIPFixture.Entry] =
+                if directory == true {
+                    [.init(name: encoderName + "/", mode: 0o040755), .init(name: encoderName + "/model.mil")]
+                }
+                else {
+                    [.init(name: encoderName, data: Data("file".utf8))]
+                }
+            let zipData = ZIPFixture.archive(entries)
+            let destination = WhisperBackend.encoderInstallPath(for: tag)
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            let original = destination.appendingPathComponent("original")
+            try Data().write(to: original)
 
             let payload = """
                 {"id":"\(repoId)","lastModified":null,"siblings":[
@@ -261,6 +271,10 @@ struct WhisperEncoderInstallerNetworkTests {
                             onProgress: { _ in }
                         )
                     }
+                    #expect(try Data(contentsOf: original).isEmpty == true)
+                    #expect(WhisperBackend.isEncoderInstalled(modelId: tag) == false)
+                    let contents = try FileManager.default.contentsOfDirectory(atPath: destination.deletingLastPathComponent().path)
+                    #expect(contents.contains(where: { $0.contains(".staging-") }) == false)
                 }
             )
         }

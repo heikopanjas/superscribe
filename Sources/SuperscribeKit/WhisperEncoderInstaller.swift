@@ -99,7 +99,7 @@ enum WhisperEncoderInstaller {
                     code: 1,
                     userInfo: [
                         NSLocalizedDescriptionKey:
-                            "No -encoder.mlmodelc bundle found inside \(zipName)."
+                            "No nonempty -encoder.mlmodelc bundle found inside \(zipName)."
                     ]
                 )
             )
@@ -172,7 +172,7 @@ enum WhisperEncoderInstaller {
         }
         guard let enumerator else { return nil }
         for case let url as URL in enumerator where url.lastPathComponent.hasSuffix("-encoder.mlmodelc") {
-            if SuperscribeFS.isExistingDirectory(at: url) == true {
+            if ModelArtifacts.bundle(at: url) == true {
                 return url
             }
         }

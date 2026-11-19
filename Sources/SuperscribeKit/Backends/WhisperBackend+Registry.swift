@@ -38,7 +38,7 @@ extension WhisperBackend: ModelRegistry {
         let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         return
             entries
-            .filter { $0.hasSuffix(".bin") && SuperscribeFS.isExistingFile(at: dir.appendingPathComponent($0)) }
+            .filter { $0.hasSuffix(".bin") && ModelArtifacts.nonemptyFile(at: dir.appendingPathComponent($0)) }
             .map { filename -> InstalledModelInfo in
                 let id = String(filename.dropLast(4))  // drop ".bin"
                 let path = dir.appendingPathComponent(filename)
@@ -84,9 +84,9 @@ extension WhisperBackend: ModelRegistry {
         return siblings.first { $0.rfilename == name }
     }
 
-    /// `true` when the Core ML encoder bundle directory exists.
+    /// `true` when the Core ML encoder bundle holds at least one nonempty regular file.
     public static func isEncoderInstalled(modelId: String) -> Bool {
-        return SuperscribeFS.isExistingDirectory(at: Self.encoderInstallPath(for: modelId))
+        return ModelArtifacts.bundle(at: Self.encoderInstallPath(for: modelId))
     }
 
     // MARK: - Pure helpers (testable)

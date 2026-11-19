@@ -8,7 +8,7 @@ struct WhisperEncoderInstallerTests {
     @Test func skipsWhenEncoderAlreadyInstalled() async throws -> Void {
         let modelId = "base"
         let encoderPath = WhisperBackend.encoderInstallPath(for: modelId)
-        try FileManager.default.createDirectory(at: encoderPath, withIntermediateDirectories: true)
+        try TestHelpers.makeCoreMLBundle(at: encoderPath)
         defer { try? FileManager.default.removeItem(at: encoderPath) }
 
         let model = RemoteModelInfo(
@@ -21,9 +21,16 @@ struct WhisperEncoderInstallerTests {
         )
 
         let probe = ProgressTickProbe()
-        try await WhisperEncoderInstaller.installIfNeeded(model: model) { _ in
-            probe.tick()
-        }
+        try await MockURLSessionHelpers.withMockHandler(
+            { _ in
+                Issue.record("An installed encoder must not request model metadata or downloads")
+                throw URLError(.notConnectedToInternet)
+            },
+            { session in
+                try await WhisperEncoderInstaller.installIfNeeded(model: model, session: session) { _ in
+                    probe.tick()
+                }
+            })
         #expect(probe.count == 0)
     }
 

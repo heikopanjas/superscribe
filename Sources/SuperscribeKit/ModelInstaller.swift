@@ -191,7 +191,7 @@ public enum ModelInstaller {
                 let shared = try WhisperBackend.installedModels().contains { model in
                     return model.id != modelId && WhisperBackend.encoderBaseId(for: model.id) == base
                 }
-                if WhisperBackend.isEncoderInstalled(modelId: modelId) == true, shared == false {
+                if SuperscribeFS.isExistingDirectory(at: encoder) == true, shared == false {
                     paths.append(encoder)
                 }
                 return paths

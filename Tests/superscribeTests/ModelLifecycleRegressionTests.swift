@@ -5,11 +5,13 @@ import Testing
 
 @Suite("Model lifecycle regressions", .serialized, ResetSharedStateTrait())
 struct ModelLifecycleRegressionTests {
-    @Test func removingVariantRetainsSharedEncoder() async throws -> Void {
+    @Test(arguments: [false, true])
+    func removingVariantRetainsSharedEncoder(validEncoder: Bool) async throws -> Void {
         let first = WhisperBackend.installPath(for: "tiny-q5_0")
         let second = WhisperBackend.installPath(for: "tiny-q8_0")
         let encoder = WhisperBackend.encoderInstallPath(for: "tiny")
         try FileManager.default.createDirectory(at: encoder, withIntermediateDirectories: true)
+        if validEncoder == true { try TestHelpers.makeCoreMLBundle(at: encoder) }
         try Data("ggml".utf8).write(to: first)
         try Data("ggml".utf8).write(to: second)
         #expect(try await ModelInstaller.removalPaths(modelId: "tiny-q5_0", backend: .whisperCpp) == [first])

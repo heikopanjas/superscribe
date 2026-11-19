@@ -111,6 +111,12 @@ enum TestHelpers {
         )
     }
 
+    /// A nonempty bundle layout for artifact checks, never used for inference.
+    static func makeCoreMLBundle(at root: URL) throws -> Void {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: root.appendingPathComponent("model.mil"))
+    }
+
     /// Minimal repository layout; no fixture model is used for inference.
     static let parakeetFiles = ["Preprocessor.mlmodelc/model.mil", "Encoder.mlmodelc/model.mil", "Decoder.mlmodelc/model.mil", "JointDecisionv3.mlmodelc/model.mil", "parakeet_vocab.json"]
 

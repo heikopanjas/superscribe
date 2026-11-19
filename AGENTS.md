@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-11-04 (v2.3.0, documentation and pipeline diagrams)
+**Last updated:** 2026-11-19 (v2.3.1, shared model artifact verification)
 
 <!-- {mission} -->
 
@@ -262,6 +262,7 @@ After SuperscribeKit changes, run `_scripts/coverage.sh --run-tests` and confirm
 
 ## Model and persistence integrity
 
+- `ModelArtifacts` owns lightweight file and Core ML bundle validation across discovery, loading, and installation. Whisper listings require nonempty regular binaries; encoder readiness and staged encoder publication require a bundle with at least one nonempty regular file. Encoders remain optional for offline binary use. Removal checks directory presence independently of readiness so damaged encoders can still be deleted, while preserving encoders shared by installed variants.
 - Parakeet installation accepts the descriptor's canonical repository and requires every model bundle plus vocabulary. It downloads only those files (`ModelDescriptor.files(in:)` via `ModelDownloadFile.select`), matching what FluidAudio's `AsrModels.load` reads at the default `.int8` precision; catalog sizes count the same selection. `HuggingFaceHub.repoInfo` requests `blobs=true` so sibling sizes drive progress, disk preflight, and size validation. There is no whole-repository download path and no `RemoteModelInfo.subpath`. Whisper installation checks nonempty regular files and known artifact size before taking its fast path.
 - Downloads constrain paths to their roots, validate known byte sizes, and clean staging after failure. Explicit Whisper downloads repair incomplete files and missing encoders; installed binaries remain usable offline.
 - Atomic same-volume rename/swap preserves prior destinations on promotion failure. Cache, catalog, and preference read-modify-write transactions use filesystem locks; async callers acquire locks on the blocking-I/O worker.

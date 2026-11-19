@@ -38,7 +38,7 @@ struct ModelInstallerExtendedTests {
             let encoder = WhisperBackend.encoderInstallPath(for: tag)
             try FileManager.default.createDirectory(at: whisperRoot, withIntermediateDirectories: true)
             try Data("bin".utf8).write(to: bin)
-            try FileManager.default.createDirectory(at: encoder, withIntermediateDirectories: true)
+            try TestHelpers.makeCoreMLBundle(at: encoder)
             let model = RemoteModelInfo(
                 id: tag,
                 repoId: WhisperBackend.huggingFaceRepoId,

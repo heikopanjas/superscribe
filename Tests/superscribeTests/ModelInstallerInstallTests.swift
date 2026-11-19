@@ -64,12 +64,13 @@ struct ModelInstallerInstallTests {
         )
     }
 
-    @Test func whisperBinInstallRepairsTruncatedDownload() async throws -> Void {
+    @Test(arguments: [Data(), Data([0])])
+    func whisperBinInstallRepairsTruncatedDownload(contents: Data) async throws -> Void {
         let tag = "wt-\(UUID().uuidString.prefix(8))"
         let repoId = WhisperBackend.huggingFaceRepoId
         let binURL = WhisperBackend.installPath(for: tag)
         try FileManager.default.createDirectory(at: binURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data([0]).write(to: binURL)
+        try contents.write(to: binURL)
         defer {
             try? FileManager.default.removeItem(at: binURL)
         }
@@ -116,7 +117,8 @@ struct ModelInstallerInstallTests {
         )
     }
 
-    @Test func whisperBinFastPathInstallsEncoderZip() async throws -> Void {
+    @Test(arguments: [false, true])
+    func whisperBinFastPathInstallsEncoderZip(incompleteEncoder: Bool) async throws -> Void {
         defer { self.tearDownMocks() }
         let tag = "wt-enc-\(UUID().uuidString.prefix(8))"
         let repoId = WhisperBackend.huggingFaceRepoId
@@ -129,6 +131,10 @@ struct ModelInstallerInstallTests {
             withIntermediateDirectories: true
         )
         FileManager.default.createFile(atPath: binURL.path, contents: Data("existing".utf8))
+        if incompleteEncoder == true {
+            try FileManager.default.createDirectory(at: encoderURL, withIntermediateDirectories: true)
+            try Data().write(to: encoderURL.appendingPathComponent("model.mil"))
+        }
         defer {
             try? FileManager.default.removeItem(at: binURL)
             try? FileManager.default.removeItem(at: encoderURL)
@@ -176,6 +182,8 @@ struct ModelInstallerInstallTests {
                         onProgress: { _ in }
                     )
                     #expect(WhisperBackend.isEncoderInstalled(modelId: tag) == true)
+                    #expect(try Data(contentsOf: binURL) == Data("existing".utf8))
+                    #expect(try Data(contentsOf: encoderURL.appendingPathComponent("model.mil")) == Data("fixture".utf8))
                 }
             )
         }
