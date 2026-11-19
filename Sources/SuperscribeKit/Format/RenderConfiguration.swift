@@ -9,7 +9,8 @@ public struct RenderConfiguration: Sendable {
     public var includeWords: Bool
 
     public init(
-        format: OutputFormat = .vtt, overlapPolicy: OverlapPolicy? = nil, gapThreshold: TimeInterval = 3, maxCueDuration: TimeInterval? = nil, maxLineLength: Int? = nil,
+        format: OutputFormat = .vtt, overlapPolicy: OverlapPolicy? = nil, gapThreshold: TimeInterval = MergerConfig().gapThreshold, maxCueDuration: TimeInterval? = nil,
+        maxLineLength: Int? = nil,
         includeWords: Bool = false
     ) {
         self.format = format

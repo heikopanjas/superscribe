@@ -49,7 +49,7 @@ final class ProgressReporter: @unchecked Sendable {
             self.queue.async {
                 if self.finished == false {
                     self.finished = true
-                    self.write("\r\u{1B}[K")
+                    clearProgressLine(write: self.write)
                 }
                 continuation.resume()
             }

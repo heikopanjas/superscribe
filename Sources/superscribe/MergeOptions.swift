@@ -5,7 +5,7 @@ import SuperscribeKit
 /// Options shared by the `merge` and `run` subcommands.
 struct MergeOptions: ParsableArguments {
     @Option(name: .long, help: "Output format.")
-    var format: OutputFormat = .vtt
+    var format: OutputFormat = RenderConfiguration().format
 
     @Option(name: .long, help: "Output file (default: stdout).")
     var mergeOutput: String?
@@ -20,10 +20,10 @@ struct MergeOptions: ParsableArguments {
     var maxCueDuration: TimeInterval?
 
     @Option(name: .long, help: "Insert paragraph breaks for pauses longer than this (seconds).")
-    var gapThreshold: TimeInterval = 3.0
+    var gapThreshold: TimeInterval = RenderConfiguration().gapThreshold
 
     @Flag(name: .long, help: "Keep word-level timestamps in the output.")
-    var includeWords: Bool = false
+    var includeWords: Bool = RenderConfiguration().includeWords
 
     var renderConfiguration: RenderConfiguration {
         return RenderConfiguration(

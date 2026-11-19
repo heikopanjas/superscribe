@@ -55,13 +55,9 @@ final class ModelManager {
                 available: entry.models.map(\.id)
             )
         }
-        _ = try await ModelInstaller.install(
-            model: info,
-            backend: backend,
-            onProgress: Self.makeDownloadProgressHandler()
-        )
-        // Clear the progress line.
-        FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
+        _ = try await Self.withDownloadProgress { progress in
+            return try await ModelInstaller.install(model: info, backend: backend, onProgress: progress)
+        }
         FileHandle.standardError.write(
             Data("Installed '\(model)' for backend '\(backend.rawValue)'.\n".utf8)
         )
@@ -77,15 +73,25 @@ final class ModelManager {
 
     /// Installs the speaker diarizer with stderr download progress and returns its directory.
     static func installDiarizer() async throws -> URL {
-        let path = try await ModelInstaller.installDiarizer(onProgress: Self.makeDownloadProgressHandler())
-        FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
-        return path
+        return try await Self.withDownloadProgress { progress in
+            return try await ModelInstaller.installDiarizer(onProgress: progress)
+        }
     }
 
     /// Installs or explicitly repairs an isolation model and drains its progress line.
     static func installIsolator(_ model: IsolatorModel, allowRepair: Bool = false) async throws -> URL {
-        defer { FileHandle.standardError.write(Data("\r\u{1B}[K".utf8)) }
-        return try await ModelInstaller.installIsolator(model: model, allowRepair: allowRepair, onProgress: Self.makeDownloadProgressHandler())
+        return try await Self.withDownloadProgress { progress in
+            return try await ModelInstaller.installIsolator(model: model, allowRepair: allowRepair, onProgress: progress)
+        }
+    }
+
+    /// Owns download output until the operation returns, throws, or cancels.
+    static func withDownloadProgress<Value>(
+        write: @escaping @Sendable (String) -> Void = printErr,
+        _ operation: (@escaping @Sendable (DownloadProgress) -> Void) async throws -> Value
+    ) async rethrows -> Value {
+        defer { clearProgressLine(write: write) }
+        return try await operation(Self.makeDownloadProgressHandler(write: write))
     }
 
     /// Returns a throttled stderr progress handler for `ModelInstaller`/`ModelDownloader`.
@@ -93,7 +99,7 @@ final class ModelManager {
     /// Every column has a fixed character width so the line never reflows as
     /// values grow or shrink. The line is cleared with `ESC[2K` before each
     /// write to wipe any leftover characters from a previous, longer render.
-    static func makeDownloadProgressHandler() -> @Sendable (DownloadProgress) -> Void {
+    private static func makeDownloadProgressHandler(write: @escaping @Sendable (String) -> Void) -> @Sendable (DownloadProgress) -> Void {
         return { p in
             let rate: String = {
                 if let bps = p.bytesPerSecond, bps > 0 {
@@ -135,7 +141,7 @@ final class ModelManager {
             line += "  " + counter.leftPad(toLength: 7)
             line += "  " + p.modelId.rightPad(toLength: 24)
             line += "  " + file.rightPad(toLength: 32)
-            FileHandle.standardError.write(Data(line.utf8))
+            write(line)
         }
     }
 

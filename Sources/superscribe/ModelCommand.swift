@@ -168,12 +168,9 @@ struct ModelCommand: AsyncParsableCommand {
                 available: entry.models.map(\.id)
             )
         }
-        let final = try await ModelInstaller.install(
-            model: info,
-            backend: backend,
-            onProgress: ModelManager.makeDownloadProgressHandler()
-        )
-        FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
+        let final = try await ModelManager.withDownloadProgress { progress in
+            return try await ModelInstaller.install(model: info, backend: backend, onProgress: progress)
+        }
         print("Installed at \(final.path)")
     }
 
@@ -287,10 +284,8 @@ struct ModelCommand: AsyncParsableCommand {
             let installedTag =
                 if installedIds.contains(m.id) == true { " (installed)" }
                 else { "" }
-            let size = m.totalSizeBytes.map(formatBytes) ?? "—"
             let updated = m.lastModified.map(formatDate) ?? "—"
-            let paddedId = m.id.padding(toLength: idWidth, withPad: " ", startingAt: 0)
-            print("  \(paddedId)  \(size.leftPad(toLength: 10))  \(updated)\(installedTag)\(marker)")
+            self.renderModelRow(id: m.id, idWidth: idWidth, sizeBytes: m.totalSizeBytes, location: "\(updated)\(installedTag)", marker: marker)
         }
         let stamp = formatDate(entry.fetchedAt)
         let suffix =

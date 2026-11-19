@@ -31,8 +31,17 @@ func printTranscribeSummary(transcript: IntermediateTranscript, duration: TimeIn
     )
 }
 
-func clearProgressLine() -> Void {
-    FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
+func writeRenderedOutput(_ output: String, to path: String?, writeToStandardOutput: (String) -> Void = { print($0, terminator: "") }) throws -> Void {
+    if let path {
+        try output.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+    else {
+        writeToStandardOutput(output)
+    }
+}
+
+func clearProgressLine(write: (String) -> Void = printErr) -> Void {
+    write("\r\u{1B}[K")
 }
 
 func printErr(_ text: String) -> Void {

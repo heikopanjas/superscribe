@@ -21,12 +21,7 @@ struct MergeCommand: AsyncParsableCommand {
 
         let output = try Self.renderMerged(transcript, options: self.options)
 
-        if let path = self.options.mergeOutput {
-            try output.write(toFile: path, atomically: true, encoding: .utf8)
-        }
-        else {
-            print(output, terminator: "")
-        }
+        try writeRenderedOutput(output, to: self.options.mergeOutput)
     }
 
     static func renderMerged(

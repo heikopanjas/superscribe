@@ -54,18 +54,7 @@ struct TranscribeCommand: AsyncParsableCommand {
             resolvedTracks = self.options.trackInputs
         }
 
-        let opts = self.options
-        let result = try await PipelineRunner.run(
-            options: PipelineRunOptions(
-                cliBackend: opts.backend,
-                cliModel: opts.model,
-                tracks: resolvedTracks,
-                transcriptionConfig: opts.transcriptionConfig,
-                analyzerConfig: opts.analyzerConfig,
-                useCache: opts.noCache == false,
-                isolationModel: opts.isolationModel
-            )
-        )
+        let result = try await PipelineRunner.run(options: self.options.pipelineRunOptions(tracks: resolvedTracks))
 
         let outputPath = defaultIntermediateOutputPath(
             backend: result.backend,

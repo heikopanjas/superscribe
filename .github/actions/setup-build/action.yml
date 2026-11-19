@@ -50,4 +50,4 @@ runs:
 
     - name: Compile and check Metal runtime
       shell: bash
-      run: SUPERSCRIBE_INTEGRATION_TESTS=1 swift test --no-parallel -Xswiftc -strict-concurrency=complete --filter MetalCompilationTests
+      run: SUPERSCRIBE_INTEGRATION_TESTS=1 _scripts/test.sh --filter MetalCompilationTests

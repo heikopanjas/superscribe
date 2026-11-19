@@ -38,13 +38,13 @@ struct TranscribeOptions: ParsableArguments {
     var output: String = ""
 
     @Option(name: .long, help: "Silence threshold in dB.")
-    var silenceThreshold: Double = -40.0
+    var silenceThreshold: Double = AnalyzerConfig().silenceThresholdDB
 
     @Option(name: .long, help: "Minimum silence gap to split (seconds).")
-    var minSilence: TimeInterval = 0.5
+    var minSilence: TimeInterval = AnalyzerConfig().minSilenceDuration
 
     @Option(name: .long, help: "Speech segment padding (seconds).")
-    var padding: TimeInterval = 0.15
+    var padding: TimeInterval = AnalyzerConfig().padding
 
     @Flag(name: .long, help: "Show progress and segment details.")
     var verbose: Bool = false
@@ -67,6 +67,13 @@ struct TranscribeOptions: ParsableArguments {
 // MARK: - Convenience bridges from CLI options to library types
 
 extension TranscribeOptions {
+    func pipelineRunOptions(tracks: [TrackInput]) -> PipelineRunOptions {
+        return PipelineRunOptions(
+            cliBackend: self.backend, cliModel: self.model, tracks: tracks,
+            transcriptionConfig: self.transcriptionConfig, analyzerConfig: self.analyzerConfig,
+            useCache: self.noCache == false, isolationModel: self.isolationModel)
+    }
+
     var isolationModel: IsolatorModel? {
         guard self.isolate == true else { return nil }
         return self.fineTune ? .htdemucsFT : .htdemucs

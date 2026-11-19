@@ -4,6 +4,25 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-11-19 (v2.3.6, 21:58 cli consolidation validation)
+
+- all 529 serial strict-concurrency unit tests pass with swift 6.4.2; changed swift files pass formatter lint
+- regressions cover cli/library default agreement, resolved track overrides, exact file/stdout delivery, write errors, and download progress cleanup after success, failure, and cancellation
+- built cli stdout and file output match all four golden formats byte for byte; generated transcribe/run help retains existing defaults and reports version 2.3.6
+- macos bash 3.2 syntax checks and the local workflow, packaging, and publication harness pass; coverage successfully invokes the shared test script
+- changed library files retain 100 percent line and region coverage; the full gate remains unchanged at 96.36 percent lines and 95.25 percent regions on macos 15.8.3 because of the same existing apple speech gaps requiring macos 26
+- rationale: verify shared cli behavior and command execution without changing coverage thresholds or treating platform-dependent acceptance as complete
+- version: unchanged at 2.3.6
+
+### 2026-11-19 (v2.3.6, 21:54 shared cli bridges and test commands)
+
+- share transcription option mapping and merged file/stdout delivery between commands, retaining resolved template tracks and exact output bytes
+- derive cli defaults from library configuration, the render gap from merger configuration, and the parakeet initializer model from its registry
+- scope all model download progress with deferred cleanup for success, failure, and cancellation; share terminal clearing with the owned reporter and reuse model row formatting remotely
+- invoke the existing test script from coverage and ci metal checks so serial strict-concurrency flags have one implementation
+- rationale: duplicated cli bridges and defaults could drift, and download error paths did not consistently clear progress output
+- version bump: 2.3.5 to 2.3.6 (PATCH - internal consolidation and progress cleanup without public signature changes)
+
 ### 2026-11-19 (v2.3.5, 21:47 download fixture validation)
 
 - validation: all 72 focused networking and fixture tests and all 524 serial strict-concurrency unit tests pass with swift 6.4.2; changed swift files pass formatter lint

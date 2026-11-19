@@ -1,6 +1,6 @@
 # Project Instructions for AI Coding Agents
 
-**Last updated:** 2026-11-19 (v2.3.5, shared whisper download fixtures)
+**Last updated:** 2026-11-19 (v2.3.6, shared cli bridges and test commands)
 
 <!-- {mission} -->
 
@@ -72,11 +72,13 @@ whisper-build/             Generated xcframework (gitignored)
 | `backend` | `--list`, `--capabilities`/`--caps`, `--set-default`; shared mutually exclusive selectors: `--transcriber` (implicit default), `--isolator`, `--diarizer` |
 | `cache` | Audio-conversion cache: info, `--list`, `--clear`, `--rm` |
 
-Local model listings share one row formatter for aligned model ids, sizes (`—` when unknown), and installation paths or missing-installation status across all three model types.
+Local and remote model listings share one row formatter for aligned model ids, sizes (`—` when unknown), and installation paths, missing-installation status, or remote timestamps across all three model types.
 
 `BackendTypeOptions` owns selectors and their validation for both `backend` and `model`. `Backend` remains the transcription enum; `IsolatorBackend` (`htdemucs`) and `DiarizerBackend` (`nemotron`) own capabilities and processor factories. `UserConfig` preserves `defaultBackend` and stores independent optional `defaultIsolatorBackend`/`defaultDiarizerBackend` preferences, falling back to built-in defaults for missing or unknown ids. Pipeline construction resolves these preferences when the corresponding opt-in processing stage is requested. Backend ids select implementations; model ids select their weights (for example, `htdemucs_ft` is an HTDemucs model).
 
 `BackendManager` owns CLI/config selection for both capability inspection and transcription. Capability inspection uses the selected or built-in model without resolving assets; transcription delegates canonicalization to `Backend.resolveModelId`. Keep an unspecified model nil until canonicalization so Apple Speech can fall back to a supported system locale.
+
+`TranscribeOptions.pipelineRunOptions` owns CLI-to-pipeline mapping, accepting resolved track inputs from either flags or a template. `writeRenderedOutput` owns file/stdout delivery for `merge` and `run`. CLI defaults come from library configuration; rendering's default gap comes from `MergerConfig`, and Parakeet construction uses its registry default.
 
 ## Session Protocol
 
@@ -156,7 +158,7 @@ The architecture and implementation documents under `_docs/` describe current in
 | Minimum | `COVERAGE_MIN=100` (default; do not lower) |
 | Scope | `Sources/SuperscribeKit/` line **and region** coverage via `llvm-cov` |
 | CLI | `Sources/superscribe/` is not part of the gate |
-| Tests | Use `_scripts/test.sh` or `swift test --no-parallel -Xswiftc -strict-concurrency=complete` |
+| Tests | `_scripts/test.sh` owns serial strict-concurrency flags and forwards additional SwiftPM arguments |
 
 **Rules:**
 
@@ -187,6 +189,7 @@ The architecture and implementation documents under `_docs/` describe current in
 - Match aranet-kit's keychain setup: create and unlock the temporary keychain, import the P12 with `-A` and codesign access, set key partitions, and register it in the user search list before signing. Check for a valid code-signing identity after import; restore the prior search list on exit. Passing `codesign --keychain` alone does not replace search-list registration.
 - Run optional signing tests with `/bin/bash`; the signer and stubs inherit the harness's selected interpreter. Stub failures and argument checks must exit explicitly rather than rely on `set -e` behavior across Bash versions. Validate harness changes with macOS Bash 3.2 as well as the developer's selected Bash.
 - `.github/actions/setup-build/action.yml` owns shared tool setup and whisper bootstrapping before SwiftPM. Cache only the finished xcframework using an exact runner-image, architecture, Xcode-build, pinned-Swift, and bootstrap-script hash key; do not restore incompatible fallback keys or cache downloaded ASR models.
+- Coverage and CI Metal checks invoke `_scripts/test.sh` so test-execution flags have one authoritative implementation.
 - `_scripts/bootstrap.sh` disables host-specific GGML tuning with `GGML_NATIVE=OFF` and targets `armv8.4-a+dotprod+fp16` for M1-compatible CPU code. Keep Metal and Core ML enabled. Verify bootstrap changes with a fresh native build; an existing xcframework bypasses compilation and cannot validate changed flags.
 
 ### Audio preparation and execution
@@ -203,6 +206,7 @@ The architecture and implementation documents under `_docs/` describe current in
 - `ConvertedAudioCache.publish` owns atomic PCM promotion and best-effort manifest recording for streaming preparation and array storage. Manifest failure after successful publication never triggers conversion again. Each writer closes its WAV before publication and owns staging cleanup on every exit; WAV storage settings come from `AudioBuffers.fileSettings`.
 - Segment work shares one global limit across tracks. Progress completion counts come from the parent collector, preserving input track and segment order separately. `TranscribePipeline.run` owns the only segment scheduling path; tests exercise it with prepared files and stubbed backends or diarizers.
 - CLI progress has one owned reporter; both success and failure await its final drain before summaries.
+- Model downloads use `ModelManager.withDownloadProgress` to clear output after success, failure, or cancellation. `clearProgressLine` owns the terminal clear sequence and accepts the caller's output writer for owned reporters and scoped download output.
 - Child processes drain stdout and stderr concurrently and join termination and pipe readers on cancellation.
 
 ### DRY (Don't Repeat Yourself)

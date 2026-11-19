@@ -59,7 +59,7 @@ if [[ "$run_tests" == true ]]; then
     rg --files -0 Sources Tests | xargs -0 shasum -a 256 > "$WORK_DIR/sources.sha256"
     shasum -a 256 Package.swift Package.resolved >> "$WORK_DIR/sources.sha256"
     echo "==> Running tests with code coverage..."
-    swift test --enable-code-coverage --no-parallel -Xswiftc -strict-concurrency=complete
+    _scripts/test.sh --enable-code-coverage
     if [[ ! -f "$PROFILE" || ! "$PROFILE" -nt "$WORK_DIR/started" ]]; then
         echo "error: this test run did not produce a fresh profile at $PROFILE" >&2
         exit 1

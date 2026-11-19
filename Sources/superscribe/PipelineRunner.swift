@@ -35,7 +35,7 @@ enum PipelineRunner {
                 )
             },
             clearProgressLine: {
-                FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
+                superscribe.clearProgressLine()
             }
         )
     }

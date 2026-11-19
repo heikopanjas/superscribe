@@ -15,18 +15,7 @@ struct RunCommand: AsyncParsableCommand {
     var keepIntermediate: Bool = false
 
     mutating func run() async throws -> Void {
-        let opts = self.transcribeOptions
-        let result = try await PipelineRunner.run(
-            options: PipelineRunOptions(
-                cliBackend: opts.backend,
-                cliModel: opts.model,
-                tracks: opts.trackInputs,
-                transcriptionConfig: opts.transcriptionConfig,
-                analyzerConfig: opts.analyzerConfig,
-                useCache: opts.noCache == false,
-                isolationModel: opts.isolationModel
-            )
-        )
+        let result = try await PipelineRunner.run(options: self.transcribeOptions.pipelineRunOptions(tracks: self.transcribeOptions.trackInputs))
 
         printTranscribeSummary(transcript: result.transcript, duration: result.duration)
 
@@ -40,11 +29,6 @@ struct RunCommand: AsyncParsableCommand {
 
         let output = try MergeCommand.renderMerged(result.transcript, options: self.mergeOptions)
 
-        if let path = self.mergeOptions.mergeOutput {
-            try output.write(toFile: path, atomically: true, encoding: .utf8)
-        }
-        else {
-            print(output, terminator: "")
-        }
+        try writeRenderedOutput(output, to: self.mergeOptions.mergeOutput)
     }
 }

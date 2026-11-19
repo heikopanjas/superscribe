@@ -41,7 +41,7 @@ public actor ParakeetBackend: Transcriber {
     /// - Parameter model: Model version string. Accepted values:
     ///   `"v3"` (multilingual, default), `"v2"` (English-only),
     ///   `"tdt-ctc-110m"`, `"tdt-ja"`.
-    public init(model: String = "v3") throws {
+    public init(model: String = ParakeetBackend.defaultModelId) throws {
         try self.init(model: model, injectedSession: nil)
     }
 
