@@ -47,19 +47,10 @@ public struct TranscribePipeline: Sendable {
             else {
                 isolated = nil
             }
-            let dependencies = SuperscribeKitTestHooks.testState
-            let buffers = AudioBuffers.dependencies
-            let locks = FileTransaction.lockOperation
-            let (audio, segments) = try await BlockingWorker(label: "superscribe.audio.prepare").run { cancellation in
-                return try SuperscribeKitTestHooks.$testState.withValue(dependencies) {
-                    return try AudioBuffers.$dependencies.withValue(buffers) {
-                        return try FileTransaction.$lockOperation.withValue(locks) {
-                            let audio = try isolated ?? preparer.prepare(url: track.file, onProgress: conversionProgress, checkCancellation: cancellation.check)
-                            if track.diarization != nil { return (audio, [SpeechSegment]?.none) }
-                            return (audio, try analyzer.detectSpeech(in: audio))
-                        }
-                    }
-                }
+            let (audio, segments) = try await AudioBuffers.perform { cancellation in
+                let audio = try isolated ?? preparer.prepare(url: track.file, onProgress: conversionProgress, checkCancellation: cancellation.check)
+                if track.diarization != nil { return (audio, [SpeechSegment]?.none) }
+                return (audio, try analyzer.detectSpeech(in: audio, checkCancellation: cancellation.check))
             }
             if let segments { return (audio, [segments]) }
             guard let diarizer else { throw InputValidationError("Mixed tracks require a diarizer") }

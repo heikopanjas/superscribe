@@ -15,8 +15,12 @@ public struct Analyzer: Sendable {
     }
 
     public func detectSpeech(in audio: PreparedAudio) throws -> [SpeechSegment] {
+        return try self.detectSpeech(in: audio, checkCancellation: Task.checkCancellation)
+    }
+
+    internal func detectSpeech(in audio: PreparedAudio, checkCancellation: () throws -> Void) throws -> [SpeechSegment] {
         let file = try AVAudioFile(forReading: audio.url)
-        return try self.detectSpeech(count: Int(audio.frameCount), sampleRate: Double(audio.format.sampleRate)) { start, count in
+        return try self.detectSpeech(count: Int(audio.frameCount), sampleRate: Double(audio.format.sampleRate), checkCancellation: checkCancellation) { start, count in
             let buffer = try AudioBuffers.make(format: file.processingFormat, frames: AudioValidation.frameCount(Double(count)))
             let channel = try AudioBuffers.channels(buffer)[0]
             file.framePosition = Int64(start)
@@ -27,12 +31,12 @@ public struct Analyzer: Sendable {
     }
 
     public func detectSpeech(samples: [Float], sampleRate: Double) throws -> [SpeechSegment] {
-        return try self.detectSpeech(count: samples.count, sampleRate: sampleRate) { start, count in
+        return try self.detectSpeech(count: samples.count, sampleRate: sampleRate, checkCancellation: Task.checkCancellation) { start, count in
             return Array(samples[start ..< start + count])
         }
     }
 
-    private func detectSpeech(count: Int, sampleRate: Double, read: (Int, Int) throws -> [Float]) throws -> [SpeechSegment] {
+    private func detectSpeech(count: Int, sampleRate: Double, checkCancellation: () throws -> Void, read: (Int, Int) throws -> [Float]) throws -> [SpeechSegment] {
         try self.config.validate()
         guard sampleRate.isFinite == true, sampleRate > 0 else { throw AudioPreparerError.conversionFailed("Sample rate must be finite and positive") }
         let totalDuration = Double(count) / sampleRate
@@ -41,7 +45,7 @@ public struct Analyzer: Sendable {
         var start: Int?
         var index = 0
         while index < count {
-            try Task.checkCancellation()
+            try checkCancellation()
             let length = min(self.config.windowSize, count - index)
             let samples = try read(index, length)
             let speech = Self.rms(samples, from: 0, to: length) >= threshold

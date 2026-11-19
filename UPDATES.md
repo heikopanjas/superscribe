@@ -4,6 +4,23 @@ This file is the append-only log of project decisions and notable changes, maint
 
 <!-- {changelog} -->
 
+### 2026-11-19 (v2.3.2, 21:25 detection cancellation validation)
+
+- the deterministic regression reproduced 32 detection reads after cancellation before the fix and verifies a single read afterward, with temporary audio removed and the source preserved
+- validation: 27 focused analyzer and pipeline tests and all 518 serial strict-concurrency unit tests pass with swift 6.4.2; changed swift files pass formatter lint
+- analyzer, pipeline, and shared audio worker helper have 100 percent line and region coverage
+- the full coverage gate remains unmet on macos 15.8.3 at 96.39 percent lines and 95.26 percent regions because of existing apple speech paths requiring macos 26; thresholds and exclusions remain unchanged
+- rationale: record verified cancellation and cleanup separately from the pending macos 26 full coverage requirement
+- version: unchanged at 2.3.2
+
+### 2026-11-19 (v2.3.2, 21:22 speech detection cancellation)
+
+- forward the blocking worker cancellation signal into the shared speech detection loop without changing public analyzer signatures
+- reuse the existing audio worker dependency bridge for pipeline preparation instead of duplicating its task-local capture and restoration
+- add deterministic regression checks for stopping detection reads, joining cancellation cleanup, preserving source audio, and retaining direct task cancellation
+- rationale: swift task cancellation checks on a dispatch worker did not observe the calling task cancellation, so detection kept scanning the entire recording
+- version bump: 2.3.1 to 2.3.2 (PATCH - cancellation fix and internal consolidation without public api changes)
+
 ### 2026-11-19 (v2.3.1, 21:17 installation verification validation)
 
 - reproduced empty-binary discovery, incomplete-encoder fast paths, and invalid-archive regressions before applying the fix

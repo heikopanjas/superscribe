@@ -7,8 +7,13 @@ final class BlockingTestGate: @unchecked Sendable {
     private var active = 0
     private var maximum = 0
     private var arrivals = 0
+    private let batchSize: Int
     let initialBatch = TestSignal()
     let nextArrival = TestSignal()
+
+    init(batchSize: Int = 2) {
+        self.batchSize = batchSize
+    }
 
     var peak: Int { return self.lock.withLock { self.maximum } }
     var current: Int { return self.lock.withLock { self.active } }
@@ -18,8 +23,8 @@ final class BlockingTestGate: @unchecked Sendable {
             self.active += 1
             self.arrivals += 1
             self.maximum = max(self.maximum, self.active)
-            if self.arrivals == 2 { self.initialBatch.signal() }
-            if self.arrivals == 3 { self.nextArrival.signal() }
+            if self.arrivals == self.batchSize { self.initialBatch.signal() }
+            if self.arrivals == self.batchSize + 1 { self.nextArrival.signal() }
         }
         self.permits.wait()
         self.lock.withLock { self.active -= 1 }
